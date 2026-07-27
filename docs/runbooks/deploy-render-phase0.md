@@ -42,17 +42,18 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 
 Hosted TLS **always verifies** the server certificate. Do not disable verification.
 
-From your laptop, using the database **External** hostname (Info page):
+External DB access is disabled in this Blueprint (`ipAllowList: []`), so pull the CA from the **Render web Shell** (it can reach the internal hostname):
 
 ```bash
-# Replace HOST with the External hostname only (no postgres:// prefix)
-openssl s_client -starttls postgres -showcerts -connect HOST:5432 </dev/null 2>/dev/null \
-  | openssl x509 -outform PEM
+cd ~/project/src
+bash scripts/print-database-ca.sh
 ```
 
 Copy the full `-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----` block into `DATABASE_SSL_CA` for **both** web and cron.
 
 If the env UI collapses newlines, a single-line form with literal `\n` is accepted.
+
+Optional (only if you temporarily enable External access on the database): from your laptop use `openssl s_client -starttls postgres -showcerts -connect EXTERNAL_HOST:5432` the same way. Re-clear the IP allow list afterward.
 
 Expected deploy sequence for `chainbank-web`:
 
