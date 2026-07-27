@@ -16,6 +16,8 @@ describe('parseEtherToWei', () => {
 
   it('parses fractional ether without floating point', () => {
     expect(parseEtherToWei('0.5', 'amount')).toBe(WEI_PER_ETHER / 2n);
+    expect(parseEtherToWei('.5', 'amount')).toBe(WEI_PER_ETHER / 2n);
+    expect(parseEtherToWei('.25', 'amount')).toBe(WEI_PER_ETHER / 4n);
     expect(parseEtherToWei('1.000000000000000001', 'amount')).toBe(WEI_PER_ETHER + 1n);
   });
 

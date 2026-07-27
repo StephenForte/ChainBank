@@ -1,9 +1,17 @@
 import { z } from 'zod';
 
-const decimalEther = z
-  .string()
-  .trim()
-  .regex(/^\d+(\.\d{1,18})?$/, 'must be a non-negative decimal ETH amount with at most 18 decimal places');
+const decimalEther = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') {
+      return value;
+    }
+    const trimmed = value.trim();
+    return trimmed.startsWith('.') ? `0${trimmed}` : trimmed;
+  },
+  z
+    .string()
+    .regex(/^\d+(\.\d{1,18})?$/, 'must be a non-negative decimal ETH amount with at most 18 decimal places'),
+);
 
 const booleanFlag = z
   .enum(['true', 'false'])

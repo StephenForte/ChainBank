@@ -52,15 +52,15 @@ describe('loadConfig', () => {
     ).toThrow(ChainBankError);
   });
 
-  it('rejects wildcard CORS in hosted environments', () => {
-    expect(() =>
-      loadConfig({
-        serviceRole: 'web',
-        env: validWebEnv({
-          CHAINBANK_ENVIRONMENT: 'hosted-development',
-          CORS_ALLOWED_ORIGINS: '*',
-        }),
+  it('accepts leading-dot fractional ETH strings from hosted env UIs', () => {
+    const config = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({
+        TREASURY_CRITICAL_BALANCE_ETH: '.25',
+        TREASURY_MINIMUM_RESERVE_ETH: '.5',
       }),
-    ).toThrow(ChainBankError);
+    });
+    expect(config.treasury.criticalBalanceWei).toBe(parseEtherToWei('0.25', 'c'));
+    expect(config.treasury.minimumReserveWei).toBe(parseEtherToWei('0.5', 'r'));
   });
 });

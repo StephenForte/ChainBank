@@ -127,7 +127,8 @@ Cron:
 | Symptom | Likely cause |
 | --- | --- |
 | `vite: not found` / `tsc: not found` | Build omitted devDependencies; Blueprint must use `npm ci --include=dev` |
-| Migrate fails on `CREATE SCHEMA IF NOT EXISTS "drizzle"` | Usually TLS to Render Postgres: Node could not verify the cert. Current code encrypts with `rejectUnauthorized: false` unless `DATABASE_SSL_CA` is set. Redeploy after that fix. Also confirm Internal `DATABASE_URL` is linked. |
+| Migrate fails on `type already exists` | Migration history schema mismatch. Use the default `drizzle` migrations schema (current code). Do not switch to `public` after a successful apply. |
+| `TREASURY_*` rejected for `.25` / `.5` | Leading-dot fractions are now accepted; `0.25` also fine. |
 | Migrate fails on treasury threshold validation | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup, fix `TREASURY_*_ETH` to plain decimals like `0.25` (no `ETH`, no commas, no blanks) |
 | RPC failed / degraded | `CHAIN_RPC_URL` is an explorer URL or blocked |
 | `INVALID_CREDENTIAL` | Token not issued against this database |

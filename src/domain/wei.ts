@@ -17,7 +17,9 @@ const INTEGER_PATTERN = /^\d+$/;
  */
 export function parseEtherToWei(value: string, fieldName: string): bigint {
   const trimmed = value.trim();
-  const match = DECIMAL_ETHER_PATTERN.exec(trimmed);
+  // Accept ".25" as well as "0.25" — common when operators type fractional ETH.
+  const normalized = trimmed.startsWith('.') ? `0${trimmed}` : trimmed;
+  const match = DECIMAL_ETHER_PATTERN.exec(normalized);
   if (match === null) {
     throw new ChainBankError(
       'INVALID_AMOUNT',

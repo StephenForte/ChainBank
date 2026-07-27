@@ -42,11 +42,11 @@ async function main(): Promise<void> {
     logger.info('Database connection probe succeeded');
 
     logger.info('Applying database migrations');
-    // Keep migration history in public so we do not need CREATE SCHEMA privileges
-    // for a dedicated "drizzle" schema on restricted hosted roles.
+    // Use the default "drizzle" migrations schema. An earlier hosted deploy may
+    // already have recorded 0000 there; switching schemas caused a re-apply and
+    // "type already exists" failures.
     await migrate(handle.db, {
       migrationsFolder: MIGRATIONS_FOLDER,
-      migrationsSchema: 'public',
     });
     logger.info('Database migrations applied');
   } finally {
