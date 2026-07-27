@@ -1,95 +1,67 @@
 #!/usr/bin/env node
 /**
- * Prints the Postgres TLS certificate chain for DATABASE_SSL_CA.
+ * Prints the Postgres peer certificate for DATABASE_SSL_CA.
  *
  * Run in the Render web Shell where DATABASE_URL is set:
  *   node scripts/print-database-ca.mjs
  *
- * Verification is disabled only for this one-shot extraction so a self-signed
- * server cert can be captured. The application runtime always verifies.
+ * Extraction uses openssl (not Node tls with verification disabled). The
+ * application runtime always verifies with rejectUnauthorized + this CA.
  */
-import net from 'node:net';
-import tls from 'node:tls';
+import { spawnSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
-import { once } from 'node:events';
 
-const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 4, 210, 22, 47]);
-
-/**
- * @param {import('tls').DetailedPeerCertificate | undefined} peer
- * @returns {string[]}
- */
-function collectPemChain(peer) {
-  /** @type {string[]} */
-  const pems = [];
-  let current = peer;
-  while (current !== undefined && current.raw !== undefined) {
-    const cert = new X509Certificate(current.raw);
-    pems.push(cert.toString());
-    if (current === current.issuerCertificate) {
-      break;
-    }
-    current = current.issuerCertificate;
-  }
-  return pems;
-}
-
-async function main() {
+function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl === undefined || databaseUrl.trim() === '') {
     throw new Error('DATABASE_URL is not set in this shell.');
   }
 
   const url = new URL(databaseUrl);
-  const port = Number(url.port || '5432');
+  const port = url.port || '5432';
   const host = url.hostname;
+  const target = `${host}:${port}`;
 
-  process.stderr.write(`Connecting to ${host}:${String(port)} …\n`);
+  process.stderr.write(`Connecting to ${target} via openssl …\n`);
 
-  const socket = net.connect({ host, port });
-  await once(socket, 'connect');
-  socket.write(SSL_REQUEST);
+  const client = spawnSync(
+    'openssl',
+    ['s_client', '-starttls', 'postgres', '-showcerts', '-connect', target],
+    {
+      input: '',
+      encoding: 'utf8',
+      maxBuffer: 2 * 1024 * 1024,
+    },
+  );
 
-  const [response] = /** @type {[Buffer]} */ (await once(socket, 'data'));
-  if (response.toString('utf8') !== 'S') {
-    throw new Error('PostgreSQL server refused TLS (expected SSLResponse "S").');
+  if (client.error !== undefined) {
+    throw client.error;
   }
 
-  const secure = tls.connect({
-    socket,
-    servername: host,
-    // Extraction only — never copy this into the application client.
-    rejectUnauthorized: false,
-  });
-  await once(secure, 'secureConnect');
-
-  const peer = secure.getPeerCertificate(true);
-  if (peer === undefined || peer.raw === undefined) {
-    throw new Error('Server did not present a certificate.');
+  const combined = `${client.stdout ?? ''}\n${client.stderr ?? ''}`;
+  const match = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/.exec(combined);
+  if (match === null) {
+    throw new Error(
+      'openssl did not return a certificate. Is openssl installed and is DATABASE_URL reachable?',
+    );
   }
 
-  const chain = collectPemChain(peer);
-  // Prefer the issuer/root when present; for self-signed leaf === root.
-  const trustPem = chain[chain.length - 1] ?? new X509Certificate(peer.raw).toString();
+  const trustPem = `${match[0].trim()}\n`;
+  const cert = new X509Certificate(trustPem);
 
-  process.stderr.write(`\nChain length: ${String(chain.length)}\n`);
-  process.stderr.write('--- PEM (multi-line; trust this as DATABASE_SSL_CA) ---\n');
-  process.stdout.write(trustPem.endsWith('\n') ? trustPem : `${trustPem}\n`);
+  process.stderr.write('\n--- PEM (multi-line; trust this as DATABASE_SSL_CA) ---\n');
+  process.stdout.write(trustPem);
 
   process.stderr.write('\n--- PASTE THIS into Render DATABASE_SSL_CA ---\n');
   process.stderr.write('(one line; include the surrounding double quotes)\n');
   process.stdout.write(`${JSON.stringify(trustPem)}\n`);
-  process.stderr.write(
-    `\nSubject: ${peer.subject?.CN ?? JSON.stringify(peer.subject)}\n` +
-      `Issuer:  ${peer.issuer?.CN ?? JSON.stringify(peer.issuer)}\n` +
-      `Fingerprint: ${new X509Certificate(peer.raw).fingerprint256}\n`,
-  );
-
-  secure.end();
-  socket.destroy();
+  process.stderr.write(`\nSubject: ${cert.subject}\nIssuer:  ${cert.issuer}\n`);
+  process.stderr.write(`Fingerprint: ${cert.fingerprint256}\n`);
 }
 
-main().catch((error) => {
+try {
+  main();
+} catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
-});
+}
