@@ -144,11 +144,23 @@ function buildDatabaseConfig(
   serviceRole: ServiceRole,
   isHosted: boolean,
 ): DatabaseConfig {
+  const useSsl = env.DATABASE_SSL ?? isHosted;
+  const sslCertificateAuthority = env.DATABASE_SSL_CA;
+
+  if (useSsl && (sslCertificateAuthority === undefined || sslCertificateAuthority.trim() === '')) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'DATABASE_SSL_CA is required when database TLS is enabled. ' +
+        'Never disable certificate verification; provide the provider CA PEM instead.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
   return {
     url: env.DATABASE_URL,
     poolMax: env.DATABASE_POOL_MAX ?? DEFAULT_POOL_MAX[serviceRole],
-    useSsl: env.DATABASE_SSL ?? isHosted,
-    sslCertificateAuthority: env.DATABASE_SSL_CA,
+    useSsl,
+    sslCertificateAuthority,
   };
 }
 

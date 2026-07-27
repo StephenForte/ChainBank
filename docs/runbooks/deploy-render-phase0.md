@@ -11,7 +11,9 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
   - Hot-wallet treasury address (`TREASURY_ADDRESS`)
   - Threshold ETH strings (warning / critical / recovery / reserve)
   - Resend API key + from address + operator recipient list
+  - Postgres CA PEM (`DATABASE_SSL_CA`) — required for hosted TLS verification
 - Confirm you will **not** set `TREASURY_PRIVATE_KEY` anywhere
+- Confirm you will **not** set `NODE_TLS_REJECT_UNAUTHORIZED=0`
 
 ## 1. Create the Blueprint
 
@@ -23,6 +25,7 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 | Variable | Service | Notes |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | web | Use `https://chainbank-web.onrender.com` (adjust if Render assigns a different name), then confirm after first deploy |
+| `DATABASE_SSL_CA` | web + cron | Provider CA PEM with certificate verification enabled (see below) |
 | `CHAIN_RPC_URL` | web + cron | Real JSON-RPC URL, not etherscan.io |
 | `TREASURY_ADDRESS` | web + cron | Hot wallet only |
 | `TREASURY_WARNING_BALANCE_ETH` | web + cron | e.g. `1` |
@@ -34,6 +37,22 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 | `EMAIL_OPERATOR_RECIPIENTS` | web only | Comma-separated |
 
 5. Create the Blueprint and wait for the first web deploy.
+
+### Obtaining `DATABASE_SSL_CA` (Render)
+
+Hosted TLS **always verifies** the server certificate. Do not disable verification.
+
+From your laptop, using the database **External** hostname (Info page):
+
+```bash
+# Replace HOST with the External hostname only (no postgres:// prefix)
+openssl s_client -starttls postgres -showcerts -connect HOST:5432 </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM
+```
+
+Copy the full `-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----` block into `DATABASE_SSL_CA` for **both** web and cron.
+
+If the env UI collapses newlines, a single-line form with literal `\n` is accepted.
 
 Expected deploy sequence for `chainbank-web`:
 
@@ -47,7 +66,9 @@ On **both** `chainbank-web` and `chainbank-treasury-monitor`:
 
 - `FUNDING_ENABLED=false`
 - **No** `TREASURY_PRIVATE_KEY`
+- **No** `NODE_TLS_REJECT_UNAUTHORIZED=0`
 - Cron must **not** have `RESEND_API_KEY`
+- `DATABASE_SSL_CA` is set on web and cron
 
 ## 3. Fix `PUBLIC_BASE_URL` if needed
 
@@ -127,7 +148,8 @@ Cron:
 | Symptom | Likely cause |
 | --- | --- |
 | `vite: not found` / `tsc: not found` | Build omitted devDependencies; Blueprint must use `npm ci --include=dev` |
-| Migrate fails on `type already exists` | Migration history schema mismatch. Use the default `drizzle` migrations schema (current code). Do not switch to `public` after a successful apply. |
+| Migrate / boot fails requiring `DATABASE_SSL_CA` | Hosted TLS verification is mandatory. Set the provider CA PEM on web and cron. |
+| TLS handshake / certificate verify failed | Wrong or incomplete CA PEM; re-export with `openssl s_client … \| openssl x509` |
 | `TREASURY_*` rejected for `.25` / `.5` | Leading-dot fractions are now accepted; `0.25` also fine. |
 | Migrate fails on treasury threshold validation | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup, fix `TREASURY_*_ETH` to plain decimals like `0.25` (no `ETH`, no commas, no blanks) |
 | RPC failed / degraded | `CHAIN_RPC_URL` is an explorer URL or blocked |

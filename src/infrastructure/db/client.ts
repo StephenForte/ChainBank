@@ -48,18 +48,33 @@ export function createDatabase(config: DatabaseConfig, logger: Logger): Database
   };
 }
 
-function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
+/**
+ * TLS options for Postgres.
+ *
+ * Verification is never disabled. Hosted providers whose CA is absent from the
+ * Node trust store must supply DATABASE_SSL_CA; configuration loading fails
+ * closed before we reach this point without one.
+ */
+export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   if (!config.useSsl) {
     return false;
   }
-  // Prefer an explicit CA when available. Hosted providers such as Render
-  // require TLS but their CA is often absent from the Node trust store; without
-  // DATABASE_SSL_CA we still encrypt in transit and skip CA verification rather
-  // than failing every migrate/boot with an opaque driver error.
-  if (config.sslCertificateAuthority !== undefined) {
-    return { rejectUnauthorized: true, ca: config.sslCertificateAuthority };
+  if (config.sslCertificateAuthority === undefined) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'TLS is enabled for the database but no certificate authority was configured',
+      { publicMessage: 'The service is misconfigured.' },
+    );
   }
-  return { rejectUnauthorized: false };
+  return {
+    rejectUnauthorized: true,
+    ca: normalizePem(config.sslCertificateAuthority),
+  };
+}
+
+/** Render and similar UIs often store PEMs with literal \n sequences. */
+export function normalizePem(value: string): string {
+  return value.includes('\\n') ? value.replaceAll('\\n', '\n') : value;
 }
 
 /**

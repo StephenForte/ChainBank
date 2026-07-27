@@ -48,6 +48,8 @@ services:
         fromDatabase:
           name: chainbank-db
           property: connectionString
+      - key: DATABASE_SSL_CA
+        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: CHAIN_RPC_URL
@@ -97,6 +99,8 @@ services:
         fromDatabase:
           name: chainbank-db
           property: connectionString
+      - key: DATABASE_SSL_CA
+        sync: false
       - key: CHAIN_RPC_URL
         sync: false
       - key: TREASURY_ADDRESS

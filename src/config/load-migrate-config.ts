@@ -39,14 +39,26 @@ export function loadMigrateConfig(env: NodeJS.ProcessEnv = process.env): Migrate
   }
 
   const isHosted = parsed.data.CHAINBANK_ENVIRONMENT !== 'local';
+  const useSsl = parsed.data.DATABASE_SSL ?? isHosted;
+  const sslCertificateAuthority = parsed.data.DATABASE_SSL_CA;
+
+  if (useSsl && (sslCertificateAuthority === undefined || sslCertificateAuthority.trim() === '')) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'DATABASE_SSL_CA is required when database TLS is enabled. ' +
+        'Never disable certificate verification; provide the provider CA PEM instead.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
   return {
     environment: parsed.data.CHAINBANK_ENVIRONMENT,
     logLevel: parsed.data.LOG_LEVEL,
     database: {
       url: parsed.data.DATABASE_URL,
       poolMax: 1,
-      useSsl: parsed.data.DATABASE_SSL ?? isHosted,
-      sslCertificateAuthority: parsed.data.DATABASE_SSL_CA,
+      useSsl,
+      sslCertificateAuthority,
     },
   };
 }

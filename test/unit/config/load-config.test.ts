@@ -58,6 +58,7 @@ describe('loadConfig', () => {
         serviceRole: 'web',
         env: validWebEnv({
           CHAINBANK_ENVIRONMENT: 'hosted-development',
+          DATABASE_SSL_CA: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
           CORS_ALLOWED_ORIGINS: '*',
         }),
       }),
@@ -74,5 +75,26 @@ describe('loadConfig', () => {
     });
     expect(config.treasury.criticalBalanceWei).toBe(parseEtherToWei('0.25', 'c'));
     expect(config.treasury.minimumReserveWei).toBe(parseEtherToWei('0.5', 'r'));
+  });
+
+  it('requires DATABASE_SSL_CA when hosted database TLS is enabled', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'treasury-monitor',
+        env: validMonitorEnv({
+          CHAINBANK_ENVIRONMENT: 'hosted-development',
+        }),
+      }),
+    ).toThrow(ChainBankError);
+
+    const config = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({
+        CHAINBANK_ENVIRONMENT: 'hosted-development',
+        DATABASE_SSL_CA: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+      }),
+    });
+    expect(config.database.useSsl).toBe(true);
+    expect(config.database.sslCertificateAuthority).toContain('BEGIN CERTIFICATE');
   });
 });
