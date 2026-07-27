@@ -36,6 +36,31 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(JSON.stringify({ level: 'fatal', message: 'Migration failed', error: describeUnknownError(error) }));
+  console.error(
+    JSON.stringify({
+      level: 'fatal',
+      message: 'Migration failed',
+      error: describeUnknownError(error),
+      cause: describeCauseChain(error),
+    }),
+  );
   process.exitCode = 1;
 });
+
+function describeCauseChain(error: unknown): string | undefined {
+  if (!(error instanceof Error) || error.cause === undefined) {
+    return undefined;
+  }
+  const parts: string[] = [];
+  let current: unknown = error.cause;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    if (current instanceof Error) {
+      parts.push(`${current.name}: ${current.message}`);
+      current = current.cause;
+      continue;
+    }
+    parts.push(String(current));
+    break;
+  }
+  return parts.length === 0 ? undefined : parts.join(' | ');
+}

@@ -127,9 +127,8 @@ Cron:
 | Symptom | Likely cause |
 | --- | --- |
 | `vite: not found` / `tsc: not found` | Build omitted devDependencies; Blueprint must use `npm ci --include=dev` |
+| Migrate fails on `CREATE SCHEMA IF NOT EXISTS "drizzle"` | Usually TLS to Render Postgres: Node could not verify the cert. Current code encrypts with `rejectUnauthorized: false` unless `DATABASE_SSL_CA` is set. Redeploy after that fix. Also confirm Internal `DATABASE_URL` is linked. |
 | Migrate fails on treasury threshold validation | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup, fix `TREASURY_*_ETH` to plain decimals like `0.25` (no `ETH`, no commas, no blanks) |
-| Build fails on Vite / `index.html` | Dashboard sources missing from `main` |
-| Migrate fails on DB connect | Postgres not ready or `DATABASE_URL` missing |
 | RPC failed / degraded | `CHAIN_RPC_URL` is an explorer URL or blocked |
 | `INVALID_CREDENTIAL` | Token not issued against this database |
 | Cron missing email vars | Expected — monitor role does not load email config |

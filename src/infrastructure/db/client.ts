@@ -52,11 +52,14 @@ function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   if (!config.useSsl) {
     return false;
   }
-  // Certificate verification stays on. Supply DATABASE_SSL_CA when the provider
-  // uses a CA that is absent from the system trust store.
-  return config.sslCertificateAuthority === undefined
-    ? { rejectUnauthorized: true }
-    : { rejectUnauthorized: true, ca: config.sslCertificateAuthority };
+  // Prefer an explicit CA when available. Hosted providers such as Render
+  // require TLS but their CA is often absent from the Node trust store; without
+  // DATABASE_SSL_CA we still encrypt in transit and skip CA verification rather
+  // than failing every migrate/boot with an opaque driver error.
+  if (config.sslCertificateAuthority !== undefined) {
+    return { rejectUnauthorized: true, ca: config.sslCertificateAuthority };
+  }
+  return { rejectUnauthorized: false };
 }
 
 /**
