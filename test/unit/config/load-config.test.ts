@@ -52,6 +52,18 @@ describe('loadConfig', () => {
     ).toThrow(ChainBankError);
   });
 
+  it('rejects wildcard CORS in hosted environments', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({
+          CHAINBANK_ENVIRONMENT: 'hosted-development',
+          CORS_ALLOWED_ORIGINS: '*',
+        }),
+      }),
+    ).toThrow(ChainBankError);
+  });
+
   it('accepts leading-dot fractional ETH strings from hosted env UIs', () => {
     const config = loadConfig({
       serviceRole: 'treasury-monitor',
