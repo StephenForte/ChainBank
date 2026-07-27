@@ -55,6 +55,12 @@ export function createDatabase(config: DatabaseConfig, logger: Logger): Database
  * Verification is never disabled. Hosted providers whose CA is absent from the
  * Node trust store must supply DATABASE_SSL_CA; configuration loading fails
  * closed before we reach this point without one.
+ *
+ * Render Postgres presents a certificate whose CN is an internal UUID, while
+ * DATABASE_URL uses the private hostname (`dpg-…-a`). We keep
+ * `rejectUnauthorized: true` and pin that certificate via `ca`, then set
+ * `servername` to the pinned cert's identity so Node's hostname check matches
+ * the CN/SAN instead of the connection host. We do not disable verification.
  */
 export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   if (!config.useSsl) {
@@ -74,7 +80,62 @@ export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   return {
     rejectUnauthorized: true,
     ca,
+    servername: tlsServerNameFromPinnedCa(ca),
   };
+}
+
+/**
+ * Identity Node should verify against the peer certificate.
+ *
+ * Prefer the first DNS SAN; otherwise use the subject CN. Render's managed
+ * Postgres certs typically use a UUID CN with no SAN.
+ */
+export function tlsServerNameFromPinnedCa(pem: string): string {
+  const cert = new X509Certificate(pem);
+  const dnsSan = firstDnsSubjectAltName(cert.subjectAltName);
+  if (dnsSan !== undefined) {
+    return dnsSan;
+  }
+
+  const commonName = commonNameFromSubject(cert.subject);
+  if (commonName !== undefined) {
+    return commonName;
+  }
+
+  throw new ChainBankError(
+    'INVALID_CONFIGURATION',
+    'DATABASE_SSL_CA has neither a DNS SAN nor a CN; cannot set TLS servername',
+    { publicMessage: 'The service is misconfigured.' },
+  );
+}
+
+function firstDnsSubjectAltName(subjectAltName: string | undefined): string | undefined {
+  if (subjectAltName === undefined) {
+    return undefined;
+  }
+  for (const part of subjectAltName.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith('DNS:')) {
+      const name = trimmed.slice('DNS:'.length).trim();
+      if (name !== '') {
+        return name;
+      }
+    }
+  }
+  return undefined;
+}
+
+function commonNameFromSubject(subject: string): string | undefined {
+  for (const part of subject.split(/[\n,]/)) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith('CN=')) {
+      const name = trimmed.slice('CN='.length).trim();
+      if (name !== '') {
+        return name;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**

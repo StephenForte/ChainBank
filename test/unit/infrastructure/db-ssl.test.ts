@@ -5,6 +5,7 @@ import {
   assertValidPemCertificate,
   buildSslOptions,
   normalizePem,
+  tlsServerNameFromPinnedCa,
 } from '../../../src/infrastructure/db/client.js';
 
 const sampleCa = readFileSync(new URL('../../fixtures/sample-ca.pem', import.meta.url), 'utf8');
@@ -28,10 +29,18 @@ describe('buildSslOptions', () => {
       useSsl: true,
       sslCertificateAuthority: sampleCa,
     });
-    expect(ssl).toMatchObject({ rejectUnauthorized: true });
+    expect(ssl).toMatchObject({
+      rejectUnauthorized: true,
+      // Render cert CN ≠ DATABASE_URL host; pin identity via the CA subject.
+      servername: 'chainbank-test',
+    });
     expect(typeof ssl === 'object' && ssl !== null && 'ca' in ssl ? ssl.ca : undefined).toContain(
       'BEGIN CERTIFICATE',
     );
+  });
+
+  it('derives TLS servername from the pinned CA common name', () => {
+    expect(tlsServerNameFromPinnedCa(sampleCa)).toBe('chainbank-test');
   });
 
   it('refuses to enable TLS without a CA instead of disabling verification', () => {
