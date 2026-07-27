@@ -42,18 +42,16 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 
 Hosted TLS **always verifies** the server certificate. Do not disable verification.
 
-External DB access is disabled in this Blueprint (`ipAllowList: []`), so pull the CA from the **Render web Shell** (it can reach the internal hostname):
+External DB access is disabled in this Blueprint (`ipAllowList: []`), so pull the CA from the **Render web Shell**:
 
 ```bash
 cd ~/project/src
-bash scripts/print-database-ca.sh
+node scripts/print-database-ca.mjs
 ```
 
-Copy the full `-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----` block into `DATABASE_SSL_CA` for **both** web and cron.
+Use the **PASTE THIS** one-liner (JSON-escaped) as `DATABASE_SSL_CA` on **both** web and cron. Multine PEMs often get corrupted in the Render env UI and then show up as `DEPTH_ZERO_SELF_SIGNED_CERT`.
 
-If the env UI collapses newlines, a single-line form with literal `\n` is accepted.
-
-Optional (only if you temporarily enable External access on the database): from your laptop use `openssl s_client -starttls postgres -showcerts -connect EXTERNAL_HOST:5432` the same way. Re-clear the IP allow list afterward.
+After saving the env var, redeploy.
 
 Expected deploy sequence for `chainbank-web`:
 

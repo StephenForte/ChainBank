@@ -1,3 +1,4 @@
+import { X509Certificate } from 'node:crypto';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import type { DatabaseConfig } from '../../config/index.js';
@@ -66,15 +67,61 @@ export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
       { publicMessage: 'The service is misconfigured.' },
     );
   }
+
+  const ca = normalizePem(config.sslCertificateAuthority);
+  assertValidPemCertificate(ca);
+
   return {
     rejectUnauthorized: true,
-    ca: normalizePem(config.sslCertificateAuthority),
+    ca,
   };
 }
 
-/** Render and similar UIs often store PEMs with literal \n sequences. */
+/**
+ * Normalizes PEMs stored in hosted env UIs.
+ *
+ * Render often collapses newlines. Operators may paste a JSON-escaped string
+ * (`\\n`) or a single-line PEM; both must become a parseable certificate.
+ */
 export function normalizePem(value: string): string {
-  return value.includes('\\n') ? value.replaceAll('\\n', '\n') : value;
+  let pem = value.trim();
+  if (
+    (pem.startsWith('"') && pem.endsWith('"')) ||
+    (pem.startsWith("'") && pem.endsWith("'"))
+  ) {
+    pem = pem.slice(1, -1);
+  }
+
+  pem = pem.replaceAll('\\r\\n', '\n').replaceAll('\\n', '\n').replaceAll('\r\n', '\n');
+
+  if (pem.includes('-----BEGIN CERTIFICATE-----') && !pem.includes('\n')) {
+    const match = /-----BEGIN CERTIFICATE-----(.*)-----END CERTIFICATE-----/s.exec(pem);
+    if (match?.[1] !== undefined) {
+      const body = match[1].replace(/\s+/g, '');
+      const lines = body.match(/.{1,64}/g) ?? [];
+      pem = `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----`;
+    }
+  }
+
+  return pem.trim() + '\n';
+}
+
+export function assertValidPemCertificate(pem: string): void {
+  try {
+    // Throws if the PEM cannot be parsed — the usual cause of opaque
+    // DEPTH_ZERO_SELF_SIGNED_CERT when a mangled CA was ignored by Node.
+    new X509Certificate(pem);
+  } catch (error) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'DATABASE_SSL_CA is not a valid X.509 PEM certificate. ' +
+        'Re-export with scripts/print-database-ca.mjs and paste the ESCAPED one-liner.',
+      {
+        publicMessage: 'The service is misconfigured.',
+        cause: error,
+      },
+    );
+  }
 }
 
 /**
