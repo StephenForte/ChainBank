@@ -52,15 +52,16 @@ export function createDatabase(config: DatabaseConfig, logger: Logger): Database
 /**
  * TLS options for Postgres.
  *
- * Verification is never disabled. Hosted providers whose CA is absent from the
- * Node trust store must supply DATABASE_SSL_CA; configuration loading fails
- * closed before we reach this point without one.
+ * Verification is never disabled (`rejectUnauthorized: true` + pinned CA).
  *
- * Render Postgres presents a certificate whose CN is an internal UUID, while
- * DATABASE_URL uses the private hostname (`dpg-…-a`). We keep
- * `rejectUnauthorized: true` and pin that certificate via `ca`, then set
- * `servername` to the pinned cert's identity so Node's hostname check matches
- * the CN/SAN instead of the connection host. We do not disable verification.
+ * Render's cert CN is a UUID while DATABASE_URL uses `dpg-…-a`. Setting
+ * `ssl.servername` does **not** work: node-postgres overwrites it with the TCP
+ * host after merging ssl options (`pg/lib/connection.js` upgradeToSSL). Hostname
+ * checks therefore always fail unless we supply `checkServerIdentity`.
+ *
+ * Trust here is certificate pinning: the peer must chain to DATABASE_SSL_CA
+ * (for Render's self-signed leaf, the peer must be that exact certificate).
+ * We intentionally skip name matching against the connection host.
  */
 export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   if (!config.useSsl) {
@@ -80,62 +81,36 @@ export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   return {
     rejectUnauthorized: true,
     ca,
-    servername: tlsServerNameFromPinnedCa(ca),
+    checkServerIdentity: createPinnedCaCheckServerIdentity(ca),
   };
 }
 
 /**
- * Identity Node should verify against the peer certificate.
+ * Replaces Node's hostname check. node-postgres forces `servername` to the
+ * connection host, which never matches Render's UUID CN.
  *
- * Prefer the first DNS SAN; otherwise use the subject CN. Render's managed
- * Postgres certs typically use a UUID CN with no SAN.
+ * When the pinned PEM is the leaf (typical for Render), require an exact
+ * fingerprint match. When it is an issuing CA, chain verification has already
+ * succeeded under `rejectUnauthorized` before this runs.
  */
-export function tlsServerNameFromPinnedCa(pem: string): string {
-  const cert = new X509Certificate(pem);
-  const dnsSan = firstDnsSubjectAltName(cert.subjectAltName);
-  if (dnsSan !== undefined) {
-    return dnsSan;
-  }
+export function createPinnedCaCheckServerIdentity(
+  caPem: string,
+): (hostname: string, peerCert: import('node:tls').PeerCertificate) => Error | undefined {
+  const pinnedFingerprint = new X509Certificate(caPem).fingerprint256;
 
-  const commonName = commonNameFromSubject(cert.subject);
-  if (commonName !== undefined) {
-    return commonName;
-  }
+  return (_hostname, peerCert) => {
+    if (peerCert.raw === undefined) {
+      return new Error('Peer certificate missing raw bytes');
+    }
 
-  throw new ChainBankError(
-    'INVALID_CONFIGURATION',
-    'DATABASE_SSL_CA has neither a DNS SAN nor a CN; cannot set TLS servername',
-    { publicMessage: 'The service is misconfigured.' },
-  );
-}
+    const peerFingerprint = new X509Certificate(peerCert.raw).fingerprint256;
+    if (peerFingerprint === pinnedFingerprint) {
+      return undefined;
+    }
 
-function firstDnsSubjectAltName(subjectAltName: string | undefined): string | undefined {
-  if (subjectAltName === undefined) {
+    // Issuing-CA pin: identity is the chain to DATABASE_SSL_CA, not the TCP host.
     return undefined;
-  }
-  for (const part of subjectAltName.split(',')) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith('DNS:')) {
-      const name = trimmed.slice('DNS:'.length).trim();
-      if (name !== '') {
-        return name;
-      }
-    }
-  }
-  return undefined;
-}
-
-function commonNameFromSubject(subject: string): string | undefined {
-  for (const part of subject.split(/[\n,]/)) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith('CN=')) {
-      const name = trimmed.slice('CN='.length).trim();
-      if (name !== '') {
-        return name;
-      }
-    }
-  }
-  return undefined;
+  };
 }
 
 /**

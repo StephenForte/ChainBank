@@ -51,7 +51,7 @@ node scripts/print-database-ca.mjs
 
 Use the **PASTE THIS** one-liner (JSON-escaped) as `DATABASE_SSL_CA` on **both** web and cron. Multine PEMs often get corrupted in the Render env UI and then show up as `DEPTH_ZERO_SELF_SIGNED_CERT`.
 
-The app verifies the peer certificate against that pinned CA and sets TLS `servername` to the cert CN/SAN (Render uses a UUID CN, not the `dpg-…` hostname). Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+The app verifies the peer certificate against that pinned CA (`rejectUnauthorized: true`). Hostname matching against `dpg-…` is skipped because node-postgres overwrites TLS `servername` with the TCP host and Render's cert CN is a UUID. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
 
 After saving the env var, redeploy.
 
@@ -150,7 +150,7 @@ Cron:
 | --- | --- |
 | `vite: not found` / `tsc: not found` | Build omitted devDependencies; Blueprint must use `npm ci --include=dev` |
 | Migrate / boot fails requiring `DATABASE_SSL_CA` | Hosted TLS verification is mandatory. Set the provider CA PEM on web and cron. |
-| `ERR_TLS_CERT_ALTNAME_INVALID` (host `dpg-…` vs UUID CN) | Fixed in app via pinned-CA `servername`. Redeploy current `main`; do not disable TLS verification. |
+| `ERR_TLS_CERT_ALTNAME_INVALID` (host `dpg-…` vs UUID CN) | App uses pinned-CA `checkServerIdentity` (pg overwrites `servername`). Redeploy current `main`; do not disable TLS verification. |
 | TLS handshake / certificate verify failed | Wrong or incomplete CA PEM; re-export with `openssl s_client … \| openssl x509` |
 | `TREASURY_*` rejected for `.25` / `.5` | Leading-dot fractions are now accepted; `0.25` also fine. |
 | Migrate fails on treasury threshold validation | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup, fix `TREASURY_*_ETH` to plain decimals like `0.25` (no `ETH`, no commas, no blanks) |
