@@ -23,7 +23,8 @@ services:
     region: oregon
     branch: main
     healthCheckPath: /health/live
-    buildCommand: npm ci && npm run build
+    # NODE_ENV=production would otherwise omit devDependencies (vite, tsc).
+    buildCommand: npm ci --include=dev && npm run build
     preDeployCommand: npm run db:migrate:built
     startCommand: npm start
     envVars:
@@ -76,7 +77,8 @@ services:
     branch: main
     # 13:00 UTC daily — adjust in the dashboard if needed.
     schedule: '0 13 * * *'
-    buildCommand: npm ci && npm run build
+    # NODE_ENV=production would otherwise omit devDependencies (vite, tsc).
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run cron:treasury-monitor
     envVars:
       - key: NODE_VERSION

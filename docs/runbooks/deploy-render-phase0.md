@@ -37,7 +37,7 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 
 Expected deploy sequence for `chainbank-web`:
 
-1. `npm ci && npm run build`
+1. `npm ci --include=dev && npm run build`
 2. `npm run db:migrate:built` (pre-deploy)
 3. `npm start`
 
@@ -126,6 +126,7 @@ Cron:
 
 | Symptom | Likely cause |
 | --- | --- |
+| `vite: not found` / `tsc: not found` | Build omitted devDependencies; Blueprint must use `npm ci --include=dev` |
 | Build fails on Vite / `index.html` | Dashboard sources missing from `main` |
 | Migrate fails | Postgres not ready or `DATABASE_URL` missing |
 | RPC failed / degraded | `CHAIN_RPC_URL` is an explorer URL or blocked |
