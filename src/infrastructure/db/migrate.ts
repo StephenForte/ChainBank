@@ -25,10 +25,29 @@ async function main(): Promise<void> {
     environment: config.environment,
   });
 
+  logger.info(
+    {
+      databaseHost: safeDatabaseHost(config.database.url),
+      useSsl: config.database.useSsl,
+      hasSslCa: config.database.sslCertificateAuthority !== undefined,
+    },
+    'Migration configuration loaded',
+  );
+
   const handle = createDatabase(config.database, logger);
   try {
+    // Probe first so TLS/auth failures surface as a clear driver error instead of
+    // Drizzle's opaque "Failed query: CREATE SCHEMA..." wrapper.
+    await handle.pool.query('select 1 as ok');
+    logger.info('Database connection probe succeeded');
+
     logger.info('Applying database migrations');
-    await migrate(handle.db, { migrationsFolder: MIGRATIONS_FOLDER });
+    // Keep migration history in public so we do not need CREATE SCHEMA privileges
+    // for a dedicated "drizzle" schema on restricted hosted roles.
+    await migrate(handle.db, {
+      migrationsFolder: MIGRATIONS_FOLDER,
+      migrationsSchema: 'public',
+    });
     logger.info('Database migrations applied');
   } finally {
     await handle.close();
@@ -47,8 +66,24 @@ main().catch((error: unknown) => {
   process.exitCode = 1;
 });
 
+function safeDatabaseHost(databaseUrl: string): string {
+  try {
+    return new URL(databaseUrl).host;
+  } catch {
+    return 'unparseable';
+  }
+}
+
 function describeCauseChain(error: unknown): string | undefined {
   if (!(error instanceof Error) || error.cause === undefined) {
+    // node-postgres / drizzle often attach detail on the error object itself.
+    if (typeof error === 'object' && error !== null) {
+      const record = error as Record<string, unknown>;
+      const detail = [record.code, record.detail, record.hint]
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+        .join(' | ');
+      return detail.length > 0 ? detail : undefined;
+    }
     return undefined;
   }
   const parts: string[] = [];
