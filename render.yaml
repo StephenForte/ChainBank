@@ -1,0 +1,109 @@
+# ChainBank Phase 0 — Render Blueprint
+#
+# Deploys:
+#   - Web service (API + dashboard) — no signing credentials
+#   - Daily treasury-monitor cron — no email provider, no signing credentials
+#   - Shared Postgres (private network only)
+#
+# Secrets are sync:false so the dashboard prompts once. Never add TREASURY_PRIVATE_KEY.
+
+databases:
+  - name: chainbank-db
+    plan: basic-256mb
+    databaseName: chainbank
+    user: chainbank
+    # Private network only — web and cron connect via internal DATABASE_URL.
+    ipAllowList: []
+
+services:
+  - type: web
+    name: chainbank-web
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    healthCheckPath: /health/live
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npm run db:migrate:built
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: CHAINBANK_ENVIRONMENT
+        value: hosted-development
+      - key: LOG_LEVEL
+        value: info
+      - key: FUNDING_ENABLED
+        value: 'false'
+      - key: HOST
+        value: 0.0.0.0
+      - key: CHAIN_ID
+        value: '11155111'
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chainbank-db
+          property: connectionString
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CHAIN_RPC_URL
+        sync: false
+      - key: TREASURY_ADDRESS
+        sync: false
+      - key: TREASURY_WARNING_BALANCE_ETH
+        sync: false
+      - key: TREASURY_CRITICAL_BALANCE_ETH
+        sync: false
+      - key: TREASURY_RECOVERY_BALANCE_ETH
+        sync: false
+      - key: TREASURY_MINIMUM_RESERVE_ETH
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: EMAIL_OPERATOR_RECIPIENTS
+        sync: false
+
+  - type: cron
+    name: chainbank-treasury-monitor
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    # 13:00 UTC daily — adjust in the dashboard if needed.
+    schedule: '0 13 * * *'
+    buildCommand: npm ci && npm run build
+    startCommand: npm run cron:treasury-monitor
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: CHAINBANK_ENVIRONMENT
+        value: hosted-development
+      - key: LOG_LEVEL
+        value: info
+      - key: FUNDING_ENABLED
+        value: 'false'
+      - key: CHAIN_ID
+        value: '11155111'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chainbank-db
+          property: connectionString
+      - key: CHAIN_RPC_URL
+        sync: false
+      - key: TREASURY_ADDRESS
+        sync: false
+      - key: TREASURY_WARNING_BALANCE_ETH
+        sync: false
+      - key: TREASURY_CRITICAL_BALANCE_ETH
+        sync: false
+      - key: TREASURY_RECOVERY_BALANCE_ETH
+        sync: false
+      - key: TREASURY_MINIMUM_RESERVE_ETH
+        sync: false

@@ -170,16 +170,19 @@ Integration and e2e projects are wired but still placeholders until local Postgr
 - Secrets are redacted in structured logs.
 - See [`AGENTS.md`](./AGENTS.md) for mandatory contributor rules.
 
-## Deploy (Render) — next step after local verification
+## Deploy (Render)
 
-Phase 0 targets:
+Phase 0 Blueprint lives in [`render.yaml`](./render.yaml): web service, daily treasury-monitor cron, and shared Postgres. **No signing key on any service.**
 
-1. Render Web Service (`npm run build` / `npm start`)
-2. Render Postgres (shared `DATABASE_URL`)
-3. Render Cron Job for `npm run cron:treasury-monitor`
-4. Migrations on deploy (`npm run db:migrate:built`)
+Follow the operator checklist: [`docs/runbooks/deploy-render-phase0.md`](./docs/runbooks/deploy-render-phase0.md).
 
-Blueprint / GitHub Actions config is still to be added after local smoke testing. Until then, do not enable any signing secrets on Render.
+Short version:
+
+1. Push `main` (includes Blueprint + dashboard build).
+2. Render → **New** → **Blueprint** → connect this repo.
+3. Fill `sync: false` secrets (RPC, hot-wallet treasury, Resend, thresholds, `PUBLIC_BASE_URL`).
+4. Confirm `FUNDING_ENABLED=false` and no `TREASURY_PRIVATE_KEY`.
+5. Issue an operator credential against the Render DB, then smoke `/health/ready`, treasury check, test email, and a manual cron run.
 
 ## Product docs
 
