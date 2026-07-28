@@ -13,7 +13,7 @@ function repositoryStub(
 ): ApiCredentialRepository {
   return {
     findByTokenHash: find,
-    touchLastUsed: vi.fn(async () => undefined),
+    touchLastUsed: vi.fn(() => Promise.resolve(undefined)),
   };
 }
 
@@ -40,15 +40,15 @@ describe('authenticateCredential', () => {
   const generated = generateApiToken();
 
   it('resolves a valid credential and records last-used', async () => {
-    const apiCredentials = repositoryStub(async (tokenHash) => {
+    const apiCredentials = repositoryStub((tokenHash) => {
       expect(tokenHash).toBe(hashApiToken(generated.token));
-      return {
+      return Promise.resolve({
         id: 'cred-1',
         name: 'operator-local',
         role: 'operator',
         enabled: true,
         revokedAt: undefined,
-      };
+      });
     });
 
     const actor = await authenticateCredential({ apiCredentials, clock }, generated.token);
@@ -62,14 +62,16 @@ describe('authenticateCredential', () => {
   });
 
   it('returns the same public message for unknown and disabled credentials', async () => {
-    const unknown = repositoryStub(async () => undefined);
-    const disabled = repositoryStub(async () => ({
-      id: 'cred-2',
-      name: 'disabled',
-      role: 'operator',
-      enabled: false,
-      revokedAt: undefined,
-    }));
+    const unknown = repositoryStub(() => Promise.resolve(undefined));
+    const disabled = repositoryStub(() =>
+      Promise.resolve({
+        id: 'cred-2',
+        name: 'disabled',
+        role: 'operator',
+        enabled: false,
+        revokedAt: undefined,
+      }),
+    );
 
     const unknownError = await authenticateCredential({ apiCredentials: unknown, clock }, 'nope').catch(
       (error: unknown) => error,
