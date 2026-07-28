@@ -3,7 +3,7 @@ import { loadDotEnvFile } from '../../config/load-dotenv.js';
 import { loadMigrateConfig } from '../../config/load-migrate-config.js';
 import { describeUnknownError } from '../../domain/errors.js';
 import { createLogger } from '../../observability/logger.js';
-import { createDatabase } from './client.js';
+import { createDatabase, describeDatabaseTlsPin } from './client.js';
 
 export const MIGRATIONS_FOLDER = 'drizzle';
 
@@ -30,6 +30,9 @@ async function main(): Promise<void> {
       databaseHost: safeDatabaseHost(config.database.url),
       useSsl: config.database.useSsl,
       hasSslCa: config.database.sslCertificateAuthority !== undefined,
+      ...(config.database.useSsl && config.database.sslCertificateAuthority !== undefined
+        ? describeDatabaseTlsPin(config.database.sslCertificateAuthority)
+        : {}),
     },
     'Migration configuration loaded',
   );

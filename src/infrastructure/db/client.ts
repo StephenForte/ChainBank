@@ -1,4 +1,5 @@
 import { X509Certificate } from 'node:crypto';
+import type { PeerCertificate } from 'node:tls';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import type { DatabaseConfig } from '../../config/index.js';
@@ -23,6 +24,12 @@ export interface DatabaseHandle {
  * hold connections the API could be using.
  */
 export function createDatabase(config: DatabaseConfig, logger: Logger): DatabaseHandle {
+  const ssl = buildSslOptions(config);
+  if (config.useSsl && config.sslCertificateAuthority !== undefined) {
+    // Operators must not assume hostname/SAN verification; identity is leaf pin only.
+    logger.info(describeDatabaseTlsPin(config.sslCertificateAuthority), 'Database TLS pin mode');
+  }
+
   const pool = new pg.Pool({
     connectionString: config.url,
     max: config.poolMax,
@@ -31,7 +38,7 @@ export function createDatabase(config: DatabaseConfig, logger: Logger): Database
     // Fail a hung query rather than pinning a connection indefinitely.
     statement_timeout: 15_000,
     query_timeout: 15_000,
-    ssl: buildSslOptions(config),
+    ssl,
   });
 
   // An idle client can fail independently of any query. Without this listener
@@ -52,16 +59,16 @@ export function createDatabase(config: DatabaseConfig, logger: Logger): Database
 /**
  * TLS options for Postgres.
  *
- * Verification is never disabled (`rejectUnauthorized: true` + pinned CA).
+ * Verification is never disabled (`rejectUnauthorized: true` + leaf pin).
  *
  * Render's cert CN is a UUID while DATABASE_URL uses `dpg-…-a`. Setting
  * `ssl.servername` does **not** work: node-postgres overwrites it with the TCP
  * host after merging ssl options (`pg/lib/connection.js` upgradeToSSL). Hostname
  * checks therefore always fail unless we supply `checkServerIdentity`.
  *
- * Trust here is certificate pinning: the peer must chain to DATABASE_SSL_CA
- * (for Render's self-signed leaf, the peer must be that exact certificate).
- * We intentionally skip name matching against the connection host.
+ * Trust here is **leaf-only certificate pinning**: the peer certificate's
+ * fingerprint256 must equal the fingerprint of `DATABASE_SSL_CA`. Hostname /
+ * SAN matching against the connection host is intentionally not used.
  */
 export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
   if (!config.useSsl) {
@@ -86,16 +93,31 @@ export function buildSslOptions(config: DatabaseConfig): pg.PoolConfig['ssl'] {
 }
 
 /**
+ * Safe TLS pin diagnostics for structured logs.
+ * Never include PEM body, private keys, or DATABASE_URL credentials.
+ */
+export function describeDatabaseTlsPin(sslCertificateAuthority: string): {
+  readonly databaseTlsPinMode: 'leaf';
+  readonly databaseTlsCaFingerprint256: string;
+} {
+  const ca = normalizePem(sslCertificateAuthority);
+  assertValidPemCertificate(ca);
+  return {
+    databaseTlsPinMode: 'leaf',
+    databaseTlsCaFingerprint256: new X509Certificate(ca).fingerprint256,
+  };
+}
+
+/**
  * Replaces Node's hostname check. node-postgres forces `servername` to the
  * connection host, which never matches Render's UUID CN.
  *
- * When the pinned PEM is the leaf (typical for Render), require an exact
- * fingerprint match. When it is an issuing CA, chain verification has already
- * succeeded under `rejectUnauthorized` before this runs.
+ * Leaf-only pin: accept only when the peer certificate fingerprint256 equals
+ * the pinned PEM's fingerprint256. Hostname is ignored for acceptance.
  */
 export function createPinnedCaCheckServerIdentity(
   caPem: string,
-): (hostname: string, peerCert: import('node:tls').PeerCertificate) => Error | undefined {
+): (hostname: string, peerCert: PeerCertificate) => Error | undefined {
   const pinnedFingerprint = new X509Certificate(caPem).fingerprint256;
 
   return (_hostname, peerCert) => {
@@ -104,11 +126,10 @@ export function createPinnedCaCheckServerIdentity(
     }
 
     const peerFingerprint = new X509Certificate(peerCert.raw).fingerprint256;
-    if (peerFingerprint === pinnedFingerprint) {
-      return undefined;
+    if (peerFingerprint !== pinnedFingerprint) {
+      return new Error('Peer certificate fingerprint does not match DATABASE_SSL_CA leaf pin');
     }
 
-    // Issuing-CA pin: identity is the chain to DATABASE_SSL_CA, not the TCP host.
     return undefined;
   };
 }
@@ -121,10 +142,7 @@ export function createPinnedCaCheckServerIdentity(
  */
 export function normalizePem(value: string): string {
   let pem = value.trim();
-  if (
-    (pem.startsWith('"') && pem.endsWith('"')) ||
-    (pem.startsWith("'") && pem.endsWith("'"))
-  ) {
+  if ((pem.startsWith('"') && pem.endsWith('"')) || (pem.startsWith("'") && pem.endsWith("'"))) {
     pem = pem.slice(1, -1);
   }
 

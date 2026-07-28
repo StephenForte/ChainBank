@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Prints the Postgres peer certificate for DATABASE_SSL_CA.
+ * Prints the Postgres peer (leaf) certificate for DATABASE_SSL_CA.
  *
- * Run in the Render web Shell where DATABASE_URL is set:
+ * Run only in the Render web Shell where DATABASE_URL is set:
  *   node scripts/print-database-ca.mjs
  *
- * Extraction uses openssl (not Node tls with verification disabled). The
- * application runtime always verifies with rejectUnauthorized + this CA.
+ * Extraction uses openssl s_client without verification. That is acceptable
+ * only on Render's trusted private path — untrusted networks can poison the pin.
+ * The application runtime always verifies with rejectUnauthorized + leaf
+ * fingerprint pinning against this PEM.
  */
 import { spawnSync } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
@@ -49,14 +51,14 @@ function main() {
   const trustPem = `${match[0].trim()}\n`;
   const cert = new X509Certificate(trustPem);
 
-  process.stderr.write('\n--- PEM (multi-line; trust this as DATABASE_SSL_CA) ---\n');
+  process.stderr.write('\n--- PEM (multi-line; pin this leaf as DATABASE_SSL_CA) ---\n');
   process.stdout.write(trustPem);
 
   process.stderr.write('\n--- PASTE THIS into Render DATABASE_SSL_CA ---\n');
   process.stderr.write('(one line; include the surrounding double quotes)\n');
   process.stdout.write(`${JSON.stringify(trustPem)}\n`);
   process.stderr.write(`\nSubject: ${cert.subject}\nIssuer:  ${cert.issuer}\n`);
-  process.stderr.write(`Fingerprint: ${cert.fingerprint256}\n`);
+  process.stderr.write(`Leaf fingerprint256: ${cert.fingerprint256}\n`);
 }
 
 try {
