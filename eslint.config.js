@@ -11,7 +11,9 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ['eslint.config.js', 'scripts/print-database-ca.mjs'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -74,6 +76,17 @@ export default tseslint.config(
     files: ['scripts/**/*.ts', 'src/observability/**/*.ts', 'src/jobs/**/*.ts'],
     rules: {
       'no-console': 'off',
+    },
+  },
+  {
+    // Plain Node scripts sit outside every tsconfig, so no-undef needs the
+    // runtime globals declared explicitly.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        URL: 'readonly',
+      },
     },
   },
   {

@@ -58,13 +58,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(
-    JSON.stringify({
-      level: 'fatal',
-      message: 'Migration failed',
+  // Configuration loading may be the failure, so this logger cannot depend on it.
+  const logger = createLogger({ level: 'error', serviceRole: 'migrate', environment: 'unknown' });
+  logger.fatal(
+    {
       error: describeUnknownError(error),
       cause: describeCauseChain(error),
-    }),
+    },
+    'Migration failed',
   );
   process.exitCode = 1;
 });
@@ -97,7 +98,7 @@ function describeCauseChain(error: unknown): string | undefined {
       current = current.cause;
       continue;
     }
-    parts.push(String(current));
+    parts.push(typeof current === 'string' ? current : JSON.stringify(current));
     break;
   }
   return parts.length === 0 ? undefined : parts.join(' | ');

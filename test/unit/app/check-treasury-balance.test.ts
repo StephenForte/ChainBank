@@ -57,21 +57,21 @@ function deps(overrides: {
   return {
     treasuries: {
       upsert: vi.fn(),
-      findById: vi.fn(async () => treasury),
-      listEnabled: vi.fn(async () => [treasury]),
-      recordCheckSuccess: vi.fn(async () => ({ ...treasury, status: 'healthy' as const, lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined })),
-      recordCheckFailure: vi.fn(async () => ({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' })),
+      findById: vi.fn(() => Promise.resolve(treasury)),
+      listEnabled: vi.fn(() => Promise.resolve([treasury])),
+      recordCheckSuccess: vi.fn(() => Promise.resolve({ ...treasury, status: 'healthy' as const, lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined })),
+      recordCheckFailure: vi.fn(() => Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' })),
     },
     balanceObservations: {
-      record: vi.fn(async () => undefined),
-      findLatest: vi.fn(async () => undefined),
+      record: vi.fn(() => Promise.resolve(undefined)),
+      findLatest: vi.fn(() => Promise.resolve(undefined)),
     },
     balanceReader: {
-      readBalance: vi.fn(async () => reading),
-      verifyChainId: vi.fn(async () => ({ matches: true, observedChainId: 11155111 })),
+      readBalance: vi.fn(() => Promise.resolve(reading)),
+      verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11155111 })),
     },
     auditEvents: {
-      record: vi.fn(async () => undefined),
+      record: vi.fn(() => Promise.resolve(undefined)),
     },
   };
 }

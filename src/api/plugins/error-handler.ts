@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AppInstance } from '../types.js';
-import { ChainBankError, describeUnknownError, isChainBankError } from '../../domain/errors.js';
+import type { ChainBankError } from '../../domain/errors.js';
+import { describeUnknownError, isChainBankError } from '../../domain/errors.js';
 
 interface ErrorResponseBody {
   readonly error: {
@@ -95,7 +96,7 @@ function isFastifyValidationError(error: unknown): error is { validation: readon
     typeof error === 'object' &&
     error !== null &&
     'validation' in error &&
-    Array.isArray((error as { validation: unknown }).validation)
+    Array.isArray(error.validation)
   );
 }
 
@@ -104,6 +105,6 @@ function isRateLimitError(error: unknown): boolean {
     typeof error === 'object' &&
     error !== null &&
     'statusCode' in error &&
-    (error as { statusCode: unknown }).statusCode === 429
+    error.statusCode === 429
   );
 }
