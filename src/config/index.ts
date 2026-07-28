@@ -1,4 +1,4 @@
-import { getAddress, isAddress } from 'viem';
+import { getAddress, isAddress, isHex } from 'viem';
 import { ChainBankError } from '../domain/errors.js';
 import { assertValidTreasuryThresholds } from '../domain/treasury/treasury-status.js';
 import { parseEtherToWei } from '../domain/wei.js';
@@ -11,6 +11,11 @@ import { findSupportedChainById, supportedChainIds, type SupportedChain } from '
  * hold and never fails to start over a section it does not use.
  */
 export type ServiceRole = 'web' | 'treasury-monitor';
+
+/** Roles that may construct a TreasurySigner and receive the signing secret. */
+export function isSigningCapableRole(serviceRole: ServiceRole): boolean {
+  return serviceRole === 'web';
+}
 
 export interface AppConfig {
   readonly nodeEnv: RawEnvironment['NODE_ENV'];
@@ -66,6 +71,17 @@ export interface ApiSecurityConfig {
   readonly rateLimitWindowSeconds: number;
 }
 
+export interface FundingConfig {
+  readonly enabled: boolean;
+  readonly killSwitch: boolean;
+  /**
+   * Present only for signing-capable roles with a structurally valid key.
+   * Never enumerable on the returned config object so accidental JSON
+   * serialization cannot leak it.
+   */
+  readonly privateKey: `0x${string}` | undefined;
+}
+
 export interface ChainBankConfig {
   readonly app: AppConfig;
   readonly database: DatabaseConfig;
@@ -75,7 +91,13 @@ export interface ChainBankConfig {
   readonly email: EmailConfig | undefined;
   /** Absent for non-API roles. */
   readonly apiSecurity: ApiSecurityConfig | undefined;
-  readonly isFundingEnabled: false;
+  readonly isFundingEnabled: boolean;
+  readonly isFundingKillSwitchActive: boolean;
+  /**
+   * Signing material for signing-capable roles only. The private key is stored
+   * non-enumerably; prefer {@link getTreasuryPrivateKey} over walking this object.
+   */
+  readonly funding: FundingConfig;
 }
 
 /** Default pool ceilings. A short-lived cron needs far fewer connections than the API. */
@@ -96,7 +118,12 @@ export interface LoadConfigOptions {
  */
 export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
   const source = options.env ?? process.env;
-  const parsed = environmentSchema.safeParse(source);
+  // Strip signing material before parse for non-signing roles so the monitor
+  // never observes TREASURY_PRIVATE_KEY, even when a shared env injects it.
+  const envSource = isSigningCapableRole(options.serviceRole)
+    ? source
+    : omitEnvKey(source, 'TREASURY_PRIVATE_KEY');
+  const parsed = environmentSchema.safeParse(envSource);
 
   if (!parsed.success) {
     const details = parsed.error.issues
@@ -109,15 +136,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
 
   const env = parsed.data;
   const isHosted = env.CHAINBANK_ENVIRONMENT !== 'local';
-
-  if (env.FUNDING_ENABLED) {
-    throw new ChainBankError(
-      'INVALID_CONFIGURATION',
-      'FUNDING_ENABLED must be false. This build contains no transaction-signing path, ' +
-        'so enabling it would misrepresent the service as able to move funds.',
-      { publicMessage: 'The service is misconfigured.' },
-    );
-  }
+  const funding = buildFundingConfig(env, options.serviceRole);
 
   return {
     app: {
@@ -135,8 +154,104 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     treasury: buildTreasuryConfig(env),
     email: options.serviceRole === 'web' ? buildEmailConfig(env) : undefined,
     apiSecurity: options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted) : undefined,
-    isFundingEnabled: false,
+    isFundingEnabled: funding.enabled,
+    isFundingKillSwitchActive: funding.killSwitch,
+    funding,
   };
+}
+
+/**
+ * Returns the treasury private key for a signing-capable config, if present.
+ * Prefer this over reading `config.funding.privateKey` so call sites stay explicit.
+ */
+export function getTreasuryPrivateKey(config: ChainBankConfig): `0x${string}` | undefined {
+  return config.funding.privateKey;
+}
+
+function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): FundingConfig {
+  const killSwitch = env.FUNDING_KILL_SWITCH;
+
+  // The monitor must never read or require the signing key, even when a shared
+  // hosted environment sets FUNDING_ENABLED=true for sibling services.
+  if (!isSigningCapableRole(serviceRole)) {
+    return createFundingConfig({
+      enabled: false,
+      killSwitch,
+      privateKey: undefined,
+    });
+  }
+
+  const rawKey = env.TREASURY_PRIVATE_KEY;
+  const privateKey = rawKey === undefined ? undefined : parseTreasuryPrivateKey(rawKey, env.FUNDING_ENABLED);
+
+  if (env.FUNDING_ENABLED && privateKey === undefined) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'FUNDING_ENABLED=true requires a structurally valid TREASURY_PRIVATE_KEY ' +
+        'for this signing-capable service role. Provide a 32-byte hex private key ' +
+        '(0x-prefixed, 64 hex digits), or set FUNDING_ENABLED=false.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
+  return createFundingConfig({
+    enabled: env.FUNDING_ENABLED,
+    killSwitch,
+    privateKey,
+  });
+}
+
+function createFundingConfig(input: {
+  readonly enabled: boolean;
+  readonly killSwitch: boolean;
+  readonly privateKey: `0x${string}` | undefined;
+}): FundingConfig {
+  // Keep the private key non-enumerable so JSON.stringify(config) cannot leak it.
+  const funding = {
+    enabled: input.enabled,
+    killSwitch: input.killSwitch,
+  } as FundingConfig;
+  Object.defineProperty(funding, 'privateKey', {
+    value: input.privateKey,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return funding;
+}
+
+function omitEnvKey(env: NodeJS.ProcessEnv, key: string): NodeJS.ProcessEnv {
+  const copy: NodeJS.ProcessEnv = { ...env };
+  delete copy[key];
+  return copy;
+}
+
+/**
+ * Structurally validates a treasury private key.
+ *
+ * When funding is enabled, any absent/malformed value is a hard startup failure.
+ * When funding is disabled, a present-but-malformed value still fails closed so
+ * a bad secret cannot sit unnoticed until the operator flips the gate.
+ */
+function parseTreasuryPrivateKey(rawKey: string, isFundingEnabled: boolean): `0x${string}` | undefined {
+  if (!isStructurallyValidPrivateKey(rawKey)) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      isFundingEnabled
+        ? 'FUNDING_ENABLED=true but TREASURY_PRIVATE_KEY is malformed. ' +
+            'Expected a 0x-prefixed 32-byte hex private key (64 hex digits). ' +
+            'Fix or remove the key, or set FUNDING_ENABLED=false.'
+        : 'TREASURY_PRIVATE_KEY is present but malformed. ' +
+            'Expected a 0x-prefixed 32-byte hex private key (64 hex digits). ' +
+            'Fix or remove the key before enabling funding.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+  return rawKey;
+}
+
+function isStructurallyValidPrivateKey(value: string): value is `0x${string}` {
+  return isHex(value, { strict: true }) && value.length === 66;
 }
 
 function buildDatabaseConfig(
@@ -187,11 +302,9 @@ function buildChainConfig(env: RawEnvironment): ChainConfig {
 
 function buildTreasuryConfig(env: RawEnvironment): TreasuryConfig {
   if (!isAddress(env.TREASURY_ADDRESS, { strict: false })) {
-    throw new ChainBankError(
-      'INVALID_CONFIGURATION',
-      'TREASURY_ADDRESS is not a valid EVM address',
-      { publicMessage: 'The service is misconfigured.' },
-    );
+    throw new ChainBankError('INVALID_CONFIGURATION', 'TREASURY_ADDRESS is not a valid EVM address', {
+      publicMessage: 'The service is misconfigured.',
+    });
   }
 
   const thresholds = {
@@ -257,7 +370,8 @@ function buildEmailConfig(env: RawEnvironment): EmailConfig {
 }
 
 function buildApiSecurityConfig(env: RawEnvironment, isHosted: boolean): ApiSecurityConfig {
-  const corsAllowedOrigins = env.CORS_ALLOWED_ORIGINS === undefined ? [] : splitList(env.CORS_ALLOWED_ORIGINS);
+  const corsAllowedOrigins =
+    env.CORS_ALLOWED_ORIGINS === undefined ? [] : splitList(env.CORS_ALLOWED_ORIGINS);
 
   if (isHosted && corsAllowedOrigins.includes('*')) {
     throw new ChainBankError(

@@ -7,8 +7,9 @@ import type {
   EmailSender,
   ServiceHeartbeatRepository,
   TreasuryRepository,
+  TreasurySigner,
 } from './app/ports.js';
-import type { ChainBankConfig } from './config/index.js';
+import { getTreasuryPrivateKey, isSigningCapableRole, type ChainBankConfig } from './config/index.js';
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
 import { createApiCredentialRepository } from './infrastructure/db/repositories/api-credential-repository.js';
@@ -20,6 +21,7 @@ import { createTreasuryRepository } from './infrastructure/db/repositories/treas
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
 import { createResendEmailSender } from './infrastructure/email/resend-email-sender.js';
 import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
+import { createTreasurySigner } from './infrastructure/evm/treasury-signer.js';
 import { createLogger, type Logger } from './observability/logger.js';
 import { systemClock, uuidGenerator } from './shared/system-ports.js';
 
@@ -27,8 +29,8 @@ import { systemClock, uuidGenerator } from './shared/system-ports.js';
  * Composition root.
  *
  * Every concrete adapter is constructed here and nowhere else, so the set of
- * capabilities a process holds is visible in one place. Notably, no signing
- * client is constructed, because none exists in this phase.
+ * capabilities a process holds is visible in one place. The treasury signer is
+ * constructed only for signing-capable roles that hold a validated private key.
  */
 export interface Container {
   readonly config: ChainBankConfig;
@@ -45,6 +47,8 @@ export interface Container {
     readonly serviceHeartbeats: ServiceHeartbeatRepository;
   };
   readonly balanceReader: BalanceReader;
+  /** Present only for signing-capable roles with a validated treasury key. */
+  readonly treasurySigner: TreasurySigner | undefined;
   /** Absent for roles that hold no email credentials. */
   readonly emailSender: EmailSender | undefined;
   close(): Promise<void>;
@@ -87,11 +91,30 @@ export function buildContainer(options: BuildContainerOptions): Container {
       serviceHeartbeats: createServiceHeartbeatRepository(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
+    treasurySigner: buildTreasurySigner(config, logger),
     emailSender: buildEmailSender(config, logger),
     close: async () => {
       await database.close();
     },
   };
+}
+
+function buildTreasurySigner(config: ChainBankConfig, logger: Logger): TreasurySigner | undefined {
+  if (!isSigningCapableRole(config.app.serviceRole)) {
+    return undefined;
+  }
+
+  const privateKey = getTreasuryPrivateKey(config);
+  if (privateKey === undefined) {
+    return undefined;
+  }
+
+  return createTreasurySigner({
+    chain: config.chain,
+    privateKey,
+    isKillSwitchActive: config.isFundingKillSwitchActive,
+    logger,
+  });
 }
 
 function buildEmailSender(config: ChainBankConfig, logger: Logger): EmailSender | undefined {

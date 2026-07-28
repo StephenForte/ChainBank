@@ -26,6 +26,7 @@ export type ErrorCode =
   | 'INVALID_CREDENTIAL'
   | 'CREDENTIAL_DISABLED'
   | 'INSUFFICIENT_ROLE'
+  | 'FUNDING_DISABLED'
   // resources
   | 'TREASURY_NOT_FOUND'
   | 'CHAIN_NOT_FOUND'
@@ -33,6 +34,9 @@ export type ErrorCode =
   | 'DATABASE_UNAVAILABLE'
   | 'RPC_UNAVAILABLE'
   | 'CHAIN_ID_MISMATCH'
+  | 'SIGNER_CHAIN_MISMATCH'
+  | 'SIGNER_UNAVAILABLE'
+  | 'GAS_ESTIMATION_FAILED'
   | 'EMAIL_PROVIDER_UNAVAILABLE'
   | 'EMAIL_PROVIDER_REJECTED'
   // catch-all
@@ -47,11 +51,15 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   INVALID_CREDENTIAL: 'authentication',
   CREDENTIAL_DISABLED: 'authentication',
   INSUFFICIENT_ROLE: 'authorization',
+  FUNDING_DISABLED: 'authorization',
   TREASURY_NOT_FOUND: 'not_found',
   CHAIN_NOT_FOUND: 'not_found',
   DATABASE_UNAVAILABLE: 'dependency_unavailable',
   RPC_UNAVAILABLE: 'dependency_unavailable',
   CHAIN_ID_MISMATCH: 'dependency_unavailable',
+  SIGNER_CHAIN_MISMATCH: 'dependency_unavailable',
+  SIGNER_UNAVAILABLE: 'dependency_unavailable',
+  GAS_ESTIMATION_FAILED: 'dependency_unavailable',
   EMAIL_PROVIDER_UNAVAILABLE: 'dependency_unavailable',
   EMAIL_PROVIDER_REJECTED: 'provider_retriable',
   INTERNAL_ERROR: 'internal',

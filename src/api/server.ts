@@ -15,15 +15,6 @@ async function main(): Promise<void> {
   const container = buildContainer({ config });
   const { logger } = container;
 
-  if (process.env.TREASURY_PRIVATE_KEY !== undefined) {
-    // Phase 0 ships no signing path. A key in the environment means someone
-    // expects funding to work, which it does not, so say so loudly.
-    logger.warn(
-      'TREASURY_PRIVATE_KEY is set but this build contains no transaction-signing path. ' +
-        'The value is ignored. Remove it from this service to keep the deployment least-privilege.',
-    );
-  }
-
   try {
     const treasury = await registerConfiguredTreasury(
       { chains: container.repositories.chains, treasuries: container.repositories.treasuries },

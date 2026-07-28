@@ -1,13 +1,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Phase 0 exit criterion: no process can send ETH yet.
+ * Signing-path boundary tripwire.
  *
- * This scan is a tripwire. If a future change introduces a wallet client or
- * private-key import into the runtime source tree, this test fails before that
- * code can ship under the Phase 0 "read-only" claim.
+ * Wallet-client and private-key APIs may exist only inside the dedicated
+ * treasury signer adapter. Every other runtime module must remain read-only
+ * with respect to transaction submission.
  */
 const FORBIDDEN_PATTERNS: readonly { readonly label: string; readonly pattern: RegExp }[] = [
   { label: 'createWalletClient', pattern: /\bcreateWalletClient\b/ },
@@ -16,6 +16,8 @@ const FORBIDDEN_PATTERNS: readonly { readonly label: string; readonly pattern: R
   { label: 'sendTransaction', pattern: /\bsendTransaction\b/ },
   { label: 'signTransaction', pattern: /\bsignTransaction\b/ },
 ];
+
+const SIGNING_ADAPTER_RELATIVE = join('src', 'infrastructure', 'evm', 'treasury-signer.ts');
 
 function walkTypeScriptFiles(root: string): readonly string[] {
   const collected: string[] = [];
@@ -33,20 +35,34 @@ function walkTypeScriptFiles(root: string): readonly string[] {
   return collected;
 }
 
-describe('Phase 0 signing-path absence', () => {
-  it('contains no wallet-client or transaction-signing APIs in src/', () => {
-    const files = walkTypeScriptFiles(join(process.cwd(), 'src'));
+describe('signing-path boundary', () => {
+  it('confines wallet-client and transaction-signing APIs to treasury-signer.ts', () => {
+    const srcRoot = join(process.cwd(), 'src');
+    const files = walkTypeScriptFiles(srcRoot);
     const violations: string[] = [];
+    let adapterSeen = false;
 
     for (const file of files) {
+      const relativePath = relative(process.cwd(), file);
       const source = readFileSync(file, 'utf8');
+      const isAdapter = relativePath === SIGNING_ADAPTER_RELATIVE;
+
+      if (isAdapter) {
+        adapterSeen = true;
+        for (const required of ['createWalletClient', 'privateKeyToAccount', 'sendTransaction'] as const) {
+          expect(source, `adapter must use ${required}`).toMatch(new RegExp(`\\b${required}\\b`));
+        }
+        continue;
+      }
+
       for (const forbidden of FORBIDDEN_PATTERNS) {
         if (forbidden.pattern.test(source)) {
-          violations.push(`${file}: ${forbidden.label}`);
+          violations.push(`${relativePath}: ${forbidden.label}`);
         }
       }
     }
 
+    expect(adapterSeen).toBe(true);
     expect(violations).toEqual([]);
   });
 });
