@@ -24,14 +24,13 @@ export function validWebEnv(overrides: Record<string, string | undefined> = {}):
     EMAIL_FROM_ADDRESS: 'chainbank@example.com',
     EMAIL_OPERATOR_RECIPIENTS: 'operator@example.com',
     FUNDING_ENABLED: 'false',
+    FUNDING_KILL_SWITCH: 'false',
     ...overrides,
   };
 }
 
 /** Monitor role does not require email configuration. */
-export function validMonitorEnv(
-  overrides: Record<string, string | undefined> = {},
-): NodeJS.ProcessEnv {
+export function validMonitorEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const env = { ...validWebEnv(overrides) };
   delete env.EMAIL_PROVIDER;
   delete env.EMAIL_FROM_ADDRESS;

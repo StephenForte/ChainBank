@@ -19,8 +19,8 @@ export interface CreateBalanceReaderOptions {
 /**
  * Read-only chain access built on a Viem public client.
  *
- * There is intentionally no wallet client in this module or anywhere else in
- * the Phase 0 tree. Nothing here can construct, sign, or submit a transaction.
+ * Signing lives exclusively in `treasury-signer.ts`. This module must never
+ * construct a wallet client or submit a transaction.
  */
 export function createBalanceReader(options: CreateBalanceReaderOptions): BalanceReader {
   const { chain, clock, logger } = options;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { loadConfig } from '../../../src/config/index.js';
+import { generatePrivateKey } from 'viem/accounts';
+import { getTreasuryPrivateKey, loadConfig } from '../../../src/config/index.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
 import { validMonitorEnv, validWebEnv } from '../../support/env.js';
@@ -14,6 +15,8 @@ describe('loadConfig', () => {
     expect(config.email?.provider).toBe('log-only');
     expect(config.apiSecurity).toBeDefined();
     expect(config.isFundingEnabled).toBe(false);
+    expect(config.isFundingKillSwitchActive).toBe(false);
+    expect(getTreasuryPrivateKey(config)).toBeUndefined();
   });
 
   it('loads the treasury monitor without requiring email credentials', () => {
@@ -23,12 +26,76 @@ describe('loadConfig', () => {
     expect(config.email).toBeUndefined();
     expect(config.apiSecurity).toBeUndefined();
     expect(config.database.poolMax).toBe(2);
+    expect(config.isFundingEnabled).toBe(false);
+    expect(getTreasuryPrivateKey(config)).toBeUndefined();
   });
 
-  it('rejects FUNDING_ENABLED=true because Phase 0 has no signing path', () => {
+  it('rejects FUNDING_ENABLED=true for web without a treasury private key', () => {
+    expect(() => loadConfig({ serviceRole: 'web', env: validWebEnv({ FUNDING_ENABLED: 'true' }) })).toThrow(
+      ChainBankError,
+    );
+
+    try {
+      loadConfig({ serviceRole: 'web', env: validWebEnv({ FUNDING_ENABLED: 'true' }) });
+    } catch (error) {
+      expect(error).toBeInstanceOf(ChainBankError);
+      expect((error as ChainBankError).message).toMatch(/TREASURY_PRIVATE_KEY/);
+      expect((error as ChainBankError).message).toMatch(/FUNDING_ENABLED=true/);
+    }
+  });
+
+  it('rejects FUNDING_ENABLED=true with a malformed treasury private key', () => {
     expect(() =>
-      loadConfig({ serviceRole: 'web', env: validWebEnv({ FUNDING_ENABLED: 'true' }) }),
-    ).toThrow(ChainBankError);
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({
+          FUNDING_ENABLED: 'true',
+          TREASURY_PRIVATE_KEY: 'not-a-key',
+        }),
+      }),
+    ).toThrow(/malformed/i);
+  });
+
+  it('accepts FUNDING_ENABLED=true with a structurally valid disposable private key', () => {
+    const privateKey = generatePrivateKey();
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({
+        FUNDING_ENABLED: 'true',
+        TREASURY_PRIVATE_KEY: privateKey,
+      }),
+    });
+
+    expect(config.isFundingEnabled).toBe(true);
+    expect(getTreasuryPrivateKey(config)).toBe(privateKey);
+    // Private key is non-enumerable; accidental JSON serialization must not leak it.
+    expect(JSON.stringify(config.funding)).not.toContain(privateKey);
+    expect(Object.keys(config.funding)).not.toContain('privateKey');
+  });
+
+  it('parses FUNDING_KILL_SWITCH without enabling funding', () => {
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({ FUNDING_KILL_SWITCH: 'true' }),
+    });
+    expect(config.isFundingEnabled).toBe(false);
+    expect(config.isFundingKillSwitchActive).toBe(true);
+  });
+
+  it('boots the treasury monitor without reading TREASURY_PRIVATE_KEY', () => {
+    const privateKey = generatePrivateKey();
+    const config = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({
+        FUNDING_ENABLED: 'true',
+        TREASURY_PRIVATE_KEY: privateKey,
+      }),
+    });
+
+    expect(config.isFundingEnabled).toBe(false);
+    expect(getTreasuryPrivateKey(config)).toBeUndefined();
+    expect(JSON.stringify(config.funding)).not.toContain(privateKey);
+    expect(Object.keys(config.funding)).not.toContain('privateKey');
   });
 
   it('rejects unsupported chain IDs including mainnet', () => {

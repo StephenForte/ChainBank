@@ -71,11 +71,24 @@ export const environmentSchema = z.object({
   RATE_LIMIT_WINDOW_SECONDS: positiveInteger.default(60),
 
   /**
-   * Global kill switch from the operational safety requirements. Phase 0 ships
-   * no signing path at all, so this must stay false; configuration validation
-   * rejects `true` rather than letting an operator believe funding is armed.
+   * Arms funding workflows for signing-capable roles. Requires a structurally
+   * valid TREASURY_PRIVATE_KEY for those roles; the treasury-monitor role never
+   * reads the key and always boots with funding disabled.
    */
   FUNDING_ENABLED: booleanFlag.default(false),
+
+  /**
+   * Operational emergency stop. When true, every signing method refuses with
+   * FUNDING_DISABLED while read paths continue to work.
+   */
+  FUNDING_KILL_SWITCH: booleanFlag.default(false),
+
+  /**
+   * Treasury signing key. Parsed only for signing-capable service roles.
+   * Required when FUNDING_ENABLED=true for those roles. Never accepted into
+   * treasury-monitor configuration.
+   */
+  TREASURY_PRIVATE_KEY: z.string().trim().min(1).optional(),
 });
 
 export type RawEnvironment = z.infer<typeof environmentSchema>;

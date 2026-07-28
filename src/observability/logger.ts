@@ -39,6 +39,11 @@ const REDACTED_PATHS: readonly string[] = [
   'RESEND_API_KEY',
   'CHAIN_RPC_URL',
   'TREASURY_PRIVATE_KEY',
+  '*.TREASURY_PRIVATE_KEY',
+  'funding.privateKey',
+  '*.funding.privateKey',
+  'treasuryPrivateKey',
+  '*.treasuryPrivateKey',
 ];
 
 export interface CreateLoggerOptions {

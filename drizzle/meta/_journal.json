@@ -8,6 +8,13 @@
       "when": 1785119915730,
       "tag": "0000_phase0_bootstrap",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785268861702,
+      "tag": "0001_puzzling_warpath",
+      "breakpoints": true
     }
   ]
 }

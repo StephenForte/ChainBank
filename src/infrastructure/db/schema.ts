@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
   index,
@@ -14,12 +14,9 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * Phase 0 schema: chains, treasuries, balance observations, audit events,
- * API credentials, and cross-process heartbeats.
- *
- * Tables for projects, environments, managed wallets, funding policies, and
- * funding transactions arrive with the phases that implement them, so that no
- * unused table implies a capability the service does not have.
+ * Phase 0–3 schema: chains, treasuries, balance observations, audit events,
+ * API credentials, cross-process heartbeats, plus projects, environments,
+ * managed wallets, funding policies, funding operations/transactions, and alerts.
  */
 
 /** All wei-denominated columns use this precision. Never widen it silently. */
@@ -38,6 +35,26 @@ export const apiRoleEnum = pgEnum('api_role', [
 ]);
 
 export const actorTypeEnum = pgEnum('actor_type', ['api_credential', 'cron', 'system']);
+
+/** Contract C4 — funding_operations.status */
+export const fundingOperationStatusEnum = pgEnum('funding_operation_status', [
+  'pending',
+  'in_progress',
+  'succeeded',
+  'failed',
+  'abandoned',
+]);
+
+/** Contract C4 — funding_transactions.status */
+export const fundingTransactionStatusEnum = pgEnum('funding_transaction_status', [
+  'created',
+  'submitted',
+  'confirmed',
+  'reverted',
+  'replaced',
+  'dropped',
+  'failed',
+]);
 
 export const chains = pgTable(
   'chains',
@@ -175,17 +192,198 @@ export const serviceHeartbeats = pgTable('service_heartbeats', {
   detail: jsonb('detail').notNull().default({}),
 });
 
+export const projects = pgTable(
+  'projects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('projects_slug_key').on(table.slug)],
+);
+
+export const environments = pgTable(
+  'environments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('environments_project_slug_key').on(table.projectId, table.slug)],
+);
+
+export const managedWallets = pgTable(
+  'managed_wallets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    environmentId: uuid('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'restrict' }),
+    chainId: uuid('chain_id')
+      .notNull()
+      .references(() => chains.id, { onDelete: 'restrict' }),
+    role: text('role').notNull(),
+    /** Lowercase form. This is the uniqueness and lookup key. */
+    address: text('address').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    criticalAtStartup: boolean('critical_at_startup').notNull().default(false),
+    reconciliationEnabled: boolean('reconciliation_enabled').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('managed_wallets_chain_address_key').on(table.chainId, table.address)],
+);
+
+export const fundingPolicies = pgTable(
+  'funding_policies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    managedWalletId: uuid('managed_wallet_id')
+      .notNull()
+      .references(() => managedWallets.id, { onDelete: 'restrict' }),
+    minimumBalanceWei: weiColumn('minimum_balance_wei').notNull(),
+    targetBalanceWei: weiColumn('target_balance_wei').notNull(),
+    maximumTopUpWei: weiColumn('maximum_top_up_wei').notNull(),
+    version: integer('version').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('funding_policies_managed_wallet_id_key').on(table.managedWalletId)],
+);
+
+export const fundingOperations = pgTable(
+  'funding_operations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operationType: text('operation_type').notNull(),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'restrict' }),
+    environmentId: uuid('environment_id').references(() => environments.id, {
+      onDelete: 'restrict',
+    }),
+    idempotencyKey: text('idempotency_key'),
+    status: fundingOperationStatusEnum('status').notNull().default('pending'),
+    requestedBy: text('requested_by').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    errorCode: text('error_code'),
+    errorSummary: text('error_summary'),
+  },
+  (table) => [
+    uniqueIndex('funding_operations_requested_by_idempotency_key')
+      .on(table.requestedBy, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
+  ],
+);
+
+export const fundingTransactions = pgTable('funding_transactions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  operationId: uuid('operation_id')
+    .notNull()
+    .references(() => fundingOperations.id, { onDelete: 'restrict' }),
+  treasuryId: uuid('treasury_id')
+    .notNull()
+    .references(() => treasuries.id, { onDelete: 'restrict' }),
+  managedWalletId: uuid('managed_wallet_id')
+    .notNull()
+    .references(() => managedWallets.id, { onDelete: 'restrict' }),
+  amountWei: weiColumn('amount_wei').notNull(),
+  transactionHash: text('transaction_hash'),
+  nonce: integer('nonce'),
+  status: fundingTransactionStatusEnum('status').notNull().default('created'),
+  errorCode: text('error_code'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+});
+
+export const alerts = pgTable('alerts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  alertType: text('alert_type').notNull(),
+  severity: text('severity').notNull(),
+  entityType: text('entity_type').notNull(),
+  entityId: text('entity_id').notNull(),
+  state: text('state').notNull(),
+  firstTriggeredAt: timestamp('first_triggered_at', { withTimezone: true }).notNull(),
+  lastEvaluatedAt: timestamp('last_evaluated_at', { withTimezone: true }).notNull(),
+  lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  metadataJson: jsonb('metadata_json').notNull().default({}),
+});
+
 export const chainsRelations = relations(chains, ({ many }) => ({
   treasuries: many(treasuries),
   balanceObservations: many(balanceObservations),
+  managedWallets: many(managedWallets),
 }));
 
-export const treasuriesRelations = relations(treasuries, ({ one }) => ({
+export const treasuriesRelations = relations(treasuries, ({ one, many }) => ({
   chain: one(chains, { fields: [treasuries.chainId], references: [chains.id] }),
+  fundingTransactions: many(fundingTransactions),
 }));
 
 export const balanceObservationsRelations = relations(balanceObservations, ({ one }) => ({
   chain: one(chains, { fields: [balanceObservations.chainId], references: [chains.id] }),
+}));
+
+export const projectsRelations = relations(projects, ({ many }) => ({
+  environments: many(environments),
+  fundingOperations: many(fundingOperations),
+}));
+
+export const environmentsRelations = relations(environments, ({ one, many }) => ({
+  project: one(projects, { fields: [environments.projectId], references: [projects.id] }),
+  managedWallets: many(managedWallets),
+  fundingOperations: many(fundingOperations),
+}));
+
+export const managedWalletsRelations = relations(managedWallets, ({ one, many }) => ({
+  environment: one(environments, {
+    fields: [managedWallets.environmentId],
+    references: [environments.id],
+  }),
+  chain: one(chains, { fields: [managedWallets.chainId], references: [chains.id] }),
+  fundingPolicy: one(fundingPolicies),
+  fundingTransactions: many(fundingTransactions),
+}));
+
+export const fundingPoliciesRelations = relations(fundingPolicies, ({ one }) => ({
+  managedWallet: one(managedWallets, {
+    fields: [fundingPolicies.managedWalletId],
+    references: [managedWallets.id],
+  }),
+}));
+
+export const fundingOperationsRelations = relations(fundingOperations, ({ one, many }) => ({
+  project: one(projects, { fields: [fundingOperations.projectId], references: [projects.id] }),
+  environment: one(environments, {
+    fields: [fundingOperations.environmentId],
+    references: [environments.id],
+  }),
+  fundingTransactions: many(fundingTransactions),
+}));
+
+export const fundingTransactionsRelations = relations(fundingTransactions, ({ one }) => ({
+  operation: one(fundingOperations, {
+    fields: [fundingTransactions.operationId],
+    references: [fundingOperations.id],
+  }),
+  treasury: one(treasuries, {
+    fields: [fundingTransactions.treasuryId],
+    references: [treasuries.id],
+  }),
+  managedWallet: one(managedWallets, {
+    fields: [fundingTransactions.managedWalletId],
+    references: [managedWallets.id],
+  }),
 }));
 
 export type ChainRow = typeof chains.$inferSelect;
@@ -194,3 +392,10 @@ export type BalanceObservationRow = typeof balanceObservations.$inferSelect;
 export type ApiCredentialRow = typeof apiCredentials.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
 export type ServiceHeartbeatRow = typeof serviceHeartbeats.$inferSelect;
+export type ProjectRow = typeof projects.$inferSelect;
+export type EnvironmentRow = typeof environments.$inferSelect;
+export type ManagedWalletRow = typeof managedWallets.$inferSelect;
+export type FundingPolicyRow = typeof fundingPolicies.$inferSelect;
+export type FundingOperationRow = typeof fundingOperations.$inferSelect;
+export type FundingTransactionRow = typeof fundingTransactions.$inferSelect;
+export type AlertRow = typeof alerts.$inferSelect;

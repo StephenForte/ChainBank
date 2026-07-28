@@ -149,13 +149,34 @@ export interface ServiceHeartbeatRepository {
 /**
  * Read-only chain access.
  *
- * Phase 0 deliberately exposes no signing counterpart. There is no interface
- * here through which any caller could submit a transaction.
+ * Signing capability lives behind {@link TreasurySigner}, constructed only in
+ * signing-capable processes. BalanceReader must never submit a transaction.
  */
 export interface BalanceReader {
   /** Never throws for provider failure; returns an `unavailable` reading instead. */
   readBalance(address: string): Promise<BalanceReading>;
   /** Confirms the connected RPC reports the configured chain ID. */
+  verifyChainId(): Promise<{ readonly matches: boolean; readonly observedChainId: number | undefined }>;
+}
+
+/**
+ * Treasury transaction signing port (DECISIONS.md contract C1).
+ *
+ * Implementations must fail closed: refuse on chain-ID mismatch, kill switch,
+ * absent/malformed key, or gas-estimation failure. Destination allowlisting is
+ * the caller's responsibility; this port assumes a pre-validated address.
+ */
+export interface TreasurySigner {
+  /** Fails closed: throws SIGNER_UNAVAILABLE if key config is absent/malformed. */
+  readonly address: string;
+  sendNativeTransfer(input: {
+    readonly to: string;
+    readonly valueWei: bigint;
+    readonly nonce: number;
+  }): Promise<{ readonly transactionHash: string }>;
+  getTransactionCount(): Promise<number>;
+  /** Fails closed when gas estimation fails — no fallback constant. */
+  estimateTransferCostWei(to: string, valueWei: bigint): Promise<bigint>;
   verifyChainId(): Promise<{ readonly matches: boolean; readonly observedChainId: number | undefined }>;
 }
 
@@ -168,7 +189,11 @@ export interface EmailMessage {
 
 export type EmailSendResult =
   | { readonly kind: 'sent'; readonly providerMessageId: string | undefined }
-  | { readonly kind: 'failed'; readonly errorCode: 'EMAIL_PROVIDER_UNAVAILABLE' | 'EMAIL_PROVIDER_REJECTED'; readonly reason: string };
+  | {
+      readonly kind: 'failed';
+      readonly errorCode: 'EMAIL_PROVIDER_UNAVAILABLE' | 'EMAIL_PROVIDER_REJECTED';
+      readonly reason: string;
+    };
 
 export interface EmailSender {
   send(message: EmailMessage): Promise<EmailSendResult>;
