@@ -297,6 +297,43 @@ Security-review hardening (2026-07-28, PR #8 review — see `tasks/SECURITY-REVI
 - Open follow-up for **T4.x reconciliation**: resolve `submission_unknown` rows by
   searching for the treasury's transactions at the recorded nonce.
 
+### C8 — Funding operation status resume (owner: T2.3)
+
+```ts
+// src/app/funding/get-operation-status.ts
+type FundingOperationViewStatus =
+  'pending' | 'in_progress' | 'succeeded' | 'failed' | 'abandoned' | 'reverted' | 'replaced' | 'dropped'; // never conflate with generic failed
+
+type FundingOperationStatusReason = 'submission-unconfirmed';
+
+function getOperationStatus(
+  deps,
+  input,
+): Promise<{
+  readonly operation: FundingOperation;
+  readonly transaction: FundingTransaction | undefined;
+  readonly status: FundingOperationViewStatus;
+  readonly reason: FundingOperationStatusReason | undefined;
+}>;
+// HTTP: GET /v1/funding-operations/:id
+```
+
+Local design choices (T2.3, 2026-07-29):
+
+- Resumes `trackTransaction` only when the linked row is `submitted`, supplying the
+  configured treasury address as `senderAddress`. Timeout ⇒ view status `pending`.
+- `submission_unknown` cannot be receipt-tracked (no hash). Surfaced as
+  `status: 'pending'` + `reason: 'submission-unconfirmed'`; resolution stays with
+  Phase 4 reconciliation.
+- Reverted / replaced / dropped are distinct view statuses with their
+  `TRANSACTION_*` error codes on the operation — never mapped to generic `failed`.
+- Authz via `authorizeScope` (C6): operator and read-only see all; project-service
+  only when `operation.projectId` is in scope; **deny by default when `projectId`
+  is null**. Cron roles → `INSUFFICIENT_ROLE`.
+- Endpoint is read-plus-track only: no dispatch, no signing, no `TreasurySigner`
+  construction. Response includes wei as decimal strings and explorer URL for
+  the transaction hash when present.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                 | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -321,3 +358,7 @@ Security-review hardening (2026-07-28, PR #8 review — see `tasks/SECURITY-REVI
 - 2026-07-28 — T1.5 published C7 (`dispatchFunding`, `trackTransaction`; originally numbered C5, renumbered at rebase), wired confirmation env vars into `FundingConfig`, and documented advisory-lock + idempotency crash-recovery behavior.
 - 2026-07-28 — Security review of PR #8 confirmed two invariant defects; both fixed on that branch (in-flight reserve accounting, non-terminal `submission_unknown`, evidence-based receipt classification) with migration `0003`. A third observation — the destination allowlist enforced only by contract comment — was judged not-reportable today and recorded as a binding T1.6 review requirement. Full report: `tasks/SECURITY-REVIEW-T1.5.md`.
 - 2026-07-29 — PRs #4–#9 all merged; Wave 2 complete (T1.1–T1.5, T2.1, T3.1, T3.2, TX.1, TX.2). D8 corrected to moot — `@fastify/rate-limit` predated the plan. Remaining PENDING decisions: D3 (real threshold values, operator-owned, config-only) and D6 (e2e chain tooling, needed before T4.4). Next wave: T1.6, T2.3, T3.3, T1.7.
+- 2026-07-29 — T2.3 published funding operation status resume contract C8
+  (`getOperationStatus`, `GET /v1/funding-operations/:id`; confirmation resume,
+  `submission_unknown` → pending + `submission-unconfirmed`, distinct
+  reverted/replaced/dropped view statuses).
