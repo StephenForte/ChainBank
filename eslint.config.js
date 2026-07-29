@@ -53,7 +53,11 @@ export default tseslint.config(
       ],
       'no-restricted-properties': [
         'error',
-        { object: 'process', property: 'env', message: 'Domain modules must not read environment variables.' },
+        {
+          object: 'process',
+          property: 'env',
+          message: 'Domain modules must not read environment variables.',
+        },
       ],
     },
   },

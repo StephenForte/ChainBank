@@ -23,8 +23,7 @@ export interface CheckTreasuryBalanceInput {
   /** Correlation ID of the originating request or cron run. */
   readonly operationId: string;
   readonly actor:
-    | { readonly type: 'api_credential'; readonly id: string }
-    | { readonly type: 'cron'; readonly id: string };
+    { readonly type: 'api_credential'; readonly id: string } | { readonly type: 'cron'; readonly id: string };
 }
 
 export interface CheckTreasuryBalanceResult {

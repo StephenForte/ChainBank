@@ -24,9 +24,7 @@ export function registerErrorHandler(app: AppInstance): void {
 
     if (isChainBankError(error)) {
       logByCategory(request, error);
-      return reply
-        .status(error.httpStatus)
-        .send(body(error.code, error.publicMessage, requestId));
+      return reply.status(error.httpStatus).send(body(error.code, error.publicMessage, requestId));
     }
 
     // Schema validation rejections arrive as Fastify errors with a validation
@@ -49,7 +47,6 @@ export function registerErrorHandler(app: AppInstance): void {
       .status(500)
       .send(body('INTERNAL_ERROR', 'An unexpected internal error occurred.', requestId));
   });
-
 }
 
 export function notFoundBody(requestId: string): ErrorResponseBody {
@@ -93,18 +90,10 @@ function logByCategory(request: FastifyRequest, error: ChainBankError): void {
 
 function isFastifyValidationError(error: unknown): error is { validation: readonly unknown[] } {
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'validation' in error &&
-    Array.isArray(error.validation)
+    typeof error === 'object' && error !== null && 'validation' in error && Array.isArray(error.validation)
   );
 }
 
 function isRateLimitError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'statusCode' in error &&
-    error.statusCode === 429
-  );
+  return typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 429;
 }

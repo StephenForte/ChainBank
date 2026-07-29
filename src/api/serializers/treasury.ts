@@ -46,7 +46,8 @@ export interface TreasuryResource {
 
 export function serializeTreasury(treasury: Treasury): TreasuryResource {
   const balanceWei = treasury.lastObservedBalanceWei;
-  const spendableWei = balanceWei === undefined ? undefined : calculateSpendableWei(balanceWei, treasury.thresholds);
+  const spendableWei =
+    balanceWei === undefined ? undefined : calculateSpendableWei(balanceWei, treasury.thresholds);
 
   return {
     id: treasury.id,

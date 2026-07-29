@@ -1,4 +1,7 @@
-import { assertValidTreasuryThresholds, type TreasuryThresholds } from '../../domain/treasury/treasury-status.js';
+import {
+  assertValidTreasuryThresholds,
+  type TreasuryThresholds,
+} from '../../domain/treasury/treasury-status.js';
 import type { ChainRegistration, ChainRepository, Treasury, TreasuryRepository } from '../ports.js';
 
 export interface RegisterConfiguredTreasuryDependencies {

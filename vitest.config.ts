@@ -7,12 +7,7 @@ export default defineConfig({
       reporter: ['text', 'html', 'lcov'],
       reportsDirectory: 'coverage',
       include: ['src/**/*.ts'],
-      exclude: [
-        'src/api/server.ts',
-        'src/jobs/**',
-        'src/infrastructure/db/migrate.ts',
-        '**/*.d.ts',
-      ],
+      exclude: ['src/api/server.ts', 'src/jobs/**', 'src/infrastructure/db/migrate.ts', '**/*.d.ts'],
       // Phase 0 baseline: raise these as repository and route tests land.
       thresholds: {
         lines: 20,

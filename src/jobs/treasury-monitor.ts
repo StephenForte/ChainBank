@@ -96,7 +96,10 @@ async function main(): Promise<void> {
 
   try {
     await run(container, operationId);
-    container.logger.info({ operationId, durationMs: Date.now() - startedAt }, 'Treasury monitor run succeeded');
+    container.logger.info(
+      { operationId, durationMs: Date.now() - startedAt },
+      'Treasury monitor run succeeded',
+    );
   } catch (error) {
     container.logger.error(
       {

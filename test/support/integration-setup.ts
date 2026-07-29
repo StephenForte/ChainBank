@@ -13,8 +13,9 @@ if (existsSync('.env')) {
 
 export const integrationEnabled = process.env.CHAINBANK_RUN_INTEGRATION === 'true';
 
-if (integrationEnabled && (process.env.DATABASE_URL === undefined || process.env.DATABASE_URL.trim() === '')) {
-  throw new Error(
-    'CHAINBANK_RUN_INTEGRATION=true requires DATABASE_URL. See .env.example and the README.',
-  );
+if (
+  integrationEnabled &&
+  (process.env.DATABASE_URL === undefined || process.env.DATABASE_URL.trim() === '')
+) {
+  throw new Error('CHAINBANK_RUN_INTEGRATION=true requires DATABASE_URL. See .env.example and the README.');
 }

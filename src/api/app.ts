@@ -24,7 +24,10 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   const { config, logger } = container;
   const security = config.apiSecurity;
   if (security === undefined) {
-    throw new ChainBankError('INVALID_CONFIGURATION', 'API security configuration is required for the web role');
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'API security configuration is required for the web role',
+    );
   }
 
   const app = Fastify({
