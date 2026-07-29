@@ -1,0 +1,408 @@
+import type { AppInstance } from '../types.js';
+import { listWallets } from '../../app/wallets/list-wallets.js';
+import { registerWallet } from '../../app/wallets/register-wallet.js';
+import { setWalletPolicy } from '../../app/wallets/set-wallet-policy.js';
+import { updateWallet } from '../../app/wallets/update-wallet.js';
+import type { Container } from '../../container.js';
+import { ChainBankError } from '../../domain/errors.js';
+import { parseWeiDecimalString } from '../../domain/wei.js';
+import { requireActor } from '../plugins/authentication.js';
+import { serializeManagedWallet } from '../serializers/wallet.js';
+
+const DEFAULT_PAGE_LIMIT = 50;
+const MAX_PAGE_LIMIT = 100;
+
+const walletIdParams = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id'],
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+  },
+} as const;
+
+const weiDecimalString = {
+  type: 'string',
+  pattern: '^[0-9]+$',
+  minLength: 1,
+  maxLength: 78,
+} as const;
+
+const managedWalletResponseProperties = {
+  id: { type: 'string', format: 'uuid' },
+  project: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'slug', 'name', 'enabled'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      slug: { type: 'string' },
+      name: { type: 'string' },
+      enabled: { type: 'boolean' },
+    },
+  },
+  environment: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'slug', 'name', 'enabled'],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      slug: { type: 'string' },
+      name: { type: 'string' },
+      enabled: { type: 'boolean' },
+    },
+  },
+  chain: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['slug', 'chainId', 'displayName', 'nativeSymbol'],
+    properties: {
+      slug: { type: 'string' },
+      chainId: { type: 'integer' },
+      displayName: { type: 'string' },
+      nativeSymbol: { type: 'string' },
+    },
+  },
+  role: { type: 'string' },
+  address: { type: 'string' },
+  explorerUrl: { type: 'string' },
+  enabled: { type: 'boolean' },
+  criticalAtStartup: { type: 'boolean' },
+  reconciliationEnabled: { type: 'boolean' },
+  policy: {
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['minimumBalanceWei', 'targetBalanceWei', 'maximumTopUpWei', 'version', 'updatedAt'],
+        properties: {
+          minimumBalanceWei: weiDecimalString,
+          targetBalanceWei: weiDecimalString,
+          maximumTopUpWei: weiDecimalString,
+          version: { type: 'integer', minimum: 1 },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+    ],
+  },
+  createdAt: { type: 'string', format: 'date-time' },
+  updatedAt: { type: 'string', format: 'date-time' },
+} as const;
+
+const managedWalletResponseSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'id',
+    'project',
+    'environment',
+    'chain',
+    'role',
+    'address',
+    'explorerUrl',
+    'enabled',
+    'criticalAtStartup',
+    'reconciliationEnabled',
+    'policy',
+    'createdAt',
+    'updatedAt',
+  ],
+  properties: managedWalletResponseProperties,
+} as const;
+
+export function registerWalletRoutes(app: AppInstance, container: Container): void {
+  const walletDeps = {
+    managedWallets: container.repositories.managedWallets,
+    projects: container.repositories.projects,
+    environments: container.repositories.environments,
+    chains: container.repositories.chains,
+    fundingPolicies: container.repositories.fundingPolicies,
+    auditEvents: container.repositories.auditEvents,
+  };
+
+  app.post(
+    '/v1/wallets',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['projectId', 'environmentId', 'chainId', 'role', 'address'],
+          properties: {
+            projectId: { type: 'string', format: 'uuid' },
+            environmentId: { type: 'string', format: 'uuid' },
+            chainId: { type: 'integer', minimum: 1 },
+            role: { type: 'string', minLength: 1, maxLength: 64 },
+            address: { type: 'string', minLength: 42, maxLength: 42 },
+            criticalAtStartup: { type: 'boolean' },
+            reconciliationEnabled: { type: 'boolean' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data'],
+            properties: {
+              data: managedWalletResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const body = request.body as {
+        projectId: string;
+        environmentId: string;
+        chainId: number;
+        role: string;
+        address: string;
+        criticalAtStartup?: boolean;
+        reconciliationEnabled?: boolean;
+      };
+
+      const wallet = await registerWallet(walletDeps, {
+        role: actor.role,
+        projectId: body.projectId,
+        environmentId: body.environmentId,
+        chainId: body.chainId,
+        walletRole: body.role,
+        address: body.address,
+        criticalAtStartup: body.criticalAtStartup ?? false,
+        reconciliationEnabled: body.reconciliationEnabled ?? false,
+        operationId: request.id,
+        actorId: actor.credentialId,
+        sourceIp: request.ip,
+      });
+
+      return { data: serializeManagedWallet(wallet) };
+    },
+  );
+
+  app.get(
+    '/v1/wallets',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        // Query values arrive as strings (global coerceTypes is false).
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            projectId: { type: 'string', format: 'uuid' },
+            environmentId: { type: 'string', format: 'uuid' },
+            enabled: { type: 'string', enum: ['true', 'false'] },
+            limit: { type: 'string', pattern: '^[0-9]+$' },
+            offset: { type: 'string', pattern: '^[0-9]+$' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data', 'pagination'],
+            properties: {
+              data: {
+                type: 'array',
+                items: managedWalletResponseSchema,
+              },
+              pagination: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['limit', 'offset', 'total'],
+                properties: {
+                  limit: { type: 'integer' },
+                  offset: { type: 'integer' },
+                  total: { type: 'integer' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const query = request.query as {
+        projectId?: string;
+        environmentId?: string;
+        enabled?: 'true' | 'false';
+        limit?: string;
+        offset?: string;
+      };
+
+      const limit = parsePageLimit(query.limit);
+      const offset = parsePageOffset(query.offset);
+
+      const page = await listWallets(
+        { managedWallets: container.repositories.managedWallets },
+        {
+          role: actor.role,
+          filter: {
+            projectId: query.projectId,
+            environmentId: query.environmentId,
+            enabled: query.enabled === undefined ? undefined : query.enabled === 'true',
+          },
+          limit,
+          offset,
+        },
+      );
+
+      return {
+        data: page.items.map(serializeManagedWallet),
+        pagination: { limit, offset, total: page.total },
+      };
+    },
+  );
+
+  app.patch(
+    '/v1/wallets/:id',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: walletIdParams,
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          minProperties: 1,
+          properties: {
+            enabled: { type: 'boolean' },
+            criticalAtStartup: { type: 'boolean' },
+            reconciliationEnabled: { type: 'boolean' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data'],
+            properties: {
+              data: managedWalletResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+      const body = request.body as {
+        enabled?: boolean;
+        criticalAtStartup?: boolean;
+        reconciliationEnabled?: boolean;
+      };
+
+      const wallet = await updateWallet(
+        {
+          managedWallets: container.repositories.managedWallets,
+          auditEvents: container.repositories.auditEvents,
+        },
+        {
+          role: actor.role,
+          walletId: id,
+          patch: {
+            enabled: body.enabled,
+            criticalAtStartup: body.criticalAtStartup,
+            reconciliationEnabled: body.reconciliationEnabled,
+          },
+          operationId: request.id,
+          actorId: actor.credentialId,
+          sourceIp: request.ip,
+        },
+      );
+
+      return { data: serializeManagedWallet(wallet) };
+    },
+  );
+
+  app.put(
+    '/v1/wallets/:id/policy',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: walletIdParams,
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['minimumBalanceWei', 'targetBalanceWei', 'maximumTopUpWei'],
+          properties: {
+            minimumBalanceWei: weiDecimalString,
+            targetBalanceWei: weiDecimalString,
+            maximumTopUpWei: weiDecimalString,
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data'],
+            properties: {
+              data: managedWalletResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+      const body = request.body as {
+        minimumBalanceWei: string;
+        targetBalanceWei: string;
+        maximumTopUpWei: string;
+      };
+
+      // Parse once at the HTTP boundary; services receive bigint only.
+      const wallet = await setWalletPolicy(
+        {
+          managedWallets: container.repositories.managedWallets,
+          fundingPolicies: container.repositories.fundingPolicies,
+          auditEvents: container.repositories.auditEvents,
+        },
+        {
+          role: actor.role,
+          walletId: id,
+          minimumBalanceWei: parseWeiDecimalString(body.minimumBalanceWei, 'minimumBalanceWei'),
+          targetBalanceWei: parseWeiDecimalString(body.targetBalanceWei, 'targetBalanceWei'),
+          maximumTopUpWei: parseWeiDecimalString(body.maximumTopUpWei, 'maximumTopUpWei'),
+          operationId: request.id,
+          actorId: actor.credentialId,
+          sourceIp: request.ip,
+        },
+      );
+
+      return { data: serializeManagedWallet(wallet) };
+    },
+  );
+}
+
+function parsePageLimit(raw: string | undefined): number {
+  if (raw === undefined) {
+    return DEFAULT_PAGE_LIMIT;
+  }
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_PAGE_LIMIT) {
+    throw new ChainBankError(
+      'INVALID_REQUEST',
+      `limit must be an integer between 1 and ${String(MAX_PAGE_LIMIT)}`,
+      { publicMessage: `limit must be between 1 and ${String(MAX_PAGE_LIMIT)}.` },
+    );
+  }
+  return value;
+}
+
+function parsePageOffset(raw: string | undefined): number {
+  if (raw === undefined) {
+    return 0;
+  }
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ChainBankError('INVALID_REQUEST', 'offset must be a non-negative integer', {
+      publicMessage: 'offset must be a non-negative integer.',
+    });
+  }
+  return value;
+}

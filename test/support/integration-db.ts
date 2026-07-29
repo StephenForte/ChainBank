@@ -63,6 +63,8 @@ export async function truncatePhase1Tables(pool: pg.Pool): Promise<void> {
       funding_operations,
       funding_policies,
       managed_wallets,
+      api_credential_scopes,
+      api_credentials,
       environments,
       projects,
       balance_observations,

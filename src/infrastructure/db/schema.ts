@@ -221,6 +221,35 @@ export const environments = pgTable(
   (table) => [uniqueIndex('environments_project_slug_key').on(table.projectId, table.slug)],
 );
 
+/**
+ * Project/environment authorization rows for project-service credentials (D10).
+ * Null environment_id means all environments within the project.
+ */
+export const apiCredentialScopes = pgTable(
+  'api_credential_scopes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    credentialId: uuid('credential_id')
+      .notNull()
+      .references(() => apiCredentials.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    environmentId: uuid('environment_id').references(() => environments.id, {
+      onDelete: 'restrict',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('api_credential_scopes_project_wide_key')
+      .on(table.credentialId, table.projectId)
+      .where(sql`${table.environmentId} is null`),
+    uniqueIndex('api_credential_scopes_environment_key')
+      .on(table.credentialId, table.projectId, table.environmentId)
+      .where(sql`${table.environmentId} is not null`),
+  ],
+);
+
 export const managedWallets = pgTable(
   'managed_wallets',
   {
@@ -343,6 +372,22 @@ export const environmentsRelations = relations(environments, ({ one, many }) => 
   project: one(projects, { fields: [environments.projectId], references: [projects.id] }),
   managedWallets: many(managedWallets),
   fundingOperations: many(fundingOperations),
+  credentialScopes: many(apiCredentialScopes),
+}));
+
+export const apiCredentialScopesRelations = relations(apiCredentialScopes, ({ one }) => ({
+  credential: one(apiCredentials, {
+    fields: [apiCredentialScopes.credentialId],
+    references: [apiCredentials.id],
+  }),
+  project: one(projects, {
+    fields: [apiCredentialScopes.projectId],
+    references: [projects.id],
+  }),
+  environment: one(environments, {
+    fields: [apiCredentialScopes.environmentId],
+    references: [environments.id],
+  }),
 }));
 
 export const managedWalletsRelations = relations(managedWallets, ({ one, many }) => ({
@@ -390,6 +435,7 @@ export type ChainRow = typeof chains.$inferSelect;
 export type TreasuryRow = typeof treasuries.$inferSelect;
 export type BalanceObservationRow = typeof balanceObservations.$inferSelect;
 export type ApiCredentialRow = typeof apiCredentials.$inferSelect;
+export type ApiCredentialScopeRow = typeof apiCredentialScopes.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
 export type ServiceHeartbeatRow = typeof serviceHeartbeats.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;

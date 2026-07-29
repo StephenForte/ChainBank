@@ -35,6 +35,13 @@ export function createChainRepository(db: Database): ChainRepository {
         return toChainDescriptor(row);
       });
     },
+
+    async findByNumericChainId(chainId: number): Promise<ChainDescriptor | undefined> {
+      return withDatabaseErrors('chains.findByNumericChainId', async () => {
+        const row = await db.query.chains.findFirst({ where: eq(chains.chainId, chainId) });
+        return row === undefined ? undefined : toChainDescriptor(row);
+      });
+    },
   };
 }
 

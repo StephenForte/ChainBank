@@ -3,6 +3,7 @@ import { ChainBankError } from '../../../src/domain/errors.js';
 import {
   formatWeiAsEther,
   parseEtherToWei,
+  parseWeiDecimalString,
   WEI_PER_ETHER,
   weiFromDatabaseNumeric,
   weiToDatabaseNumeric,
@@ -38,6 +39,19 @@ describe('formatWeiAsEther', () => {
     expect(formatWeiAsEther(WEI_PER_ETHER)).toBe('1');
     expect(formatWeiAsEther(WEI_PER_ETHER / 2n)).toBe('0.5');
     expect(formatWeiAsEther(WEI_PER_ETHER + 1n)).toBe('1.000000000000000001');
+  });
+});
+
+describe('parseWeiDecimalString', () => {
+  it('parses non-negative integer wei strings', () => {
+    expect(parseWeiDecimalString('0', 'amount')).toBe(0n);
+    expect(parseWeiDecimalString('1000000000000000000', 'amount')).toBe(WEI_PER_ETHER);
+  });
+
+  it('rejects non-integer and negative input', () => {
+    expect(() => parseWeiDecimalString('1.5', 'amount')).toThrow(ChainBankError);
+    expect(() => parseWeiDecimalString('-1', 'amount')).toThrow(ChainBankError);
+    expect(() => parseWeiDecimalString('abc', 'amount')).toThrow(ChainBankError);
   });
 });
 
