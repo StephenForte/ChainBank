@@ -11,6 +11,7 @@ import { ChainBankError } from '../domain/errors.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerFundingOperationRoutes } from './routes/funding-operations.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerTreasuryRoutes } from './routes/treasuries.js';
@@ -97,6 +98,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   registerTreasuryRoutes(app, container);
   registerProjectRoutes(app, container);
   registerWalletRoutes(app, container);
+  registerFundingOperationRoutes(app, container);
   registerAdminRoutes(app, container);
 
   await registerDashboard(app);
