@@ -155,6 +155,38 @@ Local design choices (T3.1, 2026-07-28):
 - `applyAlertTransition` advances `lastSentAt` on open/escalate/remind; resolve → `undefined`.
 - `reminderIntervalMs` must be finite and ≥ 0; negative/NaN → `INVALID_CONFIGURATION`.
 
+### C3a — Treasury alert orchestration (owner: T3.3)
+
+```ts
+// src/app/alerts/evaluate-treasury-alerts.ts
+function evaluateTreasuryAlerts(deps, input): Promise<EvaluateTreasuryAlertsResult>;
+// deps: AlertRepository, EmailSender, AuditEventRepository, Clock
+// After a successful balance observation only. Used by treasury-monitor cron
+// and POST /v1/treasuries/:id/check.
+
+// src/app/ports.ts — AlertRepository
+findOpenByEntity /
+  insertOpen /
+  markEscalated /
+  markPendingEmail /
+  clearPendingEmail /
+  acknowledgeSend /
+  resolve /
+  touchLastEvaluated;
+```
+
+Local design choices (T3.3, 2026-07-29):
+
+- Alert type string: `treasury_balance`; entity type: `treasury`.
+- Persist-then-send: structural open/escalate/remind/resolve-intent is written
+  with `metadata_json.pendingEmail` (`warning|critical|reminder|recovery`) and
+  **without** advancing `last_sent_at`. `acknowledgeSend` / `resolve` run only
+  after `EmailSender` returns `sent`. Failed sends leave pending set for retry.
+- Resolve is append-oriented: `state='resolved'` + `resolved_at`; never delete.
+- `ALERT_REMINDER_INTERVAL_HOURS` (default 24) → `config.alerts.reminderIntervalMs`
+  for web and treasury-monitor. Monitor gains email config; still never receives
+  `TREASURY_PRIVATE_KEY` (`isSigningCapableRole` / omit-before-parse unchanged).
+
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
@@ -362,3 +394,4 @@ Local design choices (T2.3, 2026-07-29):
   (`getOperationStatus`, `GET /v1/funding-operations/:id`; confirmation resume,
   `submission_unknown` → pending + `submission-unconfirmed`, distinct
   reverted/replaced/dropped view statuses).
+- 2026-07-29 — T3.3 wired alert persistence + orchestration: `AlertRepository` over migration `0001` `alerts` (append-oriented resolve), `evaluateTreasuryAlerts` shared by treasury-monitor cron and `POST /v1/treasuries/:id/check`, `ALERT_REMINDER_INTERVAL_HOURS` (default 24) in config. Persist-then-send uses `metadata_json.pendingEmail` so a failed send does not advance `last_sent_at` and is retried next run. Monitor role now loads email settings; still strips `TREASURY_PRIVATE_KEY`.

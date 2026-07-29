@@ -19,15 +19,43 @@ describe('loadConfig', () => {
     expect(getTreasuryPrivateKey(config)).toBeUndefined();
   });
 
-  it('loads the treasury monitor without requiring email credentials', () => {
+  it('loads the treasury monitor with email credentials but no signing key', () => {
     const config = loadConfig({ serviceRole: 'treasury-monitor', env: validMonitorEnv() });
 
     expect(config.app.serviceRole).toBe('treasury-monitor');
-    expect(config.email).toBeUndefined();
+    expect(config.email?.provider).toBe('log-only');
+    expect(config.email?.operatorRecipients).toEqual(['operator@example.com']);
     expect(config.apiSecurity).toBeUndefined();
     expect(config.database.poolMax).toBe(2);
     expect(config.isFundingEnabled).toBe(false);
+    expect(config.alerts.reminderIntervalMs).toBe(24 * 60 * 60 * 1000);
     expect(getTreasuryPrivateKey(config)).toBeUndefined();
+  });
+
+  it('parses ALERT_REMINDER_INTERVAL_HOURS for monitor and web', () => {
+    const monitor = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({ ALERT_REMINDER_INTERVAL_HOURS: '12' }),
+    });
+    expect(monitor.alerts.reminderIntervalMs).toBe(12 * 60 * 60 * 1000);
+
+    const web = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({ ALERT_REMINDER_INTERVAL_HOURS: '0' }),
+    });
+    expect(web.alerts.reminderIntervalMs).toBe(0);
+  });
+
+  it('requires email credentials for the treasury monitor', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'treasury-monitor',
+        env: validMonitorEnv({
+          EMAIL_FROM_ADDRESS: undefined,
+          EMAIL_OPERATOR_RECIPIENTS: undefined,
+        }),
+      }),
+    ).toThrow(ChainBankError);
   });
 
   it('rejects FUNDING_ENABLED=true for web without a treasury private key', () => {

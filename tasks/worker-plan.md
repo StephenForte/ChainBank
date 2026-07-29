@@ -105,7 +105,7 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Pure `src/domain/alerts/` (contract C3), injected clock, exhaustive tests.
 - **T3.2** ✅ 🟢 Email templates `[none]` — DONE (PR #6)
   Six operator templates per PRD §12.3 plus the pre-existing test message.
-- **T3.3** 🔴 Treasury monitor cron alert integration `[T3.1, T3.2]` — **next**
+- **T3.3** ✅ 🔴 Treasury monitor cron alert integration `[T3.1, T3.2]` — DONE
   Cron drives transitions + sends emails, persists alert state, manual protected
   check-now stays read-only, no signing key in this process. Both halves already
   exist and tested; this is the wiring plus `ALERT_REMINDER_INTERVAL_HOURS`.

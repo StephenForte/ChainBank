@@ -84,15 +84,21 @@ export interface FundingConfig {
   readonly privateKey: `0x${string}` | undefined;
 }
 
+export interface AlertsConfig {
+  /** Reminder interval derived from ALERT_REMINDER_INTERVAL_HOURS. */
+  readonly reminderIntervalMs: number;
+}
+
 export interface ChainBankConfig {
   readonly app: AppConfig;
   readonly database: DatabaseConfig;
   readonly chain: ChainConfig;
   readonly treasury: TreasuryConfig;
-  /** Absent for roles that must not hold email provider credentials. */
+  /** Present for web and treasury-monitor; absent for roles that never send mail. */
   readonly email: EmailConfig | undefined;
   /** Absent for non-API roles. */
   readonly apiSecurity: ApiSecurityConfig | undefined;
+  readonly alerts: AlertsConfig;
   readonly isFundingEnabled: boolean;
   readonly isFundingKillSwitchActive: boolean;
   /**
@@ -154,12 +160,19 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     database: buildDatabaseConfig(env, options.serviceRole, isHosted),
     chain: buildChainConfig(env),
     treasury: buildTreasuryConfig(env),
-    email: options.serviceRole === 'web' ? buildEmailConfig(env) : undefined,
+    email: requiresEmailConfig(options.serviceRole) ? buildEmailConfig(env, options.serviceRole) : undefined,
     apiSecurity: options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted) : undefined,
+    alerts: {
+      reminderIntervalMs: env.ALERT_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000,
+    },
     isFundingEnabled: funding.enabled,
     isFundingKillSwitchActive: funding.killSwitch,
     funding,
   };
+}
+
+function requiresEmailConfig(serviceRole: ServiceRole): boolean {
+  return serviceRole === 'web' || serviceRole === 'treasury-monitor';
 }
 
 /**
@@ -330,16 +343,18 @@ function buildTreasuryConfig(env: RawEnvironment): TreasuryConfig {
   return { address: getAddress(env.TREASURY_ADDRESS), ...thresholds };
 }
 
-function buildEmailConfig(env: RawEnvironment): EmailConfig {
+function buildEmailConfig(env: RawEnvironment, serviceRole: ServiceRole): EmailConfig {
   if (env.EMAIL_FROM_ADDRESS === undefined) {
-    throw new ChainBankError('INVALID_CONFIGURATION', 'EMAIL_FROM_ADDRESS is required for the web service', {
-      publicMessage: 'The service is misconfigured.',
-    });
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      `EMAIL_FROM_ADDRESS is required for the ${serviceRole} service`,
+      { publicMessage: 'The service is misconfigured.' },
+    );
   }
   if (env.EMAIL_OPERATOR_RECIPIENTS === undefined) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
-      'EMAIL_OPERATOR_RECIPIENTS is required for the web service',
+      `EMAIL_OPERATOR_RECIPIENTS is required for the ${serviceRole} service`,
       { publicMessage: 'The service is misconfigured.' },
     );
   }

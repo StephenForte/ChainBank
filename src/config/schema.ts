@@ -25,6 +25,13 @@ const positiveInteger = z
   .transform((value) => Number.parseInt(value, 10))
   .refine((value) => value > 0, 'must be greater than zero');
 
+const nonNegativeInteger = z
+  .string()
+  .trim()
+  .regex(/^\d+$/, 'must be a non-negative integer')
+  .transform((value) => Number.parseInt(value, 10))
+  .refine((value) => value >= 0 && Number.isSafeInteger(value), 'must be a non-negative safe integer');
+
 const httpUrl = z
   .url({ protocol: /^https?$/, message: 'must be an absolute http(s) URL' })
   .trim()
@@ -98,6 +105,12 @@ export const environmentSchema = z.object({
    * resumable as `pending` — never a false failure (D4).
    */
   FUNDING_CONFIRMATION_TIMEOUT_MS: positiveInteger.default(60_000),
+
+  /**
+   * Hours between unresolved treasury alert reminder emails (P3-US2).
+   * Used by treasury-monitor and the manual check-now path.
+   */
+  ALERT_REMINDER_INTERVAL_HOURS: nonNegativeInteger.default(24),
 });
 
 export type RawEnvironment = z.infer<typeof environmentSchema>;
