@@ -1,6 +1,6 @@
 # Deploy ChainBank Phase 0 to Render
 
-Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, and **shared Postgres**. No service receives a treasury private key.
+Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, and **shared Postgres**. No service receives a treasury private key. The monitor may hold email credentials for alert delivery.
 
 ## Prerequisites
 
@@ -33,19 +33,20 @@ Before treating a deploy as healthy:
 3. Confirm Render detected `render.yaml`.
 4. When prompted for `sync: false` variables, enter:
 
-| Variable                        | Service    | Notes                                                                                                                 |
-| ------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_BASE_URL`               | web        | Use `https://chainbank-web.onrender.com` (adjust if Render assigns a different name), then confirm after first deploy |
-| `DATABASE_SSL_CA`               | web + cron | Leaf certificate PEM for fingerprint pinning (see below)                                                              |
-| `CHAIN_RPC_URL`                 | web + cron | Real JSON-RPC URL, not etherscan.io                                                                                   |
-| `TREASURY_ADDRESS`              | web + cron | Hot wallet only                                                                                                       |
-| `TREASURY_WARNING_BALANCE_ETH`  | web + cron | e.g. `1`                                                                                                              |
-| `TREASURY_CRITICAL_BALANCE_ETH` | web + cron | e.g. `0.25`                                                                                                           |
-| `TREASURY_RECOVERY_BALANCE_ETH` | web + cron | e.g. `2`                                                                                                              |
-| `TREASURY_MINIMUM_RESERVE_ETH`  | web + cron | e.g. `0.5`                                                                                                            |
-| `RESEND_API_KEY`                | web only   |                                                                                                                       |
-| `EMAIL_FROM_ADDRESS`            | web only   | Verified sender in Resend                                                                                             |
-| `EMAIL_OPERATOR_RECIPIENTS`     | web only   | Comma-separated                                                                                                       |
+| Variable                        | Service                | Notes                                                                                                                |
+| ------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_BASE_URL`               | web + treasury-monitor | Use `https://chainbank-web.onrender.com` (adjust if Render assigns a different name); also used in alert email links |
+| `DATABASE_SSL_CA`               | web + cron             | Leaf certificate PEM for fingerprint pinning (see below)                                                             |
+| `CHAIN_RPC_URL`                 | web + cron             | Real JSON-RPC URL, not etherscan.io                                                                                  |
+| `TREASURY_ADDRESS`              | web + cron             | Hot wallet only                                                                                                      |
+| `TREASURY_WARNING_BALANCE_ETH`  | web + cron             | e.g. `1`                                                                                                             |
+| `TREASURY_CRITICAL_BALANCE_ETH` | web + cron             | e.g. `0.25`                                                                                                          |
+| `TREASURY_RECOVERY_BALANCE_ETH` | web + cron             | e.g. `2`                                                                                                             |
+| `TREASURY_MINIMUM_RESERVE_ETH`  | web + cron             | e.g. `0.5`                                                                                                           |
+| `RESEND_API_KEY`                | web + treasury-monitor | Required when `EMAIL_PROVIDER=resend`                                                                                |
+| `EMAIL_FROM_ADDRESS`            | web + treasury-monitor | Verified sender in Resend                                                                                            |
+| `EMAIL_OPERATOR_RECIPIENTS`     | web + treasury-monitor | Comma-separated                                                                                                      |
+| `ALERT_REMINDER_INTERVAL_HOURS` | web + treasury-monitor | Optional; default `24`                                                                                               |
 
 5. Create the Blueprint and wait for the first web deploy.
 
@@ -93,7 +94,7 @@ On **both** `chainbank-web` and `chainbank-treasury-monitor`:
 - `FUNDING_ENABLED=false`
 - **No** `TREASURY_PRIVATE_KEY`
 - **No** `NODE_TLS_REJECT_UNAUTHORIZED=0`
-- Cron must **not** have `RESEND_API_KEY`
+- Email vars set on **both** (alerts); still **no** signing key on either
 - `DATABASE_SSL_CA` is set on web and cron
 
 ## 3. Fix `PUBLIC_BASE_URL` if needed
