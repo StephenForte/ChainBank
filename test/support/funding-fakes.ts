@@ -4,6 +4,7 @@ import type {
   FundingOperation,
   FundingOperationRepository,
   FundingTransaction,
+  FundingTransactionListPage,
   FundingTransactionRepository,
   InsertFundingOperationInput,
   InsertFundingTransactionInput,
@@ -170,6 +171,9 @@ export function createInMemoryFundingStores(): {
     },
     markFailed(id, errorCode) {
       return Promise.resolve(transitionTx(txsById, id, 'failed', { errorCode }));
+    },
+    list() {
+      return Promise.resolve({ items: [], total: 0 } satisfies FundingTransactionListPage);
     },
   };
 
