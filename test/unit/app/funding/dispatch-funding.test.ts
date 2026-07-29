@@ -229,7 +229,9 @@ describe('dispatchFunding', () => {
     expect(signer.sendCalls).toBe(0);
   });
 
-  it('marks the transaction failed when submission throws, without confirming', async () => {
+  it('records an ambiguous submission failure as non-terminal submission_unknown', async () => {
+    // An RPC timeout can follow a successful broadcast, so the transfer may
+    // still mine. Marking it terminal would reopen the duplicate-funding gate.
     const signer = createFakeSigner({
       send: () =>
         Promise.reject(
@@ -241,12 +243,103 @@ describe('dispatchFunding', () => {
     const { dependencies, stores } = deps({ signer });
 
     await expect(
-      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'submit-fail' })),
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'submit-ambiguous' })),
     ).rejects.toMatchObject({ code: 'RPC_UNAVAILABLE' });
 
     const txs = [...stores.txsById.values()];
     expect(txs).toHaveLength(1);
-    expect(txs[0]?.status).toBe('failed');
+    expect(txs[0]?.status).toBe('submission_unknown');
     expect(txs[0]?.transactionHash).toBeUndefined();
+    // Nonce is retained so reconciliation can identify the in-flight transfer.
+    expect(txs[0]?.nonce).toBe(7);
+  });
+
+  it('keeps the duplicate-funding gate closed after an ambiguous submission', async () => {
+    const signer = createFakeSigner({
+      send: () => Promise.reject(new ChainBankError('RPC_UNAVAILABLE', 'submit timed out')),
+    });
+    const { dependencies, stores } = deps({ signer });
+
+    await expect(
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'ambiguous-1' })),
+    ).rejects.toMatchObject({ code: 'RPC_UNAVAILABLE' });
+
+    // A retry must not create a second transfer while the first may be in flight.
+    await expect(
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'ambiguous-retry' })),
+    ).rejects.toMatchObject({ code: 'PENDING_FUNDING_EXISTS' });
+
+    expect([...stores.txsById.values()]).toHaveLength(1);
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('marks the transaction failed when the error proves the transfer never broadcast', async () => {
+    const signer = createFakeSigner({
+      send: () =>
+        Promise.reject(
+          new ChainBankError('INVALID_AMOUNT', 'Transfer value must be a non-negative integer wei amount.'),
+        ),
+    });
+    const { dependencies, stores } = deps({ signer });
+
+    await expect(
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'submit-rejected' })),
+    ).rejects.toMatchObject({ code: 'INVALID_AMOUNT' });
+
+    const txs = [...stores.txsById.values()];
+    expect(txs).toHaveLength(1);
+    expect(txs[0]?.status).toBe('failed');
+  });
+
+  it('counts in-flight transfers to other wallets against the treasury reserve', async () => {
+    const { dependencies, stores } = deps({});
+    const reserveWei = 9n * ONE_ETH;
+    const treasury = { balanceWei: 10n * ONE_ETH, reserveWei };
+    // Each wallet may draw up to 0.9 ETH; three would breach a 9 ETH reserve
+    // on a 10 ETH balance if in-flight amounts were ignored.
+    const policy = {
+      minimumBalanceWei: ONE_ETH,
+      targetBalanceWei: 2n * ONE_ETH,
+      maximumTopUpWei: (9n * ONE_ETH) / 10n,
+      isEnabled: true,
+    };
+    const walletInput = (id: string, address: string, idempotencyKey: string) =>
+      baseInput({
+        idempotencyKey,
+        policy,
+        treasury: { ...baseInput().treasury, ...treasury },
+        wallet: { id, address, enabled: true },
+        walletBalanceWei: 0n,
+      });
+
+    const first = await dispatchFunding(
+      dependencies,
+      walletInput('wallet-a', '0x000000000000000000000000000000000000000a', 'reserve-a'),
+    );
+    expect(first.kind).toBe('submitted');
+
+    // The observed balance still reads 10 ETH because nothing has mined, so
+    // only in-flight accounting can bound the second transfer.
+    const second = await dispatchFunding(
+      dependencies,
+      walletInput('wallet-b', '0x000000000000000000000000000000000000000b', 'reserve-b'),
+    );
+    expect(second.kind).toBe('submitted');
+
+    // Spendable is now exhausted, so the third wallet is refused outright.
+    const third = await dispatchFunding(
+      dependencies,
+      walletInput('wallet-c', '0x000000000000000000000000000000000000000c', 'reserve-c'),
+    );
+    expect(third.kind).toBe('blocked');
+    if (third.kind === 'blocked') {
+      expect(third.reason).toBe('reserve');
+    }
+
+    // The invariant: everything in flight together cannot breach the reserve.
+    const inFlightWei = [...stores.txsById.values()]
+      .filter((tx) => tx.status === 'submitted')
+      .reduce((total, tx) => total + tx.amountWei, 0n);
+    expect(inFlightWei).toBeLessThanOrEqual(treasury.balanceWei - reserveWei);
   });
 });

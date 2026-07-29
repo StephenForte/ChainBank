@@ -235,10 +235,15 @@ async function dispatchUnderLock(
     input.wallet.address,
     provisionalAmountWei,
   );
+  // Amounts already committed to unmined transfers from this treasury. The
+  // observed balance cannot see them, so without this the reserve check would
+  // pass repeatedly against the same pre-send balance (AGENTS.md §7.4).
+  const inFlightWei = await uow.transactions.sumInFlightAmountWeiByTreasury(input.treasury.id);
   const treasurySpendableWei = calculateTreasurySpendableWei({
     treasuryBalanceWei: input.treasury.balanceWei,
     reserveWei: input.treasury.reserveWei,
     estimatedCostWei,
+    inFlightWei,
   });
   const decision = calculateTopUp({
     currentBalanceWei: input.walletBalanceWei,
@@ -289,13 +294,35 @@ async function dispatchUnderLock(
   } catch (error) {
     const completedAt = dependencies.clock.now();
     const errorCode = isChainBankError(error) ? error.code : 'RPC_UNAVAILABLE';
-    await uow.transactions.markFailed(created.id, errorCode);
-    await uow.operations.markFailed(
-      operation.id,
-      errorCode,
-      'Native transfer submission failed.',
-      completedAt,
-    );
+
+    if (isProvablyBeforeBroadcast(errorCode)) {
+      // The node rejected the request before it could enter the mempool, so no
+      // transfer exists and the row is safely terminal.
+      await uow.transactions.markFailed(created.id, errorCode);
+      await uow.operations.markFailed(
+        operation.id,
+        errorCode,
+        'Native transfer submission failed.',
+        completedAt,
+      );
+    } else {
+      // Ambiguous: a timeout or transport failure can follow a successful
+      // broadcast. Record a non-terminal state so the wallet's duplicate gate
+      // stays closed and reconciliation can resolve the real outcome.
+      await uow.transactions.markSubmissionUnknown(created.id, { nonce, errorCode });
+      dependencies.logger.error(
+        {
+          correlationId: input.correlationId,
+          operationId: operation.id,
+          transactionId: created.id,
+          managedWalletId: input.wallet.id,
+          nonce,
+          errorCode,
+        },
+        'Funding transaction submission outcome unknown; may be in flight',
+      );
+    }
+
     return {
       kind: 'throw',
       error: isChainBankError(error)
@@ -378,6 +405,28 @@ function assertFundingGates(dependencies: DispatchFundingDependencies, input: Di
       context: { managedWalletId: input.wallet.id },
     });
   }
+}
+
+/**
+ * Error codes raised by validation performed before the signed transaction can
+ * reach the network. Only these justify a terminal `failed` transaction row;
+ * anything else (timeout, transport failure, unknown) must be treated as
+ * possibly-broadcast. Fails closed: unrecognized codes are treated as ambiguous.
+ */
+const PRE_BROADCAST_ERROR_CODES: ReadonlySet<string> = new Set([
+  'SIGNER_UNAVAILABLE',
+  'SIGNER_CHAIN_MISMATCH',
+  'CHAIN_ID_MISMATCH',
+  'GAS_ESTIMATION_FAILED',
+  'INVALID_AMOUNT',
+  'INVALID_ADDRESS',
+  'INVALID_REQUEST',
+  'FUNDING_DISABLED',
+  'ENTITY_DISABLED',
+]);
+
+function isProvablyBeforeBroadcast(errorCode: string): boolean {
+  return PRE_BROADCAST_ERROR_CODES.has(errorCode);
 }
 
 function provisionalTopUpAmountWei(input: DispatchFundingInput): bigint {

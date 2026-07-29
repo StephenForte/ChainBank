@@ -112,6 +112,15 @@ export function createInMemoryFundingStores(): {
       }
       return Promise.resolve(undefined);
     },
+    sumInFlightAmountWeiByTreasury(treasuryId) {
+      let total = 0n;
+      for (const tx of txsById.values()) {
+        if (tx.treasuryId === treasuryId && isPendingTransactionStatus(tx.status)) {
+          total += tx.amountWei;
+        }
+      }
+      return Promise.resolve(total);
+    },
     insertCreated(input: InsertFundingTransactionInput) {
       const tx: FundingTransaction = {
         id: input.id,
@@ -136,6 +145,14 @@ export function createInMemoryFundingStores(): {
           transactionHash: input.transactionHash,
           nonce: input.nonce,
           submittedAt: input.submittedAt,
+        }),
+      );
+    },
+    markSubmissionUnknown(id, input) {
+      return Promise.resolve(
+        transitionTx(txsById, id, 'submission_unknown', {
+          nonce: input.nonce,
+          errorCode: input.errorCode,
         }),
       );
     },

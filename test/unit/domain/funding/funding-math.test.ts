@@ -148,8 +148,42 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: 1000n,
         reserveWei: 100n,
         estimatedCostWei: 50n,
+        inFlightWei: 0n,
       }),
     ).toBe(850n);
+  });
+
+  it('subtracts in-flight transfers that the observed balance cannot see', () => {
+    expect(
+      calculateTreasurySpendableWei({
+        treasuryBalanceWei: 1000n,
+        reserveWei: 100n,
+        estimatedCostWei: 50n,
+        inFlightWei: 400n,
+      }),
+    ).toBe(450n);
+  });
+
+  it('floors at zero when in-flight transfers already commit the spendable balance', () => {
+    expect(
+      calculateTreasurySpendableWei({
+        treasuryBalanceWei: 1000n,
+        reserveWei: 900n,
+        estimatedCostWei: 10n,
+        inFlightWei: 90n,
+      }),
+    ).toBe(0n);
+  });
+
+  it('rejects negative in-flight amounts', () => {
+    expect(() =>
+      calculateTreasurySpendableWei({
+        treasuryBalanceWei: 1000n,
+        reserveWei: 0n,
+        estimatedCostWei: 0n,
+        inFlightWei: -1n,
+      }),
+    ).toThrow(ChainBankError);
   });
 
   it('floors at zero when reserve and cost exhaust balance', () => {
@@ -158,6 +192,7 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: 100n,
         reserveWei: 80n,
         estimatedCostWei: 30n,
+        inFlightWei: 0n,
       }),
     ).toBe(0n);
   });
@@ -168,6 +203,7 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: 100n,
         reserveWei: 60n,
         estimatedCostWei: 40n,
+        inFlightWei: 0n,
       }),
     ).toBe(0n);
   });
@@ -178,6 +214,7 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: -1n,
         reserveWei: 0n,
         estimatedCostWei: 0n,
+        inFlightWei: 0n,
       }),
     ).toThrow(ChainBankError);
     expect(() =>
@@ -185,6 +222,7 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: 0n,
         reserveWei: -1n,
         estimatedCostWei: 0n,
+        inFlightWei: 0n,
       }),
     ).toThrow(ChainBankError);
     expect(() =>
@@ -192,6 +230,7 @@ describe('calculateTreasurySpendableWei', () => {
         treasuryBalanceWei: 0n,
         reserveWei: 0n,
         estimatedCostWei: -1n,
+        inFlightWei: 0n,
       }),
     ).toThrow(ChainBankError);
   });

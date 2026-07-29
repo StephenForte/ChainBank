@@ -15,9 +15,16 @@ export const FUNDING_OPERATION_STATUSES = [
 
 export type FundingOperationStatus = (typeof FUNDING_OPERATION_STATUSES)[number];
 
+/**
+ * `submission_unknown` covers a submission whose outcome the node never
+ * confirmed (for example an RPC timeout on eth_sendRawTransaction). The signed
+ * transaction may be in the mempool, so this state is deliberately NOT terminal
+ * and still blocks another top-up to the same wallet.
+ */
 export const FUNDING_TRANSACTION_STATUSES = [
   'created',
   'submitted',
+  'submission_unknown',
   'confirmed',
   'reverted',
   'replaced',
@@ -52,8 +59,11 @@ export function isTerminalOperationStatus(status: FundingOperationStatus): boole
  */
 export function isPendingTransactionStatus(status: FundingTransactionStatus): boolean {
   switch (status) {
+    // `submission_unknown` is included: an unconfirmed submission may still
+    // mine, so the duplicate gate must stay closed.
     case 'created':
     case 'submitted':
+    case 'submission_unknown':
       return true;
     case 'confirmed':
     case 'reverted':
@@ -73,6 +83,7 @@ export function isSuccessfulTransactionStatus(status: FundingTransactionStatus):
       return true;
     case 'created':
     case 'submitted':
+    case 'submission_unknown':
     case 'reverted':
     case 'replaced':
     case 'dropped':
@@ -131,9 +142,13 @@ export function canTransitionOperationStatus(
 /**
  * Allowed transaction-status transitions.
  *
- * created → submitted | failed
+ * created → submitted | submission_unknown | failed
  * submitted → confirmed | reverted | replaced | dropped | failed
+ * submission_unknown → submitted | confirmed | reverted | replaced | dropped | failed
  * terminal → (none)
+ *
+ * `submission_unknown → submitted` exists so reconciliation can promote the row
+ * once the transaction hash is observed on chain.
  */
 export function canTransitionTransactionStatus(
   from: FundingTransactionStatus,
@@ -143,6 +158,7 @@ export function canTransitionTransactionStatus(
     case 'created':
       switch (to) {
         case 'submitted':
+        case 'submission_unknown':
         case 'failed':
           return true;
         case 'created':
@@ -164,6 +180,22 @@ export function canTransitionTransactionStatus(
           return true;
         case 'created':
         case 'submitted':
+        case 'submission_unknown':
+          return false;
+        default:
+          return assertNever(to, 'FundingTransactionStatus');
+      }
+    case 'submission_unknown':
+      switch (to) {
+        case 'submitted':
+        case 'confirmed':
+        case 'reverted':
+        case 'replaced':
+        case 'dropped':
+        case 'failed':
+          return true;
+        case 'created':
+        case 'submission_unknown':
           return false;
         default:
           return assertNever(to, 'FundingTransactionStatus');

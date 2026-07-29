@@ -444,10 +444,24 @@ export interface FundingTransactionRepository {
    * Used to prevent duplicate top-ups (AGENTS.md §7.5).
    */
   findPendingByManagedWallet(managedWalletId: string): Promise<FundingTransaction | undefined>;
+  /**
+   * Total wei committed to in-flight transfers for this treasury across all
+   * wallets. Required for the reserve check: an on-chain balance read cannot
+   * see this treasury's own submitted-but-unmined sends (AGENTS.md §7.4).
+   */
+  sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint>;
   insertCreated(input: InsertFundingTransactionInput): Promise<FundingTransaction>;
   markSubmitted(
     id: string,
     input: { readonly transactionHash: string; readonly nonce: number; readonly submittedAt: Date },
+  ): Promise<FundingTransaction>;
+  /**
+   * Records a submission whose outcome the node never confirmed. Non-terminal:
+   * the transfer may still mine, so the duplicate-funding gate stays closed.
+   */
+  markSubmissionUnknown(
+    id: string,
+    input: { readonly nonce: number; readonly errorCode: string },
   ): Promise<FundingTransaction>;
   markConfirmed(id: string, confirmedAt: Date): Promise<FundingTransaction>;
   markReverted(id: string, errorCode: string): Promise<FundingTransaction>;
@@ -489,5 +503,13 @@ export interface TransactionReceiptTracker {
     readonly transactionHash: string;
     readonly confirmations: number;
     readonly timeoutMs: number;
+    /**
+     * Sender and nonce of the submitted transfer. Used as positive evidence
+     * when the receipt wait fails: only a consumed nonce with an unknown hash
+     * proves the transfer can never mine. Without such proof the outcome is
+     * `pending` — a transient RPC error must never become a terminal state.
+     */
+    readonly senderAddress: string;
+    readonly nonce: number;
   }): Promise<TransactionTrackingOutcome>;
 }

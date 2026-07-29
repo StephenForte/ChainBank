@@ -51,6 +51,8 @@ export function createTransactionReceiptTracker(
       readonly transactionHash: string;
       readonly confirmations: number;
       readonly timeoutMs: number;
+      readonly senderAddress: string;
+      readonly nonce: number;
     }): Promise<TransactionTrackingOutcome> {
       const hash = input.transactionHash as `0x${string}`;
 
@@ -78,9 +80,12 @@ export function createTransactionReceiptTracker(
           return { kind: 'pending' };
         }
 
-        const replacedOrDropped = await classifyMissingTransaction(publicClient, hash, options.logger);
-        if (replacedOrDropped !== undefined) {
-          return replacedOrDropped;
+        const classified = await classifyMissingTransaction(publicClient, hash, options.logger, {
+          senderAddress: input.senderAddress,
+          nonce: input.nonce,
+        });
+        if (classified !== undefined) {
+          return classified;
         }
 
         throw new ChainBankError(
@@ -98,35 +103,59 @@ export function createTransactionReceiptTracker(
 }
 
 /**
- * When a wait fails for a reason other than timeout, probe whether the tx is
- * gone (dropped) or a different hash mined for the same nonce (replaced).
+ * When a wait fails for a reason other than timeout, decide whether there is
+ * *positive evidence* that the transaction can never mine.
+ *
+ * The only such evidence available here is a consumed nonce: if the sender's
+ * account nonce has advanced past this transaction's nonce while the hash is
+ * unknown to the node, some other transaction took that nonce and this one is
+ * permanently superseded (`replaced`).
+ *
+ * Everything else — an unknown hash on a lagging or load-balanced node, a
+ * network error during the probe — yields `pending`. A transient failure must
+ * never be recorded as a terminal state, because a terminal row reopens the
+ * duplicate-funding gate while the transfer may still be in the mempool
+ * (AGENTS.md §7.5).
  */
 async function classifyMissingTransaction(
   publicClient: PublicClient,
   hash: `0x${string}`,
   logger: Logger,
-): Promise<Extract<TransactionTrackingOutcome, { kind: 'replaced' | 'dropped' }> | undefined> {
-  try {
-    const tx = await publicClient.getTransaction({ hash });
-    if (tx === null) {
-      return { kind: 'dropped' };
-    }
-    // Still in mempool or unknown — let the caller treat as retriable RPC error.
-    return undefined;
-  } catch (error) {
-    // Some nodes throw when the tx is unknown; distinguish replacement when possible.
-    try {
-      const tx = await publicClient.getTransaction({ hash }).catch(() => null);
-      if (tx === null) {
-        return { kind: 'dropped' };
-      }
-    } catch {
-      // fall through
-    }
-    logger.warn(
-      { transactionHash: hash, detail: describeUnknownError(error) },
-      'Could not classify missing funding transaction',
-    );
+  sender: { readonly senderAddress: string; readonly nonce: number },
+): Promise<Extract<TransactionTrackingOutcome, { kind: 'replaced' | 'pending' }> | undefined> {
+  // viem throws TransactionNotFoundError rather than returning null when the
+  // node does not know the hash; treat any failure here as "not visible".
+  const transaction = await publicClient.getTransaction({ hash }).catch(() => null);
+  if (transaction !== null) {
+    // Known to the node but the wait failed — retriable, not terminal.
     return undefined;
   }
+
+  let accountNonce: number;
+  try {
+    accountNonce = await publicClient.getTransactionCount({
+      address: sender.senderAddress as `0x${string}`,
+      blockTag: 'latest',
+    });
+  } catch (error) {
+    logger.warn(
+      { transactionHash: hash, detail: describeUnknownError(error) },
+      'Could not probe sender nonce; treating funding transaction as still pending',
+    );
+    return { kind: 'pending' };
+  }
+
+  if (accountNonce > sender.nonce) {
+    logger.warn(
+      { transactionHash: hash, nonce: sender.nonce, accountNonce },
+      'Funding transaction nonce was consumed by another transaction; treating as replaced',
+    );
+    return { kind: 'replaced' };
+  }
+
+  logger.info(
+    { transactionHash: hash, nonce: sender.nonce, accountNonce },
+    'Funding transaction not yet visible to the node; remaining pending',
+  );
+  return { kind: 'pending' };
 }

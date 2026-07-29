@@ -24,6 +24,8 @@ export interface TrackTransactionDependencies {
 export interface TrackTransactionInput {
   readonly transactionId: string;
   readonly correlationId: string;
+  /** Treasury address that signed the transfer; used for nonce-based probing. */
+  readonly senderAddress: string;
 }
 
 export type TrackTransactionResult =
@@ -92,10 +94,14 @@ export async function trackTransaction(
     case 'dropped':
     case 'failed':
       return { kind: 'already-terminal', operation, transaction };
+    // Neither state has a recorded hash, so there is nothing to wait on.
+    // Resolving an unknown submission is reconciliation's job — it must search
+    // by nonce — not the receipt tracker's.
     case 'created':
+    case 'submission_unknown':
       throw new ChainBankError(
         'INVALID_STATUS_TRANSITION',
-        `Funding transaction ${transaction.id} has not been submitted; cannot track receipt`,
+        `Funding transaction ${transaction.id} has no confirmed submission; cannot track receipt`,
         {
           publicMessage: 'The funding transaction is not ready for confirmation tracking.',
           context: { transactionId: transaction.id, status: transaction.status },
@@ -114,10 +120,19 @@ export async function trackTransaction(
     );
   }
 
+  if (transaction.nonce === undefined) {
+    throw new ChainBankError(
+      'INTERNAL_ERROR',
+      `Funding transaction ${transaction.id} is submitted but has no nonce`,
+    );
+  }
+
   const outcome = await dependencies.receiptTracker.waitForOutcome({
     transactionHash: transaction.transactionHash,
     confirmations: dependencies.confirmations,
     timeoutMs: dependencies.confirmationTimeoutMs,
+    senderAddress: input.senderAddress,
+    nonce: transaction.nonce,
   });
 
   return applyOutcome(dependencies, operation, transaction, outcome, input.correlationId);

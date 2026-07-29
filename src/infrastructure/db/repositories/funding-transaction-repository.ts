@@ -13,6 +13,12 @@ import { weiFromDatabaseNumeric, weiToDatabaseNumeric } from '../../../domain/we
 import { withDatabaseErrors, type Database } from '../client.js';
 import { fundingTransactions, type FundingTransactionRow } from '../schema.js';
 
+/**
+ * Statuses whose funds may still leave the treasury. Kept in sync with
+ * `isPendingTransactionStatus`; both gate duplicate funding and reserve math.
+ */
+const IN_FLIGHT_STATUSES = ['created', 'submitted', 'submission_unknown'] as const;
+
 export function createFundingTransactionRepository(db: Database): FundingTransactionRepository {
   return {
     async findById(id: string): Promise<FundingTransaction | undefined> {
@@ -38,10 +44,29 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
         const row = await db.query.fundingTransactions.findFirst({
           where: and(
             eq(fundingTransactions.managedWalletId, managedWalletId),
-            inArray(fundingTransactions.status, ['created', 'submitted']),
+            inArray(fundingTransactions.status, IN_FLIGHT_STATUSES),
           ),
         });
         return row === undefined ? undefined : toFundingTransaction(row);
+      });
+    },
+
+    async sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint> {
+      return withDatabaseErrors('funding_transactions.sumInFlightAmountWeiByTreasury', async () => {
+        const rows = await db
+          .select({ amountWei: fundingTransactions.amountWei })
+          .from(fundingTransactions)
+          .where(
+            and(
+              eq(fundingTransactions.treasuryId, treasuryId),
+              inArray(fundingTransactions.status, IN_FLIGHT_STATUSES),
+            ),
+          );
+
+        // Summed in bigint rather than SQL SUM(): the driver returns numeric
+        // aggregates as strings or numbers depending on null-ness, and wei must
+        // never round-trip through a float.
+        return rows.reduce((total, row) => total + weiFromDatabaseNumeric(row.amountWei, 'amountWei'), 0n);
       });
     },
 
@@ -75,6 +100,16 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
         transactionHash: input.transactionHash,
         nonce: input.nonce,
         submittedAt: input.submittedAt,
+      });
+    },
+
+    async markSubmissionUnknown(
+      id: string,
+      input: { readonly nonce: number; readonly errorCode: string },
+    ): Promise<FundingTransaction> {
+      return transitionTransaction(db, id, 'submission_unknown', {
+        nonce: input.nonce,
+        errorCode: input.errorCode,
       });
     },
 

@@ -26,6 +26,7 @@ describe('funding status state machines (C4)', () => {
     expect([...FUNDING_TRANSACTION_STATUSES]).toEqual([
       'created',
       'submitted',
+      'submission_unknown',
       'confirmed',
       'reverted',
       'replaced',
@@ -56,6 +57,8 @@ describe('funding status state machines (C4)', () => {
     }> = [
       { status: 'created', pending: true, successful: false },
       { status: 'submitted', pending: true, successful: false },
+      // Non-terminal on purpose: the transfer may still be in the mempool.
+      { status: 'submission_unknown', pending: true, successful: false },
       { status: 'confirmed', pending: false, successful: true },
       { status: 'reverted', pending: false, successful: false },
       { status: 'replaced', pending: false, successful: false },
@@ -84,5 +87,19 @@ describe('funding status state machines (C4)', () => {
     expect(canTransitionTransactionStatus('submitted', 'dropped')).toBe(true);
     expect(canTransitionTransactionStatus('created', 'confirmed')).toBe(false);
     expect(canTransitionTransactionStatus('confirmed', 'submitted')).toBe(false);
+  });
+
+  it('treats submission_unknown as a resolvable, non-terminal state', () => {
+    expect(canTransitionTransactionStatus('created', 'submission_unknown')).toBe(true);
+    // Reconciliation may promote it once the hash is observed, or close it out.
+    expect(canTransitionTransactionStatus('submission_unknown', 'submitted')).toBe(true);
+    expect(canTransitionTransactionStatus('submission_unknown', 'confirmed')).toBe(true);
+    expect(canTransitionTransactionStatus('submission_unknown', 'replaced')).toBe(true);
+    expect(canTransitionTransactionStatus('submission_unknown', 'dropped')).toBe(true);
+    expect(canTransitionTransactionStatus('submission_unknown', 'failed')).toBe(true);
+    // Never reachable from a terminal state.
+    expect(canTransitionTransactionStatus('failed', 'submission_unknown')).toBe(false);
+    expect(canTransitionTransactionStatus('confirmed', 'submission_unknown')).toBe(false);
+    expect(canTransitionTransactionStatus('submitted', 'submission_unknown')).toBe(false);
   });
 });

@@ -40,19 +40,27 @@ export type PolicyValidationResult =
     };
 
 /**
- * Spendable treasury balance after reserve and conservative transfer cost.
- * Floors at zero; never returns a negative value.
+ * Spendable treasury balance after reserve, conservative transfer cost, and
+ * amounts already committed to in-flight transfers. Floors at zero.
+ *
+ * `inFlightWei` is required because an observed on-chain balance cannot see this
+ * treasury's own submitted-but-unmined transfers: `eth_getBalance` only reflects
+ * mined state. Without it, funding several wallets inside one block window each
+ * measures against the same pre-send balance and collectively breaches the
+ * reserve (PRD §8.5, AGENTS.md §7.4).
  */
 export function calculateTreasurySpendableWei(input: {
   readonly treasuryBalanceWei: bigint;
   readonly reserveWei: bigint;
   readonly estimatedCostWei: bigint;
+  readonly inFlightWei: bigint;
 }): bigint {
   assertNonNegativeWei(input.treasuryBalanceWei, 'treasuryBalanceWei');
   assertNonNegativeWei(input.reserveWei, 'reserveWei');
   assertNonNegativeWei(input.estimatedCostWei, 'estimatedCostWei');
+  assertNonNegativeWei(input.inFlightWei, 'inFlightWei');
 
-  const spendable = input.treasuryBalanceWei - input.reserveWei - input.estimatedCostWei;
+  const spendable = input.treasuryBalanceWei - input.reserveWei - input.estimatedCostWei - input.inFlightWei;
   return spendable > 0n ? spendable : 0n;
 }
 

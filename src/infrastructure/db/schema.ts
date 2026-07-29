@@ -49,6 +49,7 @@ export const fundingOperationStatusEnum = pgEnum('funding_operation_status', [
 export const fundingTransactionStatusEnum = pgEnum('funding_transaction_status', [
   'created',
   'submitted',
+  'submission_unknown',
   'confirmed',
   'reverted',
   'replaced',

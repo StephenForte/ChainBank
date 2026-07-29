@@ -5,6 +5,7 @@ import { createFixedClock } from '../../../support/clock.js';
 import { createFakeReceiptTracker, createInMemoryFundingStores } from '../../../support/funding-fakes.js';
 
 const HASH = `0x${'ab'.repeat(32)}`;
+const SENDER = `0x${'11'.repeat(20)}`;
 
 async function seedSubmitted(txId = 'tx-1', opId = 'op-1') {
   const stores = createInMemoryFundingStores();
@@ -60,6 +61,7 @@ describe('trackTransaction', () => {
     const result = await trackTransaction(trackDeps(stores, clock, { kind: 'confirmed', confirmedAt }), {
       transactionId: 'tx-1',
       correlationId: 'corr-1',
+      senderAddress: SENDER,
     });
 
     expect(result.kind).toBe('confirmed');
@@ -75,6 +77,7 @@ describe('trackTransaction', () => {
     const result = await trackTransaction(trackDeps(stores, clock, { kind: 'reverted' }), {
       transactionId: 'tx-r',
       correlationId: 'corr-r',
+      senderAddress: SENDER,
     });
     expect(result.kind).toBe('reverted');
     if (result.kind === 'reverted') {
@@ -88,6 +91,7 @@ describe('trackTransaction', () => {
     const result = await trackTransaction(trackDeps(stores, clock, { kind: 'replaced' }), {
       transactionId: 'tx-p',
       correlationId: 'corr-p',
+      senderAddress: SENDER,
     });
     expect(result.kind).toBe('replaced');
     if (result.kind === 'replaced') {
@@ -100,6 +104,7 @@ describe('trackTransaction', () => {
     const result = await trackTransaction(trackDeps(stores, clock, { kind: 'dropped' }), {
       transactionId: 'tx-d',
       correlationId: 'corr-d',
+      senderAddress: SENDER,
     });
     expect(result.kind).toBe('dropped');
     if (result.kind === 'dropped') {
@@ -112,6 +117,7 @@ describe('trackTransaction', () => {
     const result = await trackTransaction(trackDeps(stores, clock, { kind: 'pending' }), {
       transactionId: 'tx-1',
       correlationId: 'corr-timeout',
+      senderAddress: SENDER,
     });
 
     expect(result.kind).toBe('pending');

@@ -8,9 +8,8 @@ Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting.
 
 ## Status (updated 2026-07-28)
 
-- ✅ **Done, merged to main (PR #2):** T1.1, T1.2, T1.4
-- ✅ **Merged to main:** T1.1, T1.2, T1.4 (PR #2); lint-debt cleanup (PR #3); TX.1 (PR #4); T3.1 (PR #5); T3.2 (PR #6); T1.3 + T2.1 (PR #7)
-- 🔄 **In review:** T1.5 (PR #8, this branch)
+- ✅ **Merged to main:** T1.1, T1.2, T1.4 (PR #2); lint-debt cleanup (PR #3); TX.1 (PR #4); T3.1 (PR #5); T3.2 (PR #6); T1.3 + T2.1 (PR #7); CI secret-scan fix (PR #9)
+- 🔄 **In review:** T1.5 (PR #8) — security-reviewed; two confirmed findings fixed on the branch (see `tasks/SECURITY-REVIEW-T1.5.md`)
 - Everything else: not started. Next wave: T1.6, T2.3, T3.3, T1.7.
 
 ## Task tree
@@ -44,6 +43,10 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 - **T1.6** 🔴 `POST /v1/wallets/{id}/ensure-funded` `[T1.2, T1.3, T1.5]`
   Fresh balance read, top-up calc, reserve + max-top-up re-checked immediately
   before signing, idempotency-key handling, before/target/transfer response.
+  **Mandatory (security review of T1.5):** resolve the destination address only
+  via `ManagedWalletRepository.findById(walletId)` — verify it exists, is enabled,
+  and matches the treasury chain — never from request input, with a test that
+  rejects an arbitrary caller-supplied address (AGENTS.md §7.1).
 - **T1.7** 🟢 Funding history API + dashboard `[T1.5]`
   `GET /v1/funding-transactions` with filters + pagination, explorer links,
   dashboard table incl. failed/abandoned.

@@ -158,8 +158,14 @@ Local design choices (T3.1, 2026-07-28):
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
-`funding_transactions.status`: `created | submitted | confirmed | reverted | replaced | dropped | failed`
+`funding_transactions.status`: `created | submitted | submission_unknown | confirmed | reverted | replaced | dropped | failed`
 Exactly these strings in DB and API JSON. Exhaustive switches required.
+
+`submission_unknown` (added 2026-07-28, migration `0003`) is **non-terminal**: the
+submission never returned a confirmed outcome, so the signed transfer may still be
+in the mempool. It counts as in-flight for both the per-wallet duplicate gate and
+the treasury reserve. Only errors that provably precede broadcast may produce a
+terminal `failed` transaction row.
 
 ### C5 — Managed wallet registration + policy APIs (owner: T1.3)
 
@@ -251,6 +257,7 @@ function dispatchFunding(deps, input): Promise<DispatchFundingResult>;
 //         SIGNER_CHAIN_MISMATCH | RPC/signer errors after committing failed status
 
 // src/app/funding/track-transaction.ts
+// input requires senderAddress (treasury) so the tracker can probe the nonce
 function trackTransaction(deps, input): Promise<TrackTransactionResult>;
 // Outcome kinds: confirmed | reverted | replaced | dropped | pending | already-terminal
 // Timeout ⇒ pending (D4); never treats submission as confirmation
@@ -262,12 +269,33 @@ Local design choices (T1.5, 2026-07-28):
   race on `(requested_by, idempotency_key)` re-reads the winner.
 - Serialization: `pg_advisory_xact_lock(hashtext(treasuryId), evmChainId)` via
   `FundingDispatchLock` (D7); nonce fetch + submit + hash persist share that txn.
-- Pending-tx gate: `created|submitted` rows for the same managed wallet abort with
-  `PENDING_FUNDING_EXISTS` (status updates commit, then error is thrown).
+- Pending-tx gate: in-flight rows (`created|submitted|submission_unknown`) for the
+  same managed wallet abort with `PENDING_FUNDING_EXISTS` (status updates commit,
+  then error is thrown).
 - Enable gates: `FUNDING_ENABLED`, `FUNDING_KILL_SWITCH`, plus treasury / project /
   environment / wallet `enabled` flags — all fail closed before signing.
 - Config: `FUNDING_CONFIRMATIONS` / `FUNDING_CONFIRMATION_TIMEOUT_MS` loaded in
   `FundingConfig` for `trackTransaction` (shared with T2.3).
+
+Security-review hardening (2026-07-28, PR #8 review — see `tasks/SECURITY-REVIEW-T1.5.md`):
+
+- **Reserve accounting includes in-flight transfers.** `calculateTreasurySpendableWei`
+  now requires `inFlightWei`, and dispatch supplies
+  `transactions.sumInFlightAmountWeiByTreasury(treasuryId)` from inside the lock.
+  An `eth_getBalance` read cannot see this treasury's own unmined sends, so without
+  this, funding several wallets in one block window collectively breaches the reserve.
+- **Ambiguous submissions are never terminal.** Only `PRE_BROADCAST_ERROR_CODES`
+  (signer/chain/gas/validation/gating failures) mark a transaction `failed`; every
+  other error records `submission_unknown` with the nonce.
+- **The receipt tracker requires positive evidence before any terminal state.**
+  `waitForOutcome` takes `senderAddress` + `nonce`; an unknown hash yields `replaced`
+  only when the account nonce has advanced past it, otherwise `pending`. Transient
+  RPC failures can no longer manufacture `dropped`.
+- Open follow-up for **T1.6**: the endpoint must resolve the destination solely via
+  `ManagedWalletRepository.findById(walletId)` (checking `enabled` and chain), never
+  from request input, with a test rejecting an arbitrary address (AGENTS.md §7.1).
+- Open follow-up for **T4.x reconciliation**: resolve `submission_unknown` rows by
+  searching for the treasury's transactions at the recorded nonce.
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
@@ -291,3 +319,4 @@ Local design choices (T1.5, 2026-07-28):
 - 2026-07-28 — T3.1 published `OpenAlertState`, `applyAlertTransition`, and recovery-hysteresis alert bands under C3.
 - 2026-07-28 — T1.3 published managed-wallet registration/policy API contract C5 (`wallet:read`/`wallet:write`, versioned policy upsert, audit actions).
 - 2026-07-28 — T1.5 published C7 (`dispatchFunding`, `trackTransaction`; originally numbered C5, renumbered at rebase), wired confirmation env vars into `FundingConfig`, and documented advisory-lock + idempotency crash-recovery behavior.
+- 2026-07-28 — Security review of PR #8 confirmed two invariant defects; both fixed on that branch (in-flight reserve accounting, non-terminal `submission_unknown`, evidence-based receipt classification) with migration `0003`. A third observation — the destination allowlist enforced only by contract comment — was judged not-reportable today and recorded as a binding T1.6 review requirement. Full report: `tasks/SECURITY-REVIEW-T1.5.md`.
