@@ -94,7 +94,9 @@ export function App() {
     const next = tokenInput.trim();
     storeToken(next);
     setToken(next);
-    setMessage(next === '' ? 'Token cleared from this browser session.' : 'Token saved for this browser session.');
+    setMessage(
+      next === '' ? 'Token cleared from this browser session.' : 'Token saved for this browser session.',
+    );
   }
 
   async function onCheck(treasuryId: string): Promise<void> {
@@ -132,8 +134,8 @@ export function App() {
         <p className="eyebrow">Operator console</p>
         <h1>ChainBank</h1>
         <p className="lede">
-          Phase 0 is read-only: observe the Sepolia treasury, record balances, and prove email delivery.
-          No process can send ETH.
+          Phase 0 is read-only: observe the Sepolia treasury, record balances, and prove email delivery. No
+          process can send ETH.
         </p>
       </header>
 
@@ -165,7 +167,12 @@ export function App() {
             >
               Refresh
             </button>
-            <button type="button" className="secondary" disabled={busy || token === ''} onClick={() => void onTestEmail()}>
+            <button
+              type="button"
+              className="secondary"
+              disabled={busy || token === ''}
+              onClick={() => void onTestEmail()}
+            >
               Send test email
             </button>
           </div>

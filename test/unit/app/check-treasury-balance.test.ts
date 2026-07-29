@@ -36,9 +36,7 @@ const treasury: Treasury = {
   enabled: true,
 };
 
-function deps(overrides: {
-  reading?: Awaited<ReturnType<BalanceReader['readBalance']>>;
-}): {
+function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalance']>> }): {
   treasuries: TreasuryRepository;
   balanceObservations: BalanceObservationRepository;
   balanceReader: BalanceReader;
@@ -59,8 +57,16 @@ function deps(overrides: {
       upsert: vi.fn(),
       findById: vi.fn(() => Promise.resolve(treasury)),
       listEnabled: vi.fn(() => Promise.resolve([treasury])),
-      recordCheckSuccess: vi.fn(() => Promise.resolve({ ...treasury, status: 'healthy' as const, lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined })),
-      recordCheckFailure: vi.fn(() => Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' })),
+      recordCheckSuccess: vi.fn(() =>
+        Promise.resolve({
+          ...treasury,
+          status: 'healthy' as const,
+          lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined,
+        }),
+      ),
+      recordCheckFailure: vi.fn(() =>
+        Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' }),
+      ),
     },
     balanceObservations: {
       record: vi.fn(() => Promise.resolve(undefined)),

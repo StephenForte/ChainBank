@@ -148,11 +148,11 @@ Delete the current “issuing-CA pin: return undefined” fallthrough.
 
 ## 10. Mapping to Review Follow-ups
 
-| Review item | Story / FR |
-| --- | --- |
-| Fix checker: mismatch → Error | US-001, FR-2, FR-3 |
-| Negative unit test | US-002, FR-5 |
-| Startup pin-mode log/assert | US-003, FR-6 |
-| Deploy checklist + cert rotation | US-004, FR-8 |
-| Keep fail-closed without CA | FR-1, FR-7 (preserve) |
+| Review item                                        | Story / FR                 |
+| -------------------------------------------------- | -------------------------- |
+| Fix checker: mismatch → Error                      | US-001, FR-2, FR-3         |
+| Negative unit test                                 | US-002, FR-5               |
+| Startup pin-mode log/assert                        | US-003, FR-6               |
+| Deploy checklist + cert rotation                   | US-004, FR-8               |
+| Keep fail-closed without CA                        | FR-1, FR-7 (preserve)      |
 | No feature flag / sandbox required for merge proof | Success proof = unit tests |

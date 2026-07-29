@@ -30,17 +30,11 @@ export interface CheckReadinessDependencies {
  * endpoint is only degrading, because status pages and history remain useful
  * and correct while the chain is unreachable.
  */
-export async function checkReadiness(
-  dependencies: CheckReadinessDependencies,
-): Promise<ReadinessResult> {
+export async function checkReadiness(dependencies: CheckReadinessDependencies): Promise<ReadinessResult> {
   const [database, rpc] = await Promise.all([checkDatabase(dependencies), checkRpc(dependencies)]);
 
   const status: ComponentStatus =
-    database.component.status === 'failed'
-      ? 'failed'
-      : rpc.status === 'failed'
-        ? 'degraded'
-        : 'ok';
+    database.component.status === 'failed' ? 'failed' : rpc.status === 'failed' ? 'degraded' : 'ok';
 
   return {
     status,

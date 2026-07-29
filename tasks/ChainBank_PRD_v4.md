@@ -910,9 +910,9 @@ projects:
         wallets:
           deployer:
             addressEnv: FORTE_DEPLOYER_ADDRESS
-            minimumBalanceEth: "0.02"
-            targetBalanceEth: "0.05"
-            maximumTopUpEth: "0.05"
+            minimumBalanceEth: '0.02'
+            targetBalanceEth: '0.05'
+            maximumTopUpEth: '0.05'
             criticalAtStartup: true
             reconciliationEnabled: true
 ```

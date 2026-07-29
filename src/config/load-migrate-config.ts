@@ -2,9 +2,7 @@ import { z } from 'zod';
 import { ChainBankError } from '../domain/errors.js';
 import type { DatabaseConfig } from './index.js';
 
-const booleanFlag = z
-  .enum(['true', 'false'])
-  .transform((value) => value === 'true');
+const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
 /**
  * Minimal environment for schema migrations.

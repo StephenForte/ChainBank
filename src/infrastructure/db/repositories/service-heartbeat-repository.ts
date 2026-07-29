@@ -28,10 +28,7 @@ export function createServiceHeartbeatRepository(db: Database): ServiceHeartbeat
 
     async list(): Promise<readonly ServiceHeartbeat[]> {
       return withDatabaseErrors('service_heartbeats.list', async () => {
-        const rows = await db
-          .select()
-          .from(serviceHeartbeats)
-          .orderBy(asc(serviceHeartbeats.serviceRole));
+        const rows = await db.select().from(serviceHeartbeats).orderBy(asc(serviceHeartbeats.serviceRole));
         return rows.map((row) => ({
           serviceRole: row.serviceRole,
           lastSeenAt: row.lastSeenAt,

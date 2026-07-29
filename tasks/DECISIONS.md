@@ -22,6 +22,8 @@ Status values: **PENDING** (blocks dependent work), **DECIDED** (cite date + dec
 | D6  | E2E chain: Anvil, or mocked JSON-RPC only?                                     | PENDING           | Proposal: `anvil` (foundry) as an opt-in dev dependency-free external tool (spawned if on PATH, suite skips otherwise); unit/integration suites use mocked JSON-RPC and Viem test accounts. Needs approval per AGENTS.md §14 before any new package. | —          | operator                                 |
 | D7  | Reconciliation lock mechanism                                                  | DECIDED (default) | Postgres advisory lock (`pg_advisory_xact_lock`) keyed by (treasury, chain) hash, plus a `funding_operations` row-level state machine for idempotency. No new dependency.                                                                            | 2026-07-28 | planner                                  |
 | D8  | Rate limiting implementation                                                   | PENDING           | Proposal: `@fastify/rate-limit` (official plugin). Needs dependency approval.                                                                                                                                                                        | —          | operator                                 |
+| D9  | CI secret-scan tooling                                                         | DECIDED (default) | `gitleaks` official GitHub Action, pinned by commit SHA. A CI action, not an npm dependency; override if operator prefers another scanner.                                                                                                           | 2026-07-28 | planner                                  |
+| D10 | Credential project/environment scoping storage                                 | DECIDED (default) | New `api_credential_scopes` table (credential FK + project FK + nullable environment FK), migration `0002`, owned by T2.1. Null environment = all environments in that project. Non-scoped roles (operator, read-only, crons) ignore the table.      | 2026-07-28 | planner                                  |
 
 ## 2. Interface contracts (append-only; workers add entries)
 
@@ -110,9 +112,17 @@ function calculateTreasurySpendableWei(input: {
 
 ```ts
 // src/domain/alerts/ — pure
+type AlertSeverity = 'warning' | 'critical';
+
+interface OpenAlertState {
+  readonly severity: AlertSeverity;
+  readonly firstTriggeredAt: Date;
+  readonly lastSentAt: Date;
+}
+
 type AlertTransition =
   | { readonly kind: 'none' }
-  | { readonly kind: 'open'; readonly severity: 'warning' | 'critical' }
+  | { readonly kind: 'open'; readonly severity: AlertSeverity }
   | { readonly kind: 'escalate' } // warning -> critical
   | { readonly kind: 'remind' } // unresolved past reminder interval
   | { readonly kind: 'resolve' }; // recovery threshold satisfied
@@ -124,13 +134,112 @@ function evaluateTreasuryAlert(input: {
   readonly now: Date; // injected clock
   readonly reminderIntervalMs: number;
 }): AlertTransition;
+
+function applyAlertTransition(
+  openAlert: OpenAlertState | undefined,
+  transition: AlertTransition,
+  now: Date,
+): OpenAlertState | undefined;
 ```
+
+Local design choices (T3.1, 2026-07-28):
+
+- Reuses `TreasuryThresholds` / `assertValidTreasuryThresholds` (critical ≤ warning ≤ recovery).
+  Invalid ordering throws `ChainBankError` `INVALID_CONFIGURATION`.
+- Alert balance bands differ from `evaluateTreasuryStatus` by recovery hysteresis:
+  `balance >= recovery` is recovered; then critical / warning; else intermediate
+  (`warning < balance < recovery`) keeps an open alert without opening a new one.
+- When recovery equals warning, recovery wins at the shared threshold (no open).
+- Priority with an open alert: resolve → escalate → remind → none.
+- Critical does not de-escalate until recovery; partial refill stays open.
+- `applyAlertTransition` advances `lastSentAt` on open/escalate/remind; resolve → `undefined`.
+- `reminderIntervalMs` must be finite and ≥ 0; negative/NaN → `INVALID_CONFIGURATION`.
 
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
 `funding_transactions.status`: `created | submitted | confirmed | reverted | replaced | dropped | failed`
 Exactly these strings in DB and API JSON. Exhaustive switches required.
+
+### C5 — Managed wallet registration + policy APIs (owner: T1.3)
+
+```ts
+// HTTP (operator mutations; operator + read-only reads)
+// POST   /v1/wallets
+// GET    /v1/wallets?projectId&environmentId&enabled&limit&offset
+// PATCH  /v1/wallets/:id
+// PUT    /v1/wallets/:id/policy
+
+// Application ports (src/app/ports.ts)
+interface ManagedWalletRepository {
+  /* insert/find/list/update + project/env lookup */
+}
+interface FundingPolicyRepository {
+  upsert(input: FundingPolicyUpsertInput): Promise<StoredFundingPolicy>; // version++ on update
+  findByManagedWalletId(id: string): Promise<StoredFundingPolicy | undefined>;
+}
+
+// Permissions
+('wallet:read'); // operator, read-only
+('wallet:write'); // operator only
+```
+
+Local design choices (T1.3, 2026-07-28):
+
+- Registration body: `projectId`, `environmentId`, numeric EVM `chainId`, wallet `role`,
+  `address`; optional `criticalAtStartup` / `reconciliationEnabled` (default false).
+- Address validated via Viem `isAddress`/`getAddress`; stored lowercase, returned checksummed.
+- Duplicate `(chain_id, address)` → `WALLET_ALREADY_REGISTERED` (unique violation race path).
+- Policy amounts are decimal wei strings at the HTTP boundary → `bigint` once via
+  `parseWeiDecimalString`; domain `validatePolicy` owns amount invariants.
+- Never accept or persist managed-wallet private keys (`additionalProperties: false`).
+- Mutations write audit events: `wallet.registered`, `wallet.updated`, `wallet.policy.set`.
+
+### C6 — Scoped authorization (owner: T2.1)
+
+```ts
+// src/app/auth/authorize-scope.ts
+type ScopeAction = 'read' | 'mutate';
+
+interface AuthorizeScopeInput {
+  readonly role: Role;
+  readonly credentialId: string;
+  readonly action: ScopeAction;
+  readonly projectId: string;
+  readonly environmentId?: string; // when set, env-level check
+}
+
+interface AuthorizeScopeDependencies {
+  readonly credentialScopes: CredentialScopeRepository;
+}
+
+function authorizeScope(dependencies: AuthorizeScopeDependencies, input: AuthorizeScopeInput): Promise<void>; // throws INSUFFICIENT_ROLE or SCOPE_DENIED
+
+function hasProjectScope(scopes: readonly CredentialScope[], projectId: string): boolean;
+
+function hasEnvironmentScope(
+  scopes: readonly CredentialScope[],
+  projectId: string,
+  environmentId: string,
+): boolean;
+
+function resolveReadableProjectIds(
+  dependencies: AuthorizeScopeDependencies,
+  input: { readonly role: Role; readonly credentialId: string },
+): Promise<readonly string[] | undefined>; // undefined = unrestricted
+```
+
+Local design choices (T2.1, 2026-07-28):
+
+- Operator: all projects/environments for read and mutate (mutations also require
+  `project:write`). Read-only: read all, mutate none. Project-service: read only
+  via `api_credential_scopes`; mutate on project/environment admin endpoints denied
+  (`INSUFFICIENT_ROLE`). Cron roles: denied (`INSUFFICIENT_ROLE`).
+- Null `environment_id` in a scope row grants all environments in that project.
+- Env-specific scope rows still allow project-level reads (`hasProjectScope`).
+- Project-service does not receive global `project:read`; list/get use
+  `assertProjectReadPermission` then `authorizeScope` / `resolveReadableProjectIds`.
+- No scope rows ⇒ empty list and `SCOPE_DENIED` on get.
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
@@ -149,3 +258,7 @@ Exactly these strings in DB and API JSON. Exhaustive switches required.
 
 - 2026-07-28 — Plan created; Phase 0 complete; Phases 1–4 scoped as "finish the application"; Phases 5–8 out of scope for this effort.
 - 2026-07-28 — T1.2 published concrete C2 types (`FundingPolicy`, `PolicyValidationResult`, `calculateTreasurySpendableWei`) and decision precedence for `calculateTopUp`.
+- 2026-07-28 — PR #2 merged (T1.1 + T1.2 + T1.4). Wave 2 launched: T1.5, T1.3, T3.1. Prompts issued for T3.2, T2.1, TX.1. Added D9 (gitleaks for CI secret scan) and D10 (`api_credential_scopes` table for project-service authorization).
+- 2026-07-28 — T2.1 published scoped authorization contract C6 (`authorizeScope`, `hasProjectScope`, `hasEnvironmentScope`, `resolveReadableProjectIds`) and migration `0002` for `api_credential_scopes`.
+- 2026-07-28 — T3.1 published `OpenAlertState`, `applyAlertTransition`, and recovery-hysteresis alert bands under C3.
+- 2026-07-28 — T1.3 published managed-wallet registration/policy API contract C5 (`wallet:read`/`wallet:write`, versioned policy upsert, audit actions).

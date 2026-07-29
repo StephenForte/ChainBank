@@ -6,6 +6,14 @@ Phases 5–8 are explicitly out of scope for this effort.
 
 Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting.
 
+## Status (updated 2026-07-28)
+
+- ✅ **Done, merged to main (PR #2):** T1.1, T1.2, T1.4
+- 🔄 **In progress (Wave 2 workers):** T1.5, T1.3, T3.1
+- 🔄 **In progress (side session):** pre-existing lint-debt cleanup on Phase 0 files
+- 📋 **Prompts issued, ready to run:** T3.2, T2.1, TX.1
+- Everything else: not started.
+
 ## Task tree
 
 Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheaper model OK
@@ -13,23 +21,23 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
 ### Phase 1 — Treasury MVP and on-demand funding
 
-- **T1.1** 🟢 Schema expansion + migration `[none]`
+- **T1.1** ✅ 🟢 Schema expansion + migration `[none]` — DONE (PR #2)
   Add `projects`, `environments`, `managed_wallets`, `funding_policies`,
   `funding_operations`, `funding_transactions`, `alerts` tables per PRD §13,
   with FKs, uniques (incl. partial unique on idempotency key), numeric(78,0),
   Drizzle migration `0001`.
-- **T1.2** 🔴 Funding math domain `[none]`
+- **T1.2** ✅ 🔴 Funding math domain `[none]` — DONE (PR #2)
   Pure `src/domain/funding/`: policy validation, top-up calculation,
   reserve calculation, contract C2. bigint only, exhaustive unit tests.
-- **T1.3** 🟢 Wallet registration + policy APIs `[T1.1, T1.2]`
+- **T1.3** 🔄 🟢 Wallet registration + policy APIs `[T1.1, T1.2]` — IN PROGRESS
   `POST/GET /v1/wallets`, policy create/update, address validation +
   normalization via Viem, duplicate rejection, enable/disable, audit events.
-- **T1.4** 🔴 Signer infrastructure `[none]`
+- **T1.4** ✅ 🔴 Signer infrastructure `[none]` — DONE (PR #2)
   `TreasurySigner` port (contract C1) + Viem wallet-client adapter.
   Fail-closed on absent/malformed key, chain-ID verification before signing,
   `FUNDING_ENABLED` gate flip, `FUNDING_KILL_SWITCH`, wallet client constructed
   only in signing-capable processes; monitor cron still boots with no key.
-- **T1.5** 🔴 Funding dispatch engine `[T1.1, T1.4]`
+- **T1.5** 🔄 🔴 Funding dispatch engine `[T1.1, T1.4]` — IN PROGRESS
   `funding_operations`/`funding_transactions` state machines (contract C4),
   idempotency persisted before submission, per-treasury advisory lock (D7),
   nonce inside the lock, pending-tx-per-wallet check, receipt tracking
@@ -62,7 +70,7 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
 ### Phase 3 — Treasury monitoring and email alerts
 
-- **T3.1** 🔴 Alert state machine domain `[T1.1]`
+- **T3.1** 🔄 🔴 Alert state machine domain `[T1.1]` — IN PROGRESS
   Pure `src/domain/alerts/` (contract C3): healthy→warning→critical,
   exactly-one email per transition, reminder interval, recovery resolution.
   Injected clock. Exhaustive unit tests.

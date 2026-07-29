@@ -1,16 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  authenticateCredential,
-  extractBearerToken,
-} from '../../../src/app/auth/authenticate-credential.js';
+import { authenticateCredential, extractBearerToken } from '../../../src/app/auth/authenticate-credential.js';
 import type { ApiCredentialRepository } from '../../../src/app/ports.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { generateApiToken, hashApiToken } from '../../../src/shared/api-token.js';
 import { createFixedClock } from '../../support/clock.js';
 
-function repositoryStub(
-  find: ApiCredentialRepository['findByTokenHash'],
-): ApiCredentialRepository {
+function repositoryStub(find: ApiCredentialRepository['findByTokenHash']): ApiCredentialRepository {
   return {
     findByTokenHash: find,
     touchLastUsed: vi.fn(() => Promise.resolve(undefined)),
