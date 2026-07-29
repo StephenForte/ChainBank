@@ -76,6 +76,12 @@ export const environmentSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().trim().optional(),
   RATE_LIMIT_MAX: positiveInteger.default(120),
   RATE_LIMIT_WINDOW_SECONDS: positiveInteger.default(60),
+  /**
+   * Number of trusted reverse-proxy hops in front of the service. Render adds
+   * exactly one. Must never be expressed as "trust everything": that would let
+   * a client forge its own source address through X-Forwarded-For.
+   */
+  TRUSTED_PROXY_HOPS: positiveInteger.default(1),
 
   /**
    * Arms funding workflows for signing-capable roles. Requires a structurally

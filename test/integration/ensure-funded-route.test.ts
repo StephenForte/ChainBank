@@ -14,6 +14,7 @@ import { createEnvironmentRepository } from '../../src/infrastructure/db/reposit
 import { createFundingOperationRepository } from '../../src/infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingPolicyRepository } from '../../src/infrastructure/db/repositories/funding-policy-repository.js';
 import { createFundingTransactionRepository } from '../../src/infrastructure/db/repositories/funding-transaction-repository.js';
+import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { createManagedWalletRepository } from '../../src/infrastructure/db/repositories/managed-wallet-repository.js';
 import { createProjectRepository } from '../../src/infrastructure/db/repositories/project-repository.js';
 import { createServiceHeartbeatRepository } from '../../src/infrastructure/db/repositories/service-heartbeat-repository.js';
@@ -133,6 +134,7 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
         credentialScopes: createCredentialScopeRepository(handle.db),
         fundingOperations: createFundingOperationRepository(handle.db),
         fundingTransactions: createFundingTransactionRepository(handle.db),
+        alerts: createAlertRepository(handle.db),
       },
       balanceReader,
       treasurySigner: signer,

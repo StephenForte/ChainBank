@@ -217,6 +217,7 @@ function buildDeps(options?: {
   return {
     dependencies,
     signer,
+    stores,
     auditEvents,
     balanceObservations,
     balanceReader,
@@ -402,6 +403,39 @@ describe('ensureWalletFunded', () => {
     expect(result.status).toBe('funded');
     expect(managedWallets.findById).toHaveBeenCalledWith(WALLET_ID);
     expect(signer.sendCalls).toBe(1);
+  });
+
+  it('refuses to sign when the signing key is not the configured treasury account', async () => {
+    // The treasury row's address and the signing key are independent config.
+    // If they diverge, the reserve floor guards an account that is not spending.
+    const signer = createFakeSigner({ address: '0x9999999999999999999999999999999999999999' });
+    const { dependencies, input } = buildDeps({ signer });
+
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    });
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('does not leak the signer address in the mismatch error', async () => {
+    const signerAddress = '0x9999999999999999999999999999999999999999';
+    const signer = createFakeSigner({ address: signerAddress });
+    const { dependencies, input } = buildDeps({ signer });
+
+    const error = await ensureWalletFunded(dependencies, input).catch((caught: unknown) => caught);
+    expect(JSON.stringify(error)).not.toContain(signerAddress);
+  });
+
+  it('scopes the idempotency key to the wallet so a reused key cannot replay another wallet', async () => {
+    const { dependencies, input, stores } = buildDeps({});
+    await ensureWalletFunded(dependencies, input);
+
+    const operations = [...stores.opsById.values()];
+    expect(operations).toHaveLength(1);
+    // Namespacing is what stops the same key against a different wallet from
+    // returning this wallet's transfer as though the other one was funded.
+    expect(operations[0]?.idempotencyKey).toBe(`${WALLET_ID}:${input.idempotencyKey}`);
+    expect(operations[0]?.idempotencyKey).not.toBe(input.idempotencyKey);
   });
 
   it('returns WALLET_NOT_FOUND when the id is unknown', async () => {

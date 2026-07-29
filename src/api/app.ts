@@ -5,9 +5,10 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import type { Container } from '../container.js';
 import { ChainBankError } from '../domain/errors.js';
+import { hashApiToken } from '../shared/api-token.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -23,6 +24,8 @@ import type { AppInstance } from './types.js';
 const BODY_LIMIT_BYTES = 32 * 1024;
 
 const API_PATH_PREFIXES = ['/v1', '/health'];
+
+const BEARER_PATTERN = /^Bearer\s+(.+)$/i;
 
 export async function buildApp(container: Container): Promise<AppInstance> {
   const { config, logger } = container;
@@ -41,9 +44,11 @@ export async function buildApp(container: Container): Promise<AppInstance> {
     requestIdHeader: false,
     genReqId: () => container.idGenerator.next(),
     bodyLimit: BODY_LIMIT_BYTES,
-    // Render terminates TLS at its proxy, so the forwarded client address is
-    // authoritative there and only there.
-    trustProxy: config.app.isHosted,
+    // Trust exactly the configured number of proxy hops, never `true`. With
+    // `true`, Fastify takes the left-most X-Forwarded-For entry, which any
+    // client can set — letting a caller forge `request.ip` and so escape
+    // IP-keyed rate limits and poison audit provenance.
+    trustProxy: config.app.isHosted ? security.trustedProxyHops : false,
     ajv: {
       customOptions: {
         removeAdditional: false,
@@ -82,9 +87,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   await app.register(rateLimit, {
     max: security.rateLimitMax,
     timeWindow: security.rateLimitWindowSeconds * 1000,
-    // Limits apply per credential where one is presented, falling back to the
-    // source address for unauthenticated traffic.
-    keyGenerator: (request) => request.actor?.credentialId ?? request.ip,
+    keyGenerator: rateLimitKeyOf,
   });
 
   app.addHook('onSend', (request, reply, _payload, done) => {
@@ -106,6 +109,24 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   await registerDashboard(app);
 
   return app;
+}
+
+/**
+ * Rate-limit bucket for a request (PRD §15.3: limits apply by credential).
+ *
+ * Derived from the presented bearer token rather than `request.actor`, because
+ * rate limiting runs at `onRequest` while authentication is a route
+ * `preHandler` — reading `request.actor` here would always be `undefined` and
+ * silently degrade every limit to per-IP. Hashing keeps the raw token out of
+ * the limiter's key store, and reuses the same digest the credential store
+ * holds, so a token that is presented but invalid still gets a stable bucket
+ * instead of sharing the caller's IP bucket.
+ */
+export function rateLimitKeyOf(request: Pick<FastifyRequest, 'headers' | 'ip'>): string {
+  const authorization = request.headers.authorization;
+  const token =
+    typeof authorization === 'string' ? BEARER_PATTERN.exec(authorization.trim())?.[1] : undefined;
+  return token === undefined ? `ip:${request.ip}` : `tok:${hashApiToken(token)}`;
 }
 
 /**

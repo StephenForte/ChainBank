@@ -69,6 +69,7 @@ export interface ApiSecurityConfig {
   readonly corsAllowedOrigins: readonly string[];
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
+  readonly trustedProxyHops: number;
 }
 
 export interface FundingConfig {
@@ -412,6 +413,7 @@ function buildApiSecurityConfig(env: RawEnvironment, isHosted: boolean): ApiSecu
     corsAllowedOrigins,
     rateLimitMax: env.RATE_LIMIT_MAX,
     rateLimitWindowSeconds: env.RATE_LIMIT_WINDOW_SECONDS,
+    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
   };
 }
 

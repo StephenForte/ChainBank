@@ -152,6 +152,8 @@ export async function ensureWalletFunded(
       );
     }
 
+    assertSignerMatchesTreasury(signer, treasury);
+
     const dispatchResult = await dispatchFunding(
       {
         operations: dependencies.operations,
@@ -169,7 +171,10 @@ export async function ensureWalletFunded(
         operationType: 'ensure_funded',
         projectId: wallet.project.id,
         environmentId: wallet.environment.id,
-        idempotencyKey: input.idempotencyKey,
+        // Namespaced by wallet so one caller reusing a key across wallets
+        // cannot replay a different wallet's transfer and be told the wallet in
+        // hand was funded. The stored key stays unique per (credential, key).
+        idempotencyKey: `${wallet.id}:${input.idempotencyKey}`,
         requestedBy: input.credentialId,
         correlationId: input.correlationId,
         treasury: {
@@ -238,6 +243,33 @@ function assertFundingArmed(dependencies: EnsureWalletFundedDependencies): void 
     throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_KILL_SWITCH is active; refusing ensure-funded.', {
       publicMessage: 'Funding is temporarily disabled.',
     });
+  }
+}
+
+/**
+ * Refuses to spend unless the signing account IS the treasury whose reserve is
+ * being enforced.
+ *
+ * The treasury row's address and the signing key arrive as independent
+ * configuration (`TREASURY_ADDRESS` and `TREASURY_PRIVATE_KEY`). If they ever
+ * diverge — a rotated key, a staging key in production — then the balance read,
+ * the reserve floor, the in-flight accounting, and the nonce probe all describe
+ * an account that is not the one spending, and every gate reports healthy while
+ * the real treasury drains. Compared case-insensitively because one side is
+ * checksummed and the other is stored normalized.
+ */
+function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury): void {
+  if (signer.address.toLowerCase() !== treasury.address.toLowerCase()) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'Treasury signing key does not match the configured treasury address; refusing to sign.',
+      {
+        publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.',
+        // The signer address is deliberately omitted: it is the public half of
+        // the key this process holds, and the caller has no need for it.
+        context: { treasuryId: treasury.id },
+      },
+    );
   }
 }
 
