@@ -52,7 +52,7 @@ describe.skipIf(!integrationEnabled)('funding transaction repository list', () =
     expect(confirmed?.environment.id).toBe(seed.environmentId);
     expect(confirmed?.wallet.id).toBe(seed.managedWalletId);
     expect(confirmed?.wallet.role).toBe('signer');
-    expect(confirmed?.operation.requestedBy).toBe('cred-test');
+    expect(confirmed?.operation.requestedBy).toBe('cred-confirmed');
     expect(confirmed?.chain.explorerBaseUrl).toBe('https://sepolia.etherscan.io');
   });
 
@@ -85,11 +85,17 @@ describe.skipIf(!integrationEnabled)('funding transaction repository list', () =
     );
     expect(byWallet.total).toBe(FUNDING_TRANSACTION_STATUSES.length);
 
+    // The seeder spaces rows one day apart by enum index, so derive the
+    // confirmed row's day from the enum rather than hardcoding a date.
+    const confirmedIndex = FUNDING_TRANSACTION_STATUSES.indexOf('confirmed');
+    const confirmedDay = new Date(
+      new Date('2026-06-01T00:00:00.000Z').getTime() + confirmedIndex * 86_400_000,
+    );
     const byDate = await repository.list(
       {
         scope: { kind: 'unrestricted' },
-        createdFrom: new Date('2026-06-02T00:00:00.000Z'),
-        createdTo: new Date('2026-06-02T23:59:59.999Z'),
+        createdFrom: confirmedDay,
+        createdTo: new Date(confirmedDay.getTime() + 86_400_000 - 1),
       },
       { limit: 50, offset: 0 },
     );
