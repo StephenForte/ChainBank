@@ -6,8 +6,18 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phase 1 in progress — treasury MVP and on-demand funding.**  
-This build can observe the Sepolia treasury, persist observations, and send a test email. Phase 1 includes funding schema, math, a fail-closed `TreasurySigner`, the funding dispatch engine, and **`POST /v1/wallets/:id/ensure-funded`** (P1-US3). Keep `FUNDING_ENABLED=false` until operators are ready and runbooks exist; the kill switch and enable gates fail closed without touching the signer. Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
+**Current phase: Phase 1 complete; Phases 2–3 partially delivered.**
+
+This build observes the Sepolia treasury, alerts operators by email on
+warning/critical/recovery transitions, manages projects, environments, wallets and
+funding policies, and can fund an approved wallet to its target balance through
+`POST /v1/wallets/:id/ensure-funded`.
+
+**Funding stays off until you turn it on.** `FUNDING_ENABLED` defaults to `false`,
+and it should stay false in every deployment until the operational runbooks exist
+(task T3.4). Enabling it additionally requires a valid `TREASURY_PRIVATE_KEY` on a
+signing-capable role. Task status lives in
+[`tasks/worker-plan.md`](./tasks/worker-plan.md).
 
 ## Stack
 
@@ -40,7 +50,8 @@ test/
   unit/            Default `npm test` suite
   integration/     Opt-in Postgres tests
   e2e/             Opt-in workflow tests
-tasks/             Product requirements (PRD)
+docs/runbooks/     Operator procedures
+tasks/             PRD, task plan, decisions, security reviews
 ```
 
 ## Prerequisites
@@ -75,15 +86,33 @@ The API listens on `http://localhost:3000` by default.
 
 Issue a credential once; the raw token is printed a single time and only the hash is stored.
 
-### Useful endpoints (Phase 0)
+### Endpoints
 
-| Method | Path                       | Auth              | Purpose                            |
-| ------ | -------------------------- | ----------------- | ---------------------------------- |
-| `GET`  | `/health/live`             | none              | Liveness                           |
-| `GET`  | `/health/ready`            | none              | Readiness + shared DB heartbeats   |
-| `GET`  | `/v1/treasuries`           | bearer            | List treasuries / last observation |
-| `POST` | `/v1/treasuries/:id/check` | bearer            | Fresh on-chain balance check       |
-| `POST` | `/v1/admin/email/test`     | bearer (operator) | Send test email                    |
+All `/v1` routes require a bearer token. Wei quantities cross the API as decimal
+strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
+
+| Method  | Path                            | Auth                               | Purpose                                                |
+| ------- | ------------------------------- | ---------------------------------- | ------------------------------------------------------ |
+| `GET`   | `/health/live`                  | none                               | Liveness                                               |
+| `GET`   | `/health/ready`                 | none                               | Readiness + shared DB heartbeats                       |
+| `GET`   | `/v1/treasuries`                | bearer                             | List treasuries / last observation                     |
+| `POST`  | `/v1/treasuries/:id/check`      | bearer                             | Fresh on-chain check (read-only, evaluates alerts)     |
+| `GET`   | `/v1/projects`                  | bearer                             | List projects (scoped)                                 |
+| `POST`  | `/v1/projects`                  | operator                           | Create a project                                       |
+| `GET`   | `/v1/projects/:id`              | bearer                             | Project detail                                         |
+| `PATCH` | `/v1/projects/:id`              | operator                           | Enable / disable without deleting history              |
+| `POST`  | `/v1/projects/:id/environments` | operator                           | Create an environment                                  |
+| `GET`   | `/v1/environments/:id`          | bearer                             | Environment detail                                     |
+| `GET`   | `/v1/wallets`                   | bearer                             | List managed wallets (filterable)                      |
+| `POST`  | `/v1/wallets`                   | operator                           | Register a managed wallet                              |
+| `PATCH` | `/v1/wallets/:id`               | operator                           | Enable / disable a wallet                              |
+| `PUT`   | `/v1/wallets/:id/policy`        | operator                           | Set minimum / target / maximum top-up                  |
+| `POST`  | `/v1/wallets/:id/ensure-funded` | operator or scoped project-service | **Fund a wallet to target** (idempotency key required) |
+| `GET`   | `/v1/funding-operations/:id`    | bearer                             | Operation status; resumes confirmation tracking        |
+| `GET`   | `/v1/funding-transactions`      | bearer                             | Funding history with filters                           |
+| `POST`  | `/v1/admin/email/test`          | operator                           | Send test email                                        |
+
+Not yet implemented: `POST /v1/environments/:id/ensure-ready` (Phase 2, task T2.2).
 
 Example:
 
@@ -148,21 +177,22 @@ npm run db:migrate
 npm run test:integration
 ```
 
-### Current coverage (Phase 0 bootstrap)
+### Current coverage
 
-As of the initial unit suite (`npm run test:coverage`):
+| Suite             | Count                              |
+| ----------------- | ---------------------------------- |
+| Unit tests        | 262 passing across 35 files        |
+| Integration tests | 40 passing (opt-in, real Postgres) |
 
-| Metric     | Coverage                   |
-| ---------- | -------------------------- |
-| Statements | ~35%                       |
-| Branches   | ~32%                       |
-| Functions  | ~26%                       |
-| Lines      | ~35%                       |
-| Unit tests | 38 passing across 10 files |
+Unit-suite line coverage is ~49% overall, concentrated where correctness is
+load-bearing: the funding math, alert state machine, status state machines,
+authorization matrix, idempotency, config loading, and logger redaction are at or
+near full branch coverage. The uncovered remainder is mostly wiring —
+`container.ts`, route registration, and adapters — which the integration suite
+exercises end to end instead.
 
-High coverage where it matters first: `domain/wei`, treasury status, roles, config loader, auth, logger redaction, and the treasury-check use case. Low/zero coverage remains on Fastify routes, Drizzle repositories, and EVM/email adapters — those need the opt-in integration/e2e suites tomorrow.
-
-Integration and e2e projects are wired but still placeholders until local Postgres verification.
+The e2e project is wired but still empty; Phase 4's cron-versus-API concurrency
+test (T4.4) is its first real workload and needs decision D6 resolved first.
 
 ## Security notes
 
@@ -179,7 +209,9 @@ Integration and e2e projects are wired but still placeholders until local Postgr
 
 Deploy from `main` only after CI is green (see the status badge above).
 
-Phase 0 Blueprint lives in [`render.yaml`](./render.yaml): web service, daily treasury-monitor cron, and shared Postgres. **No signing key on any service.**
+The Blueprint in [`render.yaml`](./render.yaml) provisions a web service, the daily
+treasury-monitor cron, and shared Postgres. **No signing key on any service** — the
+reconciler cron that needs one arrives with Phase 4 (T4.2).
 
 Follow the operator checklist: [`docs/runbooks/deploy-render-phase0.md`](./docs/runbooks/deploy-render-phase0.md).
 
@@ -193,16 +225,20 @@ Short version:
 
 ## Product docs
 
-- [`tasks/ChainBank_PRD_v4.md`](./tasks/ChainBank_PRD_v4.md) — full PRD and phased plan
+- [`tasks/ChainBank_PRD_v4.md`](./tasks/ChainBank_PRD_v4.md) — full PRD and phased plan, with an implementation-status appendix
+- [`tasks/worker-plan.md`](./tasks/worker-plan.md) — task breakdown and current status
+- [`tasks/DECISIONS.md`](./tasks/DECISIONS.md) — cross-task decisions, interface contracts, config registry
+- [`tasks/SECURITY-REVIEW-T1.5.md`](./tasks/SECURITY-REVIEW-T1.5.md) — review of the dispatch engine
+- [`tasks/SECURITY-REVIEW-T1.6.md`](./tasks/SECURITY-REVIEW-T1.6.md) — review of the funding endpoint
 - [`AGENTS.md`](./AGENTS.md) — engineering and security standards
 
 ## Phase roadmap (short)
 
-| Phase       | Focus                                                                      |
-| ----------- | -------------------------------------------------------------------------- |
-| 0 ✅        | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement |
-| **1** (now) | Managed wallets, funding policy, on-demand funding, reserve                |
-| 2           | Projects / environments / `ensure-ready`                                   |
-| 3           | Daily treasury alerts (warning / critical / recovery)                      |
-| 4           | Scheduled wallet reconciliation                                            |
-| 5+          | ERC-20, multi-chain, CLI / Actions, production evaluation                  |
+| Phase | Focus                                                                      | Status                                                                                                                     |
+| ----- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (reserve-exhaustion email and concurrency tests outstanding)                                                   |
+| 2     | Projects / environments / `ensure-ready`                                   | 🔄 projects, environments, scoped auth, and operation status done; `ensure-ready` (T2.2) and dashboard views (T2.4) remain |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | 🔄 alert lifecycle and emails done; runbooks (T3.4) remain — **required before enabling funding**                          |
+| 4     | Scheduled wallet reconciliation                                            | not started                                                                                                                |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                               |

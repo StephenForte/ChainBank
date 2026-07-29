@@ -921,11 +921,22 @@ Addresses and secrets remain runtime configuration. The PRD does not contain liv
 
 ## 22. Open Questions
 
-- Should the signing key remain a Render secret for the MVP or be delegated to an external signer before Phase 1?
-- Should the dashboard use operator API tokens initially or add an identity provider?
-- What exact warning, critical, recovery, and reserve balances fit ForteL2’s observed gas consumption?
-- How many confirmations should startup require on Sepolia?
-- Should Phase 1 use SQLite locally and Postgres hosted, or standardize development on a locally installed Postgres without Docker?
+Resolutions are recorded in `tasks/DECISIONS.md`; the identifiers below point at
+that document, which remains the authority.
+
+| Question                                                                   | Status        | Resolution                                                                                                                                                     |
+| -------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Signing key: Render secret for MVP, or external signer before Phase 1?     | Resolved (D1) | Render secret `TREASURY_PRIVATE_KEY`, held behind the `TreasurySigner` interface so an external signer is a later swap. Only signing-capable roles receive it. |
+| Dashboard auth: operator API tokens, or an identity provider?              | Resolved (D2) | Operator bearer tokens using the existing hashed-credential store. No IdP in the MVP.                                                                          |
+| What exact warning, critical, recovery, and reserve balances fit ForteL2?  | **Open (D3)** | Operator-owned and configuration-only, so it blocks no engineering. Values are set in the Render environment before funding is enabled.                        |
+| How many confirmations should startup require on Sepolia?                  | Resolved (D4) | One, via `FUNDING_CONFIRMATIONS`; timeout via `FUNDING_CONFIRMATION_TIMEOUT_MS` (60s). A timeout yields `pending`, never a false failure.                      |
+| SQLite locally and Postgres hosted, or Postgres everywhere without Docker? | Resolved (D5) | Locally installed Postgres everywhere. No SQLite path exists.                                                                                                  |
+
+One further question arose during delivery and remains open:
+
+| Question                                                               | Status        | Notes                                                                                                                          |
+| ---------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| End-to-end chain: a local node such as Anvil, or mocked JSON-RPC only? | **Open (D6)** | Blocks the Phase 4 cron-versus-API concurrency test (§18 “local development chain”). Needs a decision before that work starts. |
 
 ## 23. Render Implementation Notes
 
@@ -938,3 +949,92 @@ Render Cron Jobs can execute commands from the same repository on schedules defi
 - Render environment variables and groups: https://render.com/docs/configure-environment-variables
 - Render projects and environments: https://render.com/docs/projects
 - Render example of a cron job using `fromDatabase`: https://render.com/docs/backup-postgresql-to-s3
+
+## 25. Implementation Status (appendix, updated 2026-07-29)
+
+Sections 1–24 are the requirement of record and are unchanged. This appendix
+records what has been built and, more importantly, **where the implementation
+deliberately went beyond the specification** — those deltas are the parts of this
+document a reader would otherwise be misled by.
+
+### 25.1 Phase status
+
+| Phase                                  | Status                                                                                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap and read-only monitoring | Complete.                                                                                                                                                                                       |
+| 1 — Treasury MVP and on-demand funding | Complete. Outstanding: the reserve-exhaustion operator email (§12.3) and the dedicated concurrency test suite.                                                                                  |
+| 2 — Projects, environments, readiness  | Partial. Projects, environments, scoped credentials, and operation status with confirmation resume are delivered. `POST /v1/environments/{id}/ensure-ready` and the expanded dashboard are not. |
+| 3 — Daily monitoring and email alerts  | Partial. The alert lifecycle (warning, critical, reminder, recovery) and all templates are delivered and driven by both the cron and the manual check. The §19 runbooks are not written.        |
+| 4 — Managed-wallet reconciliation      | Not started.                                                                                                                                                                                    |
+| 5–8                                    | Out of scope for this effort.                                                                                                                                                                   |
+
+**Funding is not enabled.** `FUNDING_ENABLED` defaults to false. Per §20 and §19,
+it must remain false until the operational runbooks exist.
+
+### 25.2 Data model additions beyond §13
+
+Three tables exist that §13 does not describe. They are required by requirements
+stated elsewhere in this document, but the data model was never updated to match:
+
+- **`api_credentials`** — hashed service credentials. Required by §14, which
+  specifies roles and hashed token storage but describes no table.
+- **`api_credential_scopes`** — binds a credential to a project and optionally an
+  environment. Required by §14 (“Service credentials are scoped”) and §12.1
+  authorization scoping. A null environment grants the whole project.
+- **`service_heartbeats`** — proves shared-database operation between the web
+  service and cron. Required by P0-US2's acceptance criteria.
+
+### 25.3 A funding transaction status not in §13: `submission_unknown`
+
+§13 implies a transaction is either in flight or terminal. Delivery found a third
+case that the spec does not cover and that materially affects §16 (“Cron jobs may
+be retried without duplicate transfers”).
+
+When a submission fails ambiguously — an RPC timeout on send, for instance — the
+signed transaction may already be in the mempool. Recording that as a terminal
+failure would reopen the per-wallet duplicate gate while ETH is still moving. The
+`submission_unknown` status is therefore **non-terminal**: it counts as in-flight
+for both the duplicate gate and the treasury reserve, and it retains the nonce so
+reconciliation can resolve it later. Only errors that provably precede broadcast
+produce a terminal failure. See `tasks/SECURITY-REVIEW-T1.5.md`.
+
+### 25.4 Reserve accounting is stricter than §8.5 describes
+
+§8.5 requires that no funding operation reduce the treasury below its reserve. A
+literal reading — compare the observed balance against the reserve — is
+insufficient, because `eth_getBalance` reflects only mined state and cannot see the
+treasury's own unmined transfers. Funding several wallets within one block window
+would each measure against the same pre-send balance and collectively breach the
+reserve. Spendable balance is therefore computed as
+`balance − reserve − estimated cost − in-flight commitments`.
+
+### 25.5 API surface delta from §12.1
+
+Delivered as specified, except:
+
+- `POST /v1/environments/{id}/ensure-ready` — **not yet implemented** (Phase 2).
+- `GET /v1/funding-operations/{id}` — **added**, not in §12.1. Required to satisfy
+  P2-US3 (“A later status query can resume tracking the same operation”).
+- Administrative routes added for completeness of the §12.2 dashboard views:
+  `GET /v1/projects/{id}`, `PATCH /v1/projects/{id}`,
+  `POST /v1/projects/{id}/environments`, `PATCH /v1/wallets/{id}`,
+  `PUT /v1/wallets/{id}/policy`.
+
+### 25.6 Configuration beyond §21
+
+`TRUSTED_PROXY_HOPS` (default 1) was added to satisfy §15.3. Trusting every proxy
+hop lets a client forge its own source address through `X-Forwarded-For`, which
+would defeat rate limiting and corrupt audit provenance. Other additions
+(`FUNDING_KILL_SWITCH`, `FUNDING_CONFIRMATIONS`,
+`FUNDING_CONFIRMATION_TIMEOUT_MS`, `ALERT_REMINDER_INTERVAL_HOURS`) implement
+§18, D4, and P3-US2 respectively. The full registry is in `tasks/DECISIONS.md`.
+
+### 25.7 Definition-of-done gaps against §20
+
+Honest accounting of where the current state falls short of §20:
+
+- **Runbooks (§19) do not exist** beyond the Render deployment checklist. This is
+  the blocking item before scheduled signing may be enabled in a hosted
+  environment.
+- **Render deployment is not verified** for the alerting and funding paths.
+- The **end-to-end suite is empty**; the local-chain question (D6) is unresolved.

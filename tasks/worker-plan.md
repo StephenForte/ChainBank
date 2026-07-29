@@ -8,10 +8,9 @@ Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting.
 
 ## Status (updated 2026-07-29)
 
-**All work through Wave 2 is merged to `main`.** No open PRs, no stale branches.
-`main` is at 204 unit tests across 29 files, plus 31 integration tests, with CI
-(format, lint, typecheck, unit, build, audit, secret scan, migration validation)
-green on every PR.
+**Waves 1–3 are all merged to `main`.** No open PRs, no stale branches. `main` is at
+262 unit tests across 35 files plus 40 integration tests, with CI (format, lint,
+typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
 | Task                                                         | Status      | Landed in          |
 | ------------------------------------------------------------ | ----------- | ------------------ |
@@ -20,25 +19,37 @@ green on every PR.
 | T1.3 wallet registration + policy APIs                       | ✅ done     | PR #7              |
 | T1.4 signer infrastructure                                   | ✅ done     | PR #2              |
 | T1.5 funding dispatch engine                                 | ✅ done     | PR #8              |
+| T1.6 `ensure-funded` endpoint                                | ✅ done     | PR #13             |
+| T1.7 funding history API + dashboard                         | ✅ done     | PR #11             |
 | T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done     | PR #7              |
+| T2.3 operation status + confirmation resume                  | ✅ done     | PR #10             |
 | T3.1 alert state machine                                     | ✅ done     | PR #5              |
 | T3.2 email templates                                         | ✅ done     | PR #6              |
+| T3.3 alert persistence + cron/manual orchestration           | ✅ done     | PR #12             |
 | TX.1 CI pipeline                                             | ✅ done     | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 bootstrap  |
-| Everything else                                              | not started | —                  |
+| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13   |
+| Remaining: T1.8, T1.9, T2.2, T2.4, T3.4, all of Phase 4      | not started | —                  |
 
-**T1.5 was security-reviewed** (`tasks/SECURITY-REVIEW-T1.5.md`). Two confirmed
-findings were fixed before merge: in-flight transfers now count against the treasury
-reserve, and ambiguous submission outcomes record the non-terminal
-`submission_unknown` status (migration `0003`) instead of a terminal state. A third
-observation became a **mandatory requirement on T1.6** — see that task below.
+**Phase 1 is functionally complete.** Two security reviews ran on the money path and
+both produced fixes that shipped before merge:
 
-**Funding is still disabled end to end.** No HTTP route reaches `dispatchFunding`,
-and `FUNDING_ENABLED` must stay `false` until T1.6 lands and runbooks exist.
+- `tasks/SECURITY-REVIEW-T1.5.md` — in-flight transfers now count against the
+  reserve; ambiguous submissions record non-terminal `submission_unknown`
+  (migration `0003`); receipt classification requires positive evidence.
+- `tasks/SECURITY-REVIEW-T1.6.md` — rate limiting now actually engages (the
+  credential key was dead code at `onRequest`); `TRUSTED_PROXY_HOPS` replaces
+  blanket proxy trust so `X-Forwarded-For` cannot forge `request.ip`; the signing
+  key is asserted to match the reserve-enforced treasury row; idempotency keys are
+  namespaced per wallet.
+
+**Funding is reachable but disabled.** `FUNDING_ENABLED` must stay `false` until the
+runbooks in T3.4 exist — that is the §20 blocking item, not a preference.
 
 ### Next wave (all unblocked, run in parallel)
 
-T1.6 🔴, T2.3 🔴, T3.3 🔴, T1.7 🟢 — see prompts guidance in the task entries below.
+**T3.4** 🟢 runbooks — highest value, it unblocks ever enabling funding.
+**T2.2** 🔴 `ensure-ready`, **T1.8** 🟢 reserve-exhaustion email, **T1.9** 🔴
+concurrency tests, **T2.4** 🟢 dashboard views. Then Phase 4.
 
 ## Task tree
 
@@ -63,15 +74,13 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Contract C4/C7 state machines, idempotency before submission, per-treasury
   advisory lock (D7), nonce inside the lock, pending-tx gate, receipt tracking,
   in-flight reserve accounting, `submission_unknown` handling. DB-down ⇒ no signing.
-- **T1.6** 🔴 `POST /v1/wallets/{id}/ensure-funded` `[T1.2, T1.3, T1.5]` — **next**
-  Fresh balance read, top-up calc, reserve + max-top-up re-checked immediately
-  before signing, idempotency-key handling, before/target/transfer response.
-  **Mandatory (T1.5 security review):** resolve the destination address only via
-  `ManagedWalletRepository.findById(walletId)` — verify it exists, is enabled, and
-  matches the treasury chain — never from request input, with a test rejecting an
-  arbitrary caller-supplied address (AGENTS.md §7.1). Preferred: change the dispatch
-  input contract to take only `wallet.id` and resolve the address internally.
-- **T1.7** 🟢 Funding history API + dashboard `[T1.5]` — **next**
+- **T1.6** ✅ 🔴 `POST /v1/wallets/{id}/ensure-funded` `[T1.2, T1.3, T1.5]` — DONE (PR #13)
+  Fresh balance reads, reserve + max-top-up re-checked under the lock, required
+  idempotency key, before/target/transfer response. The destination-allowlist
+  mandate was satisfied by removing the address from the dispatch contract
+  entirely: `dispatchFunding` takes only `walletId` and re-resolves the row inside
+  the advisory lock. Security-reviewed; see `tasks/SECURITY-REVIEW-T1.6.md`.
+- **T1.7** ✅ 🟢 Funding history API + dashboard `[T1.5]` — DONE (PR #11)
   `GET /v1/funding-transactions` with filters + pagination, explorer links,
   dashboard table including failed/abandoned and `submission_unknown` rows.
 - **T1.8** 🟢 Reserve-exhaustion alert email `[T1.5, T3.1, T3.2]`
@@ -90,14 +99,14 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Orchestrates all startup wallets: parallel reads, serialized dispatch, per-wallet
   no-op/funded/pending/warning/blocked, overall ready/degraded/pending/blocked,
   idempotency key, concurrent-request safety.
-- **T2.3** 🔴 Confirmation wait + status resume `[T1.5]` — **next**
+- **T2.3** ✅ 🔴 Confirmation wait + status resume `[T1.5]` — DONE (PR #10)
   Configurable confirmations/timeout (D4), timeout ⇒ `pending`,
-  `GET /v1/funding-operations/{id}` resumes tracking, replaced/reverted explicit.
-  Note: `trackTransaction` now requires `senderAddress`; the resume endpoint must
-  supply the treasury address. `submission_unknown` rows cannot be receipt-tracked
-  (no hash) — surface them as pending and leave resolution to T4.x reconciliation.
+  `GET /v1/funding-operations/{id}` resumes tracking, replaced/reverted explicit,
+  `submission_unknown` surfaced as pending with `submission-unconfirmed`
+  (contract C8).
 - **T2.4** 🟢 Dashboard: projects/environments/wallets/policy views `[T2.1, T1.7]`
-  Dashboard is still Phase 0 only (treasury status + readiness).
+  The dashboard now has treasury status, readiness, and funding history; project,
+  environment, wallet, and policy views remain.
 
 ### Phase 3 — Treasury monitoring and email alerts
 
@@ -134,19 +143,23 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
   - integration tests against a Postgres service container. Actions pinned by SHA.
-- **TX.2** ✅ 🟢 API hardening — DONE (Phase 0 bootstrap)
-  `@fastify/helmet`, `@fastify/cors` (deny-by-default), `@fastify/rate-limit` are
-  registered in `src/api/app.ts`. D8 was a false blocker — the dependency predated
-  the plan.
-- **TX.3** 🟢 Docs/README per phase `[rolling]`
-  README currently describes Phase 1 in progress; refresh again when T1.6 lands and
-  funding becomes reachable.
+- **TX.2** ✅ 🟢 API hardening — DONE (Phase 0 bootstrap, corrected in PR #13)
+  `@fastify/helmet`, `@fastify/cors` (deny-by-default), and `@fastify/rate-limit`
+  are registered in `src/api/app.ts`. D8 was a false blocker — the dependency
+  predated the plan. The T1.6 review found the rate limiter's credential key was
+  dead code and proxy trust was unbounded; both are fixed.
+- **TX.3** ✅ 🟢 Docs/README per phase `[rolling]` — current as of 2026-07-29
+  README, PRD implementation appendix (§25), and this plan reflect merged state.
+  Refresh again when T2.2 or Phase 4 lands.
 
 ## Remaining wave order
 
-1. **Wave 3 (now, parallel):** T1.6 🔴, T2.3 🔴, T3.3 🔴, T1.7 🟢
-2. **Wave 4:** T2.2, T1.8, T1.9, T3.4, T2.4
-3. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4, TX.3
+1. **Wave 4 (now):** T3.4 🟢 first — runbooks are the §20 gate on ever enabling
+   funding. In parallel: T2.2 🔴, T1.8 🟢, T1.9 🔴, T2.4 🟢.
+2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
 
-Merge-order caution for Wave 3: T1.6 and T2.3 both touch the funding application
-layer and `src/api/`; land whichever finishes first, then rebase the other.
+Merge-order caution for Wave 4: T2.2 (`ensure-ready`) and T1.9 (concurrency tests)
+both build on the funding application layer; land T2.2 first so T1.9 can cover it.
+
+Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
+T4.4, and ideally before T1.9.
