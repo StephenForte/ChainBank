@@ -1,7 +1,12 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
+import { getAddress } from 'viem';
 import type {
   FundingTransaction,
+  FundingTransactionHistoryItem,
+  FundingTransactionListFilter,
+  FundingTransactionListPage,
   FundingTransactionRepository,
+  FundingTransactionScopeFilter,
   InsertFundingTransactionInput,
 } from '../../../app/ports.js';
 import { ChainBankError } from '../../../domain/errors.js';
@@ -11,7 +16,21 @@ import {
 } from '../../../domain/funding/statuses.js';
 import { weiFromDatabaseNumeric, weiToDatabaseNumeric } from '../../../domain/wei.js';
 import { withDatabaseErrors, type Database } from '../client.js';
-import { fundingTransactions, type FundingTransactionRow } from '../schema.js';
+import {
+  chains,
+  environments,
+  fundingOperations,
+  fundingTransactions,
+  managedWallets,
+  projects,
+  type ChainRow,
+  type EnvironmentRow,
+  type FundingOperationRow,
+  type FundingTransactionRow,
+  type ManagedWalletRow,
+  type ProjectRow,
+} from '../schema.js';
+import { toChainDescriptor } from './chain-repository.js';
 
 /**
  * Statuses whose funds may still leave the treasury. Kept in sync with
@@ -132,6 +151,50 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
     async markFailed(id: string, errorCode: string): Promise<FundingTransaction> {
       return transitionTransaction(db, id, 'failed', { errorCode });
     },
+
+    async list(
+      filter: FundingTransactionListFilter & { readonly scope: FundingTransactionScopeFilter },
+      pagination: { readonly limit: number; readonly offset: number },
+    ): Promise<FundingTransactionListPage> {
+      return withDatabaseErrors('funding_transactions.list', async () => {
+        const where = buildListWhere(filter);
+
+        const [totalRow] = await db
+          .select({ value: count() })
+          .from(fundingTransactions)
+          .innerJoin(fundingOperations, eq(fundingTransactions.operationId, fundingOperations.id))
+          .innerJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
+          .innerJoin(environments, eq(managedWallets.environmentId, environments.id))
+          .innerJoin(projects, eq(environments.projectId, projects.id))
+          .innerJoin(chains, eq(managedWallets.chainId, chains.id))
+          .where(where);
+
+        const rows = await db
+          .select({
+            tx: fundingTransactions,
+            op: fundingOperations,
+            wallet: managedWallets,
+            environment: environments,
+            project: projects,
+            chain: chains,
+          })
+          .from(fundingTransactions)
+          .innerJoin(fundingOperations, eq(fundingTransactions.operationId, fundingOperations.id))
+          .innerJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
+          .innerJoin(environments, eq(managedWallets.environmentId, environments.id))
+          .innerJoin(projects, eq(environments.projectId, projects.id))
+          .innerJoin(chains, eq(managedWallets.chainId, chains.id))
+          .where(where)
+          .orderBy(desc(fundingTransactions.createdAt), desc(fundingTransactions.id))
+          .limit(pagination.limit)
+          .offset(pagination.offset);
+
+        return {
+          items: rows.map(toFundingTransactionHistoryItem),
+          total: Number(totalRow?.value ?? 0),
+        };
+      });
+    },
   };
 }
 
@@ -202,4 +265,114 @@ function toFundingTransaction(row: FundingTransactionRow): FundingTransaction {
     submittedAt: row.submittedAt ?? undefined,
     confirmedAt: row.confirmedAt ?? undefined,
   };
+}
+
+function toFundingTransactionHistoryItem(row: {
+  readonly tx: FundingTransactionRow;
+  readonly op: FundingOperationRow;
+  readonly wallet: ManagedWalletRow;
+  readonly environment: EnvironmentRow;
+  readonly project: ProjectRow;
+  readonly chain: ChainRow;
+}): FundingTransactionHistoryItem {
+  const addressDisplay = getAddress(row.wallet.address);
+  return {
+    id: row.tx.id,
+    operationId: row.tx.operationId,
+    amountWei: weiFromDatabaseNumeric(row.tx.amountWei, 'amountWei'),
+    transactionHash: row.tx.transactionHash ?? undefined,
+    nonce: row.tx.nonce ?? undefined,
+    status: row.tx.status,
+    errorCode: row.tx.errorCode ?? undefined,
+    createdAt: row.tx.createdAt,
+    submittedAt: row.tx.submittedAt ?? undefined,
+    confirmedAt: row.tx.confirmedAt ?? undefined,
+    operation: {
+      id: row.op.id,
+      operationType: row.op.operationType,
+      status: row.op.status,
+      requestedBy: row.op.requestedBy,
+      startedAt: row.op.startedAt,
+      completedAt: row.op.completedAt ?? undefined,
+    },
+    wallet: {
+      id: row.wallet.id,
+      role: row.wallet.role,
+      address: row.wallet.address,
+      addressDisplay,
+    },
+    project: {
+      id: row.project.id,
+      slug: row.project.slug,
+      name: row.project.name,
+      enabled: row.project.enabled,
+    },
+    environment: {
+      id: row.environment.id,
+      projectId: row.environment.projectId,
+      slug: row.environment.slug,
+      name: row.environment.name,
+      enabled: row.environment.enabled,
+    },
+    chain: toChainDescriptor(row.chain),
+  };
+}
+
+function buildListWhere(
+  filter: FundingTransactionListFilter & { readonly scope: FundingTransactionScopeFilter },
+): SQL | undefined {
+  const clauses: SQL[] = [];
+
+  if (filter.projectId !== undefined) {
+    clauses.push(eq(environments.projectId, filter.projectId));
+  }
+  if (filter.environmentId !== undefined) {
+    clauses.push(eq(environments.id, filter.environmentId));
+  }
+  if (filter.managedWalletId !== undefined) {
+    clauses.push(eq(fundingTransactions.managedWalletId, filter.managedWalletId));
+  }
+  if (filter.status !== undefined) {
+    clauses.push(eq(fundingTransactions.status, filter.status));
+  }
+  if (filter.createdFrom !== undefined) {
+    clauses.push(gte(fundingTransactions.createdAt, filter.createdFrom));
+  }
+  if (filter.createdTo !== undefined) {
+    clauses.push(lte(fundingTransactions.createdAt, filter.createdTo));
+  }
+
+  const scopeClause = buildScopeWhere(filter.scope);
+  if (scopeClause !== undefined) {
+    clauses.push(scopeClause);
+  }
+
+  if (clauses.length === 0) {
+    return undefined;
+  }
+  if (clauses.length === 1) {
+    return clauses[0];
+  }
+  return and(...clauses);
+}
+
+function buildScopeWhere(scope: FundingTransactionScopeFilter): SQL | undefined {
+  if (scope.kind === 'unrestricted') {
+    return undefined;
+  }
+  if (scope.clauses === undefined || scope.clauses.length === 0) {
+    return sql`false`;
+  }
+
+  const scopeClauses = scope.clauses.map((clause) => {
+    if (clause.environmentId === undefined) {
+      return eq(environments.projectId, clause.projectId);
+    }
+    return and(eq(environments.projectId, clause.projectId), eq(environments.id, clause.environmentId));
+  });
+
+  if (scopeClauses.length === 1) {
+    return scopeClauses[0];
+  }
+  return or(...scopeClauses);
 }

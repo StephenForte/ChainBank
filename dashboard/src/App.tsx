@@ -3,8 +3,10 @@ import {
   ApiClientError,
   checkTreasury,
   fetchReadiness,
+  listFundingTransactions,
   listTreasuries,
   sendTestEmail,
+  type FundingTransactionResource,
   type ReadinessResponse,
   type TreasuryResource,
 } from './api';
@@ -45,16 +47,42 @@ function statusClass(status: string): string {
   switch (status) {
     case 'healthy':
     case 'ok':
+    case 'confirmed':
+    case 'succeeded':
       return 'badge badge-ok';
     case 'warning':
     case 'degraded':
+    case 'submitted':
+    case 'submission_unknown':
+    case 'pending':
+    case 'in_progress':
+    case 'created':
       return 'badge badge-warn';
     case 'critical':
     case 'failed':
+    case 'reverted':
+    case 'abandoned':
+    case 'dropped':
       return 'badge badge-bad';
+    case 'replaced':
+      return 'badge badge-unknown';
     default:
       return 'badge badge-unknown';
   }
+}
+
+function shortAddress(address: string): string {
+  if (address.length < 12) {
+    return address;
+  }
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function formatTimestamp(value: string | null): string {
+  if (value === null) {
+    return '—';
+  }
+  return new Date(value).toLocaleString();
 }
 
 export function App() {
@@ -62,6 +90,10 @@ export function App() {
   const [token, setToken] = useState(loadStoredToken);
   const [readiness, setReadiness] = useState<ReadinessResponse | undefined>();
   const [treasuries, setTreasuries] = useState<readonly TreasuryResource[]>([]);
+  const [fundingHistory, setFundingHistory] = useState<readonly FundingTransactionResource[]>([]);
+  const [fundingHistoryTotal, setFundingHistoryTotal] = useState(0);
+  const [historyProjectFilter, setHistoryProjectFilter] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -73,10 +105,21 @@ export function App() {
       const nextReadiness = await fetchReadiness();
       setReadiness(nextReadiness);
       if (activeToken.trim() !== '') {
-        const nextTreasuries = await listTreasuries(activeToken.trim());
+        const [nextTreasuries, nextHistory] = await Promise.all([
+          listTreasuries(activeToken.trim()),
+          listFundingTransactions(activeToken.trim(), {
+            projectId: historyProjectFilter.trim() === '' ? undefined : historyProjectFilter.trim(),
+            status: historyStatusFilter === '' ? undefined : historyStatusFilter,
+            limit: 50,
+          }),
+        ]);
         setTreasuries(nextTreasuries);
+        setFundingHistory(nextHistory.data);
+        setFundingHistoryTotal(nextHistory.pagination.total);
       } else {
         setTreasuries([]);
+        setFundingHistory([]);
+        setFundingHistoryTotal(0);
       }
     } catch (caught) {
       setError(formatError(caught));
@@ -87,7 +130,7 @@ export function App() {
 
   useEffect(() => {
     void refresh(token);
-  }, [token]);
+  }, [token, historyProjectFilter, historyStatusFilter]);
 
   function onSaveToken(event: FormEvent): void {
     event.preventDefault();
@@ -276,6 +319,101 @@ export function App() {
               </article>
             ))}
           </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Funding history</h2>
+        {token === '' ? (
+          <p className="muted">Paste an operator token to load funding history.</p>
+        ) : (
+          <>
+            <div className="filters row">
+              <label htmlFor="history-project">Project ID</label>
+              <input
+                id="history-project"
+                name="history-project"
+                type="text"
+                spellCheck={false}
+                placeholder="UUID (optional)"
+                value={historyProjectFilter}
+                onChange={(event) => setHistoryProjectFilter(event.target.value)}
+              />
+              <label htmlFor="history-status">Status</label>
+              <select
+                id="history-status"
+                name="history-status"
+                value={historyStatusFilter}
+                onChange={(event) => setHistoryStatusFilter(event.target.value)}
+              >
+                <option value="">All statuses</option>
+                <option value="confirmed">confirmed</option>
+                <option value="submitted">submitted</option>
+                <option value="submission_unknown">submission_unknown</option>
+                <option value="failed">failed</option>
+                <option value="reverted">reverted</option>
+                <option value="replaced">replaced</option>
+                <option value="dropped">dropped</option>
+                <option value="created">created</option>
+              </select>
+            </div>
+            {fundingHistory.length === 0 ? (
+              <p className="muted">No funding transactions returned ({fundingHistoryTotal} total).</p>
+            ) : (
+              <>
+                <p className="muted">
+                  Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions
+                  (newest first).
+                </p>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Project / env</th>
+                        <th>Wallet</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Transaction</th>
+                        <th>Created</th>
+                        <th>Confirmed</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fundingHistory.map((row) => (
+                        <tr key={row.id}>
+                          <td>
+                            <strong>{row.project.slug}</strong>
+                            <span className="muted"> / {row.environment.slug}</span>
+                          </td>
+                          <td className="mono">
+                            {row.wallet.role}{' '}
+                            <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                          </td>
+                          <td className="mono">
+                            {row.amountEther} {row.chain.nativeSymbol}
+                          </td>
+                          <td>
+                            <span className={statusClass(row.status)}>{row.status}</span>
+                          </td>
+                          <td className="mono">
+                            {row.explorerUrl === null ? (
+                              '—'
+                            ) : (
+                              <a href={row.explorerUrl} target="_blank" rel="noreferrer">
+                                {shortAddress(row.transactionHash ?? '')}
+                              </a>
+                            )}
+                          </td>
+                          <td>{formatTimestamp(row.createdAt)}</td>
+                          <td>{formatTimestamp(row.confirmedAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </>
         )}
       </section>
 

@@ -103,6 +103,53 @@ input[type='password'] {
   background: #fff;
 }
 
+input[type='text'],
+select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  background: #fff;
+}
+
+.filters {
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+
+.filters label {
+  margin-right: -0.25rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.data-table th,
+.data-table td {
+  border-top: 1px solid var(--line);
+  padding: 0.55rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.data-table tbody tr:first-child td {
+  border-top: 0;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;

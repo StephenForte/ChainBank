@@ -151,3 +151,94 @@ export async function sendTestEmail(token: string): Promise<void> {
     throw new Error(`Test email failed (${String(response.status)})`);
   }
 }
+
+export interface FundingTransactionResource {
+  readonly id: string;
+  readonly operation: {
+    readonly id: string;
+    readonly operationType: string;
+    readonly status: string;
+    readonly requestedBy: string;
+    readonly startedAt: string;
+    readonly completedAt: string | null;
+  };
+  readonly project: {
+    readonly id: string;
+    readonly slug: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  };
+  readonly environment: {
+    readonly id: string;
+    readonly slug: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  };
+  readonly wallet: {
+    readonly id: string;
+    readonly role: string;
+    readonly address: string;
+  };
+  readonly chain: {
+    readonly slug: string;
+    readonly chainId: number;
+    readonly displayName: string;
+    readonly nativeSymbol: string;
+  };
+  readonly amountWei: string;
+  readonly amountEther: string;
+  readonly status: string;
+  readonly transactionHash: string | null;
+  readonly explorerUrl: string | null;
+  readonly nonce: number | null;
+  readonly errorCode: string | null;
+  readonly createdAt: string;
+  readonly submittedAt: string | null;
+  readonly confirmedAt: string | null;
+}
+
+export interface FundingTransactionListResponse {
+  readonly data: readonly FundingTransactionResource[];
+  readonly pagination: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly total: number;
+  };
+}
+
+export async function listFundingTransactions(
+  token: string,
+  query: {
+    readonly projectId?: string;
+    readonly status?: string;
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<FundingTransactionListResponse> {
+  const params = new URLSearchParams();
+  if (query.projectId !== undefined) {
+    params.set('projectId', query.projectId);
+  }
+  if (query.status !== undefined) {
+    params.set('status', query.status);
+  }
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const response = await fetch(`/v1/funding-transactions${suffix}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body: unknown = await parseJson(response);
+  if (!response.ok) {
+    if (isApiErrorBody(body)) {
+      throw new ApiClientError(response.status, body);
+    }
+    throw new Error(`Failed to list funding transactions (${String(response.status)})`);
+  }
+  return body as FundingTransactionListResponse;
+}

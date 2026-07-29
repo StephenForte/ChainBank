@@ -396,6 +396,62 @@ export interface FundingTransaction {
   readonly confirmedAt: Date | undefined;
 }
 
+export interface FundingTransactionListFilter {
+  readonly projectId?: string;
+  readonly environmentId?: string;
+  readonly managedWalletId?: string;
+  readonly status?: FundingTransactionStatus;
+  readonly createdFrom?: Date;
+  readonly createdTo?: Date;
+}
+
+/** One row in api_credential_scopes translated for history filtering. */
+export interface FundingTransactionScopeClause {
+  readonly projectId: string;
+  readonly environmentId?: string;
+}
+
+export interface FundingTransactionScopeFilter {
+  readonly kind: 'unrestricted' | 'scoped';
+  readonly clauses?: readonly FundingTransactionScopeClause[];
+}
+
+/** Funding transaction with joined operation, wallet, project, environment, and chain. */
+export interface FundingTransactionHistoryItem {
+  readonly id: string;
+  readonly operationId: string;
+  readonly amountWei: bigint;
+  readonly transactionHash: string | undefined;
+  readonly nonce: number | undefined;
+  readonly status: FundingTransactionStatus;
+  readonly errorCode: string | undefined;
+  readonly createdAt: Date;
+  readonly submittedAt: Date | undefined;
+  readonly confirmedAt: Date | undefined;
+  readonly operation: {
+    readonly id: string;
+    readonly operationType: string;
+    readonly status: FundingOperationStatus;
+    readonly requestedBy: string;
+    readonly startedAt: Date;
+    readonly completedAt: Date | undefined;
+  };
+  readonly wallet: {
+    readonly id: string;
+    readonly role: string;
+    readonly address: string;
+    readonly addressDisplay: string;
+  };
+  readonly project: ProjectSummary;
+  readonly environment: EnvironmentSummary;
+  readonly chain: ChainDescriptor;
+}
+
+export interface FundingTransactionListPage {
+  readonly items: readonly FundingTransactionHistoryItem[];
+  readonly total: number;
+}
+
 export interface InsertFundingOperationInput {
   readonly id: string;
   readonly operationType: string;
@@ -468,6 +524,10 @@ export interface FundingTransactionRepository {
   markReplaced(id: string, errorCode: string): Promise<FundingTransaction>;
   markDropped(id: string, errorCode: string): Promise<FundingTransaction>;
   markFailed(id: string, errorCode: string): Promise<FundingTransaction>;
+  list(
+    filter: FundingTransactionListFilter & { readonly scope: FundingTransactionScopeFilter },
+    pagination: { readonly limit: number; readonly offset: number },
+  ): Promise<FundingTransactionListPage>;
 }
 
 /**
