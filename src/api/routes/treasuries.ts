@@ -1,7 +1,9 @@
 import type { AppInstance } from '../types.js';
+import { evaluateTreasuryAlerts } from '../../app/alerts/evaluate-treasury-alerts.js';
 import { checkTreasuryBalance } from '../../app/treasury/check-treasury-balance.js';
 import { listTreasuries } from '../../app/treasury/list-treasuries.js';
 import type { Container } from '../../container.js';
+import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeTreasury } from '../serializers/treasury.js';
 
@@ -38,6 +40,8 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
    *
    * Mutating in the HTTP sense because it writes an observation, but strictly
    * read-only against the chain: it reads a balance and records what it saw.
+   * Alert transitions (including recovery) run through the same application
+   * service as the treasury-monitor cron (PRD P3-US3).
    */
   app.post(
     '/v1/treasuries/:id/check',
@@ -66,6 +70,36 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
           actor: { type: 'api_credential', id: actor.credentialId },
         },
       );
+
+      if (result.reading.kind === 'observed') {
+        const { config, emailSender } = container;
+        if (emailSender === undefined || config.email === undefined) {
+          throw new ChainBankError(
+            'INVALID_CONFIGURATION',
+            'This process was started without email configuration',
+            { publicMessage: 'Email is not configured for this service.' },
+          );
+        }
+
+        await evaluateTreasuryAlerts(
+          {
+            alerts: container.repositories.alerts,
+            emailSender,
+            auditEvents: container.repositories.auditEvents,
+            clock: container.clock,
+          },
+          {
+            treasury: result.treasury,
+            balanceWei: result.reading.balanceWei,
+            reminderIntervalMs: config.alerts.reminderIntervalMs,
+            operatorRecipients: config.email.operatorRecipients,
+            dashboardBaseUrl: config.app.publicBaseUrl,
+            environment: config.app.environment,
+            operationId: request.id,
+            actor: { type: 'api_credential', id: actor.credentialId },
+          },
+        );
+      }
 
       return {
         data: serializeTreasury(result.treasury),

@@ -101,7 +101,7 @@ npm run build:server
 npm run cron:treasury-monitor
 ```
 
-The cron process loads the `treasury-monitor` config role: no email provider credentials, bounded DB pool, closes connections before exit.
+The cron process loads the `treasury-monitor` config role: email settings for alert delivery, bounded DB pool, closes connections before exit. It never receives `TREASURY_PRIVATE_KEY`.
 
 ## Scripts
 

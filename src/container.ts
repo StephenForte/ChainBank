@@ -1,4 +1,5 @@
 import type {
+  AlertRepository,
   ApiCredentialRepository,
   AuditEventRepository,
   BalanceObservationRepository,
@@ -22,6 +23,7 @@ import { getTreasuryPrivateKey, isSigningCapableRole, type ChainBankConfig } fro
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
 import { createFundingDispatchLock } from './infrastructure/db/funding-dispatch-lock.js';
+import { createAlertRepository } from './infrastructure/db/repositories/alert-repository.js';
 import { createApiCredentialRepository } from './infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from './infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from './infrastructure/db/repositories/balance-observation-repository.js';
@@ -70,6 +72,7 @@ export interface Container {
     readonly credentialScopes: CredentialScopeRepository;
     readonly fundingOperations: FundingOperationRepository;
     readonly fundingTransactions: FundingTransactionRepository;
+    readonly alerts: AlertRepository;
   };
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
@@ -78,7 +81,7 @@ export interface Container {
   readonly fundingDispatchLock: FundingDispatchLock;
   /** Public-client receipt waiter; never holds signing credentials. */
   readonly transactionReceiptTracker: TransactionReceiptTracker;
-  /** Absent for roles that hold no email credentials. */
+  /** Present for web and treasury-monitor when email config is loaded. */
   readonly emailSender: EmailSender | undefined;
   close(): Promise<void>;
 }
@@ -125,6 +128,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
       credentialScopes: createCredentialScopeRepository(database.db),
       fundingOperations: createFundingOperationRepository(database.db),
       fundingTransactions: createFundingTransactionRepository(database.db),
+      alerts: createAlertRepository(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),

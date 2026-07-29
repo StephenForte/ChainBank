@@ -1,3 +1,4 @@
+import type { AlertSeverity } from '../domain/alerts/treasury-alert.js';
 import type { BalanceReading } from '../domain/balance-reading.js';
 import type { Role } from '../domain/auth/roles.js';
 import type { FundingOperationStatus, FundingTransactionStatus } from '../domain/funding/statuses.js';
@@ -200,6 +201,79 @@ export type EmailSendResult =
 
 export interface EmailSender {
   send(message: EmailMessage): Promise<EmailSendResult>;
+}
+
+/**
+ * Email kind persisted while a transition awaits successful delivery.
+ * Cleared only after the EmailSender reports `sent`, so a failed send is
+ * retried on the next evaluation instead of being lost or duplicated.
+ */
+export type PendingAlertEmail = 'warning' | 'critical' | 'reminder' | 'recovery';
+
+/** Open treasury (or other entity) alert row. Resolved alerts are not returned. */
+export interface StoredOpenAlert {
+  readonly id: string;
+  readonly alertType: string;
+  readonly severity: AlertSeverity;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly firstTriggeredAt: Date;
+  readonly lastEvaluatedAt: Date;
+  /** Undefined until the opening/escalation/reminder email is acknowledged. */
+  readonly lastSentAt: Date | undefined;
+  readonly pendingEmail: PendingAlertEmail | undefined;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+export interface InsertOpenAlertInput {
+  readonly alertType: string;
+  readonly severity: AlertSeverity;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly firstTriggeredAt: Date;
+  readonly lastEvaluatedAt: Date;
+  readonly pendingEmail: PendingAlertEmail;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Append-oriented alert persistence (AGENTS.md §9).
+ *
+ * Resolve by setting `state`/`resolved_at` — never delete. Email-worthy
+ * transitions are persisted with `pendingEmail` and without advancing
+ * `last_sent_at` until {@link AlertRepository.acknowledgeSend} after a
+ * successful send.
+ */
+export interface AlertRepository {
+  findOpenByEntity(entityType: string, entityId: string): Promise<StoredOpenAlert | undefined>;
+  insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert>;
+  /** warning → critical; leaves last_sent_at unchanged. */
+  markEscalated(input: {
+    readonly id: string;
+    readonly lastEvaluatedAt: Date;
+    readonly pendingEmail: PendingAlertEmail;
+  }): Promise<StoredOpenAlert>;
+  /** Sets pendingEmail (remind/recovery) without advancing last_sent_at. */
+  markPendingEmail(input: {
+    readonly id: string;
+    readonly lastEvaluatedAt: Date;
+    readonly pendingEmail: PendingAlertEmail;
+  }): Promise<StoredOpenAlert>;
+  /** Clears a stale pendingEmail without advancing last_sent_at. */
+  clearPendingEmail(input: { readonly id: string; readonly lastEvaluatedAt: Date }): Promise<StoredOpenAlert>;
+  /** Advances last_sent_at and clears pendingEmail after a successful send. */
+  acknowledgeSend(input: {
+    readonly id: string;
+    readonly lastSentAt: Date;
+    readonly lastEvaluatedAt: Date;
+  }): Promise<StoredOpenAlert>;
+  /** Marks the alert resolved; never deletes the row. */
+  resolve(input: {
+    readonly id: string;
+    readonly resolvedAt: Date;
+    readonly lastEvaluatedAt: Date;
+  }): Promise<StoredOpenAlert>;
+  touchLastEvaluated(input: { readonly id: string; readonly lastEvaluatedAt: Date }): Promise<void>;
 }
 
 /** Project summary used when registering or listing managed wallets. */

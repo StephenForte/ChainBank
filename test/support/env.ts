@@ -29,12 +29,10 @@ export function validWebEnv(overrides: Record<string, string | undefined> = {}):
   };
 }
 
-/** Monitor role does not require email configuration. */
+/**
+ * Monitor role receives email settings for alert delivery but never signing
+ * material. Email vars come from validWebEnv unless overridden.
+ */
 export function validMonitorEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
-  const env = { ...validWebEnv(overrides) };
-  delete env.EMAIL_PROVIDER;
-  delete env.EMAIL_FROM_ADDRESS;
-  delete env.EMAIL_OPERATOR_RECIPIENTS;
-  delete env.RESEND_API_KEY;
-  return env;
+  return validWebEnv(overrides);
 }
