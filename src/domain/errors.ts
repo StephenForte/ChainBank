@@ -27,6 +27,7 @@ export type ErrorCode =
   | 'CREDENTIAL_DISABLED'
   | 'INSUFFICIENT_ROLE'
   | 'FUNDING_DISABLED'
+  | 'ENTITY_DISABLED'
   // resources
   | 'TREASURY_NOT_FOUND'
   | 'CHAIN_NOT_FOUND'
@@ -38,6 +39,16 @@ export type ErrorCode =
   | 'ENVIRONMENT_SLUG_CONFLICT'
   | 'SCOPE_ALREADY_ASSIGNED'
   | 'SCOPE_DENIED'
+  | 'FUNDING_OPERATION_NOT_FOUND'
+  | 'FUNDING_TRANSACTION_NOT_FOUND'
+  // conflicts
+  | 'PENDING_FUNDING_EXISTS'
+  | 'FUNDING_BLOCKED_RESERVE'
+  | 'INVALID_STATUS_TRANSITION'
+  // transaction outcomes (row error_code and caller-facing where needed)
+  | 'TRANSACTION_REVERTED'
+  | 'TRANSACTION_REPLACED'
+  | 'TRANSACTION_DROPPED'
   // dependencies
   | 'DATABASE_UNAVAILABLE'
   | 'RPC_UNAVAILABLE'
@@ -60,6 +71,7 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   CREDENTIAL_DISABLED: 'authentication',
   INSUFFICIENT_ROLE: 'authorization',
   FUNDING_DISABLED: 'authorization',
+  ENTITY_DISABLED: 'authorization',
   TREASURY_NOT_FOUND: 'not_found',
   CHAIN_NOT_FOUND: 'not_found',
   PROJECT_NOT_FOUND: 'not_found',
@@ -70,6 +82,14 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   ENVIRONMENT_SLUG_CONFLICT: 'conflict',
   SCOPE_ALREADY_ASSIGNED: 'conflict',
   SCOPE_DENIED: 'authorization',
+  FUNDING_OPERATION_NOT_FOUND: 'not_found',
+  FUNDING_TRANSACTION_NOT_FOUND: 'not_found',
+  PENDING_FUNDING_EXISTS: 'conflict',
+  FUNDING_BLOCKED_RESERVE: 'conflict',
+  INVALID_STATUS_TRANSITION: 'conflict',
+  TRANSACTION_REVERTED: 'conflict',
+  TRANSACTION_REPLACED: 'conflict',
+  TRANSACTION_DROPPED: 'conflict',
   DATABASE_UNAVAILABLE: 'dependency_unavailable',
   RPC_UNAVAILABLE: 'dependency_unavailable',
   CHAIN_ID_MISMATCH: 'dependency_unavailable',

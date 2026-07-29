@@ -10,13 +10,18 @@ import type {
   FundingPolicyRepository,
   ManagedWalletRepository,
   ProjectRepository,
+  FundingDispatchLock,
+  FundingOperationRepository,
+  FundingTransactionRepository,
   ServiceHeartbeatRepository,
+  TransactionReceiptTracker,
   TreasuryRepository,
   TreasurySigner,
 } from './app/ports.js';
 import { getTreasuryPrivateKey, isSigningCapableRole, type ChainBankConfig } from './config/index.js';
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
+import { createFundingDispatchLock } from './infrastructure/db/funding-dispatch-lock.js';
 import { createApiCredentialRepository } from './infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from './infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from './infrastructure/db/repositories/balance-observation-repository.js';
@@ -26,11 +31,14 @@ import { createEnvironmentRepository } from './infrastructure/db/repositories/en
 import { createFundingPolicyRepository } from './infrastructure/db/repositories/funding-policy-repository.js';
 import { createManagedWalletRepository } from './infrastructure/db/repositories/managed-wallet-repository.js';
 import { createProjectRepository } from './infrastructure/db/repositories/project-repository.js';
+import { createFundingOperationRepository } from './infrastructure/db/repositories/funding-operation-repository.js';
+import { createFundingTransactionRepository } from './infrastructure/db/repositories/funding-transaction-repository.js';
 import { createServiceHeartbeatRepository } from './infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from './infrastructure/db/repositories/treasury-repository.js';
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
 import { createResendEmailSender } from './infrastructure/email/resend-email-sender.js';
 import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
+import { createTransactionReceiptTracker } from './infrastructure/evm/transaction-tracker.js';
 import { createTreasurySigner } from './infrastructure/evm/treasury-signer.js';
 import { createLogger, type Logger } from './observability/logger.js';
 import { systemClock, uuidGenerator } from './shared/system-ports.js';
@@ -60,10 +68,16 @@ export interface Container {
     readonly projects: ProjectRepository;
     readonly environments: EnvironmentRepository;
     readonly credentialScopes: CredentialScopeRepository;
+    readonly fundingOperations: FundingOperationRepository;
+    readonly fundingTransactions: FundingTransactionRepository;
   };
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
   readonly treasurySigner: TreasurySigner | undefined;
+  /** Per-treasury/chain advisory lock for funding dispatch (D7). */
+  readonly fundingDispatchLock: FundingDispatchLock;
+  /** Public-client receipt waiter; never holds signing credentials. */
+  readonly transactionReceiptTracker: TransactionReceiptTracker;
   /** Absent for roles that hold no email credentials. */
   readonly emailSender: EmailSender | undefined;
   close(): Promise<void>;
@@ -109,9 +123,17 @@ export function buildContainer(options: BuildContainerOptions): Container {
       projects: createProjectRepository(database.db),
       environments: createEnvironmentRepository(database.db),
       credentialScopes: createCredentialScopeRepository(database.db),
+      fundingOperations: createFundingOperationRepository(database.db),
+      fundingTransactions: createFundingTransactionRepository(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),
+    fundingDispatchLock: createFundingDispatchLock(database.db),
+    transactionReceiptTracker: createTransactionReceiptTracker({
+      chain: config.chain,
+      clock,
+      logger,
+    }),
     emailSender: buildEmailSender(config, logger),
     close: async () => {
       await database.close();

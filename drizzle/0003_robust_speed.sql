@@ -1,0 +1,1 @@
+ALTER TYPE "public"."funding_transaction_status" ADD VALUE 'submission_unknown' BEFORE 'confirmed';

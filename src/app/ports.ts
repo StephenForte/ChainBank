@@ -1,5 +1,6 @@
 import type { BalanceReading } from '../domain/balance-reading.js';
 import type { Role } from '../domain/auth/roles.js';
+import type { FundingOperationStatus, FundingTransactionStatus } from '../domain/funding/statuses.js';
 import type { TreasuryStatus, TreasuryThresholds } from '../domain/treasury/treasury-status.js';
 
 /**
@@ -362,4 +363,153 @@ export interface ManagedWalletRepository {
 export interface FundingPolicyRepository {
   upsert(input: FundingPolicyUpsertInput): Promise<StoredFundingPolicy>;
   findByManagedWalletId(managedWalletId: string): Promise<StoredFundingPolicy | undefined>;
+}
+
+/** Durable funding request (idempotency + lifecycle). Contract C4 statuses. */
+export interface FundingOperation {
+  readonly id: string;
+  readonly operationType: string;
+  readonly projectId: string | undefined;
+  readonly environmentId: string | undefined;
+  readonly idempotencyKey: string | undefined;
+  readonly status: FundingOperationStatus;
+  readonly requestedBy: string;
+  readonly startedAt: Date;
+  readonly completedAt: Date | undefined;
+  readonly errorCode: string | undefined;
+  readonly errorSummary: string | undefined;
+}
+
+/** On-chain funding transfer record. Contract C4 statuses. */
+export interface FundingTransaction {
+  readonly id: string;
+  readonly operationId: string;
+  readonly treasuryId: string;
+  readonly managedWalletId: string;
+  readonly amountWei: bigint;
+  readonly transactionHash: string | undefined;
+  readonly nonce: number | undefined;
+  readonly status: FundingTransactionStatus;
+  readonly errorCode: string | undefined;
+  readonly createdAt: Date;
+  readonly submittedAt: Date | undefined;
+  readonly confirmedAt: Date | undefined;
+}
+
+export interface InsertFundingOperationInput {
+  readonly id: string;
+  readonly operationType: string;
+  readonly projectId: string | undefined;
+  readonly environmentId: string | undefined;
+  readonly idempotencyKey: string | undefined;
+  readonly requestedBy: string;
+  readonly startedAt: Date;
+}
+
+export interface InsertFundingTransactionInput {
+  readonly id: string;
+  readonly operationId: string;
+  readonly treasuryId: string;
+  readonly managedWalletId: string;
+  readonly amountWei: bigint;
+  readonly createdAt: Date;
+}
+
+export interface FundingOperationRepository {
+  findById(id: string): Promise<FundingOperation | undefined>;
+  findByIdempotencyKey(requestedBy: string, idempotencyKey: string): Promise<FundingOperation | undefined>;
+  /** Inserts a pending row. Unique-violation races surface as Postgres 23505. */
+  insertPending(input: InsertFundingOperationInput): Promise<FundingOperation>;
+  markInProgress(id: string): Promise<FundingOperation>;
+  markSucceeded(id: string, completedAt: Date): Promise<FundingOperation>;
+  markFailed(
+    id: string,
+    errorCode: string,
+    errorSummary: string,
+    completedAt: Date,
+  ): Promise<FundingOperation>;
+  markAbandoned(
+    id: string,
+    errorCode: string,
+    errorSummary: string,
+    completedAt: Date,
+  ): Promise<FundingOperation>;
+}
+
+export interface FundingTransactionRepository {
+  findById(id: string): Promise<FundingTransaction | undefined>;
+  findByOperationId(operationId: string): Promise<FundingTransaction | undefined>;
+  /**
+   * Returns an in-flight (created|submitted) transaction for the wallet, if any.
+   * Used to prevent duplicate top-ups (AGENTS.md §7.5).
+   */
+  findPendingByManagedWallet(managedWalletId: string): Promise<FundingTransaction | undefined>;
+  /**
+   * Total wei committed to in-flight transfers for this treasury across all
+   * wallets. Required for the reserve check: an on-chain balance read cannot
+   * see this treasury's own submitted-but-unmined sends (AGENTS.md §7.4).
+   */
+  sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint>;
+  insertCreated(input: InsertFundingTransactionInput): Promise<FundingTransaction>;
+  markSubmitted(
+    id: string,
+    input: { readonly transactionHash: string; readonly nonce: number; readonly submittedAt: Date },
+  ): Promise<FundingTransaction>;
+  /**
+   * Records a submission whose outcome the node never confirmed. Non-terminal:
+   * the transfer may still mine, so the duplicate-funding gate stays closed.
+   */
+  markSubmissionUnknown(
+    id: string,
+    input: { readonly nonce: number; readonly errorCode: string },
+  ): Promise<FundingTransaction>;
+  markConfirmed(id: string, confirmedAt: Date): Promise<FundingTransaction>;
+  markReverted(id: string, errorCode: string): Promise<FundingTransaction>;
+  markReplaced(id: string, errorCode: string): Promise<FundingTransaction>;
+  markDropped(id: string, errorCode: string): Promise<FundingTransaction>;
+  markFailed(id: string, errorCode: string): Promise<FundingTransaction>;
+}
+
+/**
+ * Serializes funding dispatch for one treasury/chain via pg_advisory_xact_lock (D7).
+ * Repository methods on the unit of work share that transaction connection.
+ */
+export interface FundingDispatchLock {
+  runExclusive<T>(
+    treasuryId: string,
+    evmChainId: number,
+    work: (uow: FundingDispatchUnitOfWork) => Promise<T>,
+  ): Promise<T>;
+}
+
+export interface FundingDispatchUnitOfWork {
+  readonly operations: FundingOperationRepository;
+  readonly transactions: FundingTransactionRepository;
+}
+
+/**
+ * Waits for an on-chain receipt. Submission success must never be treated as
+ * confirmation — callers persist `submitted` first, then invoke this.
+ */
+export type TransactionTrackingOutcome =
+  | { readonly kind: 'confirmed'; readonly confirmedAt: Date }
+  | { readonly kind: 'reverted' }
+  | { readonly kind: 'replaced' }
+  | { readonly kind: 'dropped' }
+  | { readonly kind: 'pending' };
+
+export interface TransactionReceiptTracker {
+  waitForOutcome(input: {
+    readonly transactionHash: string;
+    readonly confirmations: number;
+    readonly timeoutMs: number;
+    /**
+     * Sender and nonce of the submitted transfer. Used as positive evidence
+     * when the receipt wait fails: only a consumed nonce with an unknown hash
+     * proves the transfer can never mine. Without such proof the outcome is
+     * `pending` — a transient RPC error must never become a terminal state.
+     */
+    readonly senderAddress: string;
+    readonly nonce: number;
+  }): Promise<TransactionTrackingOutcome>;
 }
