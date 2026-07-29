@@ -237,7 +237,7 @@ Local design choices (T1.3, 2026-07-28):
 
 ```ts
 // src/app/auth/authorize-scope.ts
-type ScopeAction = 'read' | 'mutate';
+type ScopeAction = 'read' | 'mutate' | 'fund';
 
 interface AuthorizeScopeInput {
   readonly role: Role;
@@ -279,20 +279,35 @@ Local design choices (T2.1, 2026-07-28):
   `assertProjectReadPermission` then `authorizeScope` / `resolveReadableProjectIds`.
 - No scope rows ⇒ empty list and `SCOPE_DENIED` on get.
 
-### C7 — Funding dispatch engine (owner: T1.5)
+Extension (T1.6, 2026-07-29):
+
+- `fund` action for on-demand funding (`ensure-funded`): operator allowed;
+  project-service allowed when scoped to the wallet's project/environment;
+  read-only and cron roles denied (`INSUFFICIENT_ROLE`).
+
+### C7 — Funding dispatch engine (owner: T1.5; destination hardening: T1.6)
 
 ```ts
 // src/app/funding/dispatch-funding.ts — sole path that submits treasury transfers
+interface DispatchFundingInput {
+  // ... operation metadata, treasury snapshot, policy, balances ...
+  readonly walletId: string; // destination address NEVER accepted from callers
+}
 function dispatchFunding(deps, input): Promise<DispatchFundingResult>;
+// deps.managedWallets.findById(walletId) resolves the allowlisted address
 // Result kinds: replay | no-op | blocked | submitted
 // Throws: FUNDING_DISABLED | ENTITY_DISABLED | PENDING_FUNDING_EXISTS |
-//         SIGNER_CHAIN_MISMATCH | RPC/signer errors after committing failed status
+//         WALLET_NOT_FOUND | SIGNER_CHAIN_MISMATCH | RPC/signer errors after committing failed status
 
 // src/app/funding/track-transaction.ts
 // input requires senderAddress (treasury) so the tracker can probe the nonce
 function trackTransaction(deps, input): Promise<TrackTransactionResult>;
 // Outcome kinds: confirmed | reverted | replaced | dropped | pending | already-terminal
 // Timeout ⇒ pending (D4); never treats submission as confirmation
+
+// src/app/funding/ensure-wallet-funded.ts — HTTP orchestration (T1.6 / P1-US3)
+function ensureWalletFunded(deps, input): Promise<EnsureWalletFundedResult>;
+// status: no-op | funded | pending | blocked | failed
 ```
 
 Local design choices (T1.5, 2026-07-28):
@@ -323,9 +338,11 @@ Security-review hardening (2026-07-28, PR #8 review — see `tasks/SECURITY-REVI
   `waitForOutcome` takes `senderAddress` + `nonce`; an unknown hash yields `replaced`
   only when the account nonce has advanced past it, otherwise `pending`. Transient
   RPC failures can no longer manufacture `dropped`.
-- Open follow-up for **T1.6**: the endpoint must resolve the destination solely via
-  `ManagedWalletRepository.findById(walletId)` (checking `enabled` and chain), never
-  from request input, with a test rejecting an arbitrary address (AGENTS.md §7.1).
+- **Destination allowlist (T1.6):** `DispatchFundingInput` accepts only `walletId`.
+  `dispatchFunding` resolves the checksummed address via
+  `ManagedWalletRepository.findById`, verifies `enabled` and chain match, and
+  re-resolves inside the advisory lock. `POST /v1/wallets/:id/ensure-funded`
+  request body has `additionalProperties: false` and no address field.
 - Open follow-up for **T4.x reconciliation**: resolve `submission_unknown` rows by
   searching for the treasury's transactions at the recorded nonce.
 
@@ -373,7 +390,7 @@ Local design choices (T2.3, 2026-07-29):
 | `TREASURY_PRIVATE_KEY`              | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                        |
 | `FUNDING_ENABLED`                   | all                            | no                          | `false`                                          | exists (gate flips in T1.4) |
 | `FUNDING_KILL_SWITCH`               | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                        |
-| `TREASURY_RESERVE_WEI`              | web, reconciler                | when funding enabled        | —                                                | T1.6                        |
+| `TREASURY_MINIMUM_RESERVE_ETH`      | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)   |
 | `FUNDING_CONFIRMATIONS`             | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)    |
 | `FUNDING_CONFIRMATION_TIMEOUT_MS`   | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
 | `ALERT_REMINDER_INTERVAL_HOURS`     | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
@@ -395,3 +412,4 @@ Local design choices (T2.3, 2026-07-29):
   `submission_unknown` → pending + `submission-unconfirmed`, distinct
   reverted/replaced/dropped view statuses).
 - 2026-07-29 — T3.3 wired alert persistence + orchestration: `AlertRepository` over migration `0001` `alerts` (append-oriented resolve), `evaluateTreasuryAlerts` shared by treasury-monitor cron and `POST /v1/treasuries/:id/check`, `ALERT_REMINDER_INTERVAL_HOURS` (default 24) in config. Persist-then-send uses `metadata_json.pendingEmail` so a failed send does not advance `last_sent_at` and is retried next run. Monitor role now loads email settings; still strips `TREASURY_PRIVATE_KEY`.
+- 2026-07-29 — T1.6 published `POST /v1/wallets/:id/ensure-funded` (`ensureWalletFunded`), extended C6 with `fund` scope action, and hardened C7 so `dispatchFunding` accepts only `walletId` and resolves the destination via `ManagedWalletRepository.findById` (AGENTS.md §7.1). Reserve continues to use existing `TREASURY_MINIMUM_RESERVE_ETH` / `minimumReserveWei`.

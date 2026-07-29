@@ -12,6 +12,8 @@ import type {
   FundingOperationRepository,
   FundingTransaction,
   FundingTransactionRepository,
+  ManagedWallet,
+  ManagedWalletRepository,
   TreasurySigner,
 } from '../ports.js';
 import { ensureIdempotentOperation } from './ensure-idempotent-operation.js';
@@ -19,6 +21,7 @@ import { ensureIdempotentOperation } from './ensure-idempotent-operation.js';
 export interface DispatchFundingDependencies {
   readonly operations: FundingOperationRepository;
   readonly transactions: FundingTransactionRepository;
+  readonly managedWallets: ManagedWalletRepository;
   readonly lock: FundingDispatchLock;
   readonly signer: TreasurySigner;
   readonly clock: Clock;
@@ -28,6 +31,10 @@ export interface DispatchFundingDependencies {
   readonly isFundingKillSwitchActive: boolean;
 }
 
+/**
+ * Dispatch input never carries a destination address. The allowlisted address
+ * is resolved solely from {@link ManagedWalletRepository.findById} (AGENTS.md §7.1).
+ */
 export interface DispatchFundingInput {
   readonly operationType: string;
   readonly projectId: string | undefined;
@@ -42,12 +49,8 @@ export interface DispatchFundingInput {
     readonly reserveWei: bigint;
     readonly balanceWei: bigint;
   };
-  readonly wallet: {
-    readonly id: string;
-    /** Checksummed, allowlisted destination — never an arbitrary caller address. */
-    readonly address: string;
-    readonly enabled: boolean;
-  };
+  /** Managed wallet id only — destination address must come from the repository. */
+  readonly walletId: string;
   readonly projectEnabled: boolean;
   readonly environmentEnabled: boolean;
   readonly policy: FundingPolicy;
@@ -102,7 +105,10 @@ export async function dispatchFunding(
   dependencies: DispatchFundingDependencies,
   input: DispatchFundingInput,
 ): Promise<DispatchFundingResult> {
-  assertFundingGates(dependencies, input);
+  // Resolve destination from the DB before any gate or RPC work so a caller
+  // cannot influence the signed `to` address (AGENTS.md §7.1).
+  const wallet = await resolveAllowlistedWallet(dependencies, input);
+  assertFundingGates(dependencies, input, wallet);
 
   const ensured = await ensureIdempotentOperation(
     {
@@ -170,12 +176,14 @@ async function dispatchUnderLock(
     readonly transactions: FundingTransactionRepository;
   },
 ): Promise<LockOutcome> {
-  // Re-check gates inside the lock so a flip mid-flight cannot race a send.
-  assertFundingGates(dependencies, input);
+  // Re-resolve and re-check gates inside the lock so a flip mid-flight (disable,
+  // address change) cannot race a send with a stale destination.
+  const lockedWallet = await resolveAllowlistedWallet(dependencies, input);
+  assertFundingGates(dependencies, input, lockedWallet);
 
   await uow.operations.markInProgress(operation.id);
 
-  const pending = await uow.transactions.findPendingByManagedWallet(input.wallet.id);
+  const pending = await uow.transactions.findPendingByManagedWallet(lockedWallet.id);
   if (pending !== undefined) {
     const completedAt = dependencies.clock.now();
     const failed = await uow.operations.markFailed(
@@ -188,11 +196,11 @@ async function dispatchUnderLock(
       kind: 'throw',
       error: new ChainBankError(
         'PENDING_FUNDING_EXISTS',
-        `Managed wallet ${input.wallet.id} already has pending funding transaction ${pending.id}`,
+        `Managed wallet ${lockedWallet.id} already has pending funding transaction ${pending.id}`,
         {
           publicMessage: 'A funding transfer for this wallet is already in progress.',
           context: {
-            managedWalletId: input.wallet.id,
+            managedWalletId: lockedWallet.id,
             pendingTransactionId: pending.id,
             operationId: failed.id,
           },
@@ -229,10 +237,13 @@ async function dispatchUnderLock(
     };
   }
 
+  // Destination is the checksummed display form from the registered row only.
+  const destinationAddress = lockedWallet.addressDisplay;
+
   // Provisional amount for gas estimation: deficit capped by max top-up.
   const provisionalAmountWei = provisionalTopUpAmountWei(input);
   const estimatedCostWei = await dependencies.signer.estimateTransferCostWei(
-    input.wallet.address,
+    destinationAddress,
     provisionalAmountWei,
   );
   // Amounts already committed to unmined transfers from this treasury. The
@@ -274,7 +285,7 @@ async function dispatchUnderLock(
     id: dependencies.idGenerator.next(),
     operationId: operation.id,
     treasuryId: input.treasury.id,
-    managedWalletId: input.wallet.id,
+    managedWalletId: lockedWallet.id,
     amountWei: decision.amountWei,
     createdAt,
   });
@@ -286,7 +297,7 @@ async function dispatchUnderLock(
   let transactionHash: string;
   try {
     const submitted = await dependencies.signer.sendNativeTransfer({
-      to: input.wallet.address,
+      to: destinationAddress,
       valueWei: decision.amountWei,
       nonce,
     });
@@ -315,7 +326,7 @@ async function dispatchUnderLock(
           correlationId: input.correlationId,
           operationId: operation.id,
           transactionId: created.id,
-          managedWalletId: input.wallet.id,
+          managedWalletId: lockedWallet.id,
           nonce,
           errorCode,
         },
@@ -348,7 +359,7 @@ async function dispatchUnderLock(
       correlationId: input.correlationId,
       operationId: operation.id,
       transactionId: transaction.id,
-      managedWalletId: input.wallet.id,
+      managedWalletId: lockedWallet.id,
       amountWei: decision.amountWei.toString(),
       nonce,
       transactionHash,
@@ -370,7 +381,43 @@ async function dispatchUnderLock(
   return { kind: 'submitted', operation: refreshedOperation, transaction };
 }
 
-function assertFundingGates(dependencies: DispatchFundingDependencies, input: DispatchFundingInput): void {
+/**
+ * Loads the registered managed wallet and verifies it belongs on the treasury's
+ * chain. Destination allowlisting lives here — never accept an address from input.
+ */
+async function resolveAllowlistedWallet(
+  dependencies: DispatchFundingDependencies,
+  input: DispatchFundingInput,
+): Promise<ManagedWallet> {
+  const wallet = await dependencies.managedWallets.findById(input.walletId);
+  if (wallet === undefined) {
+    throw new ChainBankError('WALLET_NOT_FOUND', `Managed wallet ${input.walletId} does not exist`, {
+      publicMessage: 'The managed wallet was not found.',
+      context: { managedWalletId: input.walletId },
+    });
+  }
+  if (wallet.chain.chainId !== input.treasury.evmChainId) {
+    throw new ChainBankError(
+      'INVALID_REQUEST',
+      `Managed wallet ${wallet.id} is on chain ${String(wallet.chain.chainId)}, treasury expects ${String(input.treasury.evmChainId)}`,
+      {
+        publicMessage: 'The managed wallet is not registered on the treasury chain.',
+        context: {
+          managedWalletId: wallet.id,
+          walletChainId: wallet.chain.chainId,
+          treasuryChainId: input.treasury.evmChainId,
+        },
+      },
+    );
+  }
+  return wallet;
+}
+
+function assertFundingGates(
+  dependencies: DispatchFundingDependencies,
+  input: DispatchFundingInput,
+  wallet: ManagedWallet,
+): void {
   if (!dependencies.isFundingEnabled) {
     throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_ENABLED is false; refusing to dispatch.', {
       publicMessage: 'Funding is disabled.',
@@ -399,10 +446,10 @@ function assertFundingGates(dependencies: DispatchFundingDependencies, input: Di
       context: { environmentId: input.environmentId ?? null },
     });
   }
-  if (!input.wallet.enabled) {
+  if (!wallet.enabled) {
     throw new ChainBankError('ENTITY_DISABLED', 'Managed wallet is disabled; refusing to dispatch.', {
       publicMessage: 'The managed wallet is disabled.',
-      context: { managedWalletId: input.wallet.id },
+      context: { managedWalletId: wallet.id },
     });
   }
 }

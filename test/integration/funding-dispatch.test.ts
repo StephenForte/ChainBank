@@ -7,6 +7,7 @@ import { ChainBankError } from '../../src/domain/errors.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
 import { createFundingOperationRepository } from '../../src/infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingTransactionRepository } from '../../src/infrastructure/db/repositories/funding-transaction-repository.js';
+import { createManagedWalletRepository } from '../../src/infrastructure/db/repositories/managed-wallet-repository.js';
 import { fundingTransactions, managedWallets } from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { createFixedClock } from '../support/clock.js';
@@ -20,7 +21,6 @@ import {
 import { integrationEnabled } from '../support/integration-setup.js';
 
 const ONE_ETH = 10n ** 18n;
-const WALLET_ADDRESS = '0x2222222222222222222222222222222222222222';
 
 function createControllableSigner(options: {
   readonly onSend?: () => Promise<void>;
@@ -82,6 +82,7 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
       dependencies: {
         operations: createFundingOperationRepository(handle.db),
         transactions: createFundingTransactionRepository(handle.db),
+        managedWallets: createManagedWalletRepository(handle.db),
         lock: createFundingDispatchLock(handle.db),
         signer,
         clock,
@@ -104,11 +105,7 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
           reserveWei: ONE_ETH / 2n,
           balanceWei: 20n * ONE_ETH,
         },
-        wallet: {
-          id: seed.managedWalletId,
-          address: WALLET_ADDRESS,
-          enabled: true,
-        },
+        walletId: seed.managedWalletId,
         projectEnabled: true,
         environmentEnabled: true,
         policy: {
@@ -224,11 +221,7 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
     const b = buildDispatch(signer, 'corr-lock-b');
     a.input.idempotencyKey = 'lock-a';
     b.input.idempotencyKey = 'lock-b';
-    b.input.wallet = {
-      id: walletB.id,
-      address: '0x3333333333333333333333333333333333333333',
-      enabled: true,
-    };
+    b.input.walletId = walletB.id;
 
     const firstPromise = dispatchFunding(a.dependencies, a.input);
     await new Promise((resolve) => setTimeout(resolve, 50));

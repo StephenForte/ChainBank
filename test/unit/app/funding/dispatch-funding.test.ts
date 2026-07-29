@@ -23,11 +23,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
       reserveWei: ONE_ETH / 2n,
       balanceWei: 10n * ONE_ETH,
     },
-    wallet: {
-      id: 'wallet-1',
-      address: WALLET_ADDRESS,
-      enabled: true,
-    },
+    walletId: 'wallet-1',
     projectEnabled: true,
     environmentEnabled: true,
     policy: {
@@ -41,12 +37,66 @@ function baseInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createManagedWalletRepo(options?: {
+  readonly enabled?: boolean;
+  readonly addressDisplay?: string;
+  readonly chainId?: number;
+  readonly wallets?: Map<string, { enabled: boolean; addressDisplay: string; chainId: number }>;
+}) {
+  const wallets =
+    options?.wallets ??
+    new Map([
+      [
+        'wallet-1',
+        {
+          enabled: options?.enabled ?? true,
+          addressDisplay: options?.addressDisplay ?? WALLET_ADDRESS,
+          chainId: options?.chainId ?? 11_155_111,
+        },
+      ],
+    ]);
+  return {
+    findById(id: string) {
+      const row = wallets.get(id);
+      if (row === undefined) {
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve({
+        id,
+        project: { id: 'project-1', slug: 'p', name: 'P', enabled: true },
+        environment: { id: 'env-1', projectId: 'project-1', slug: 'e', name: 'E', enabled: true },
+        chain: {
+          id: 'chain-1',
+          slug: 'sepolia',
+          chainId: row.chainId,
+          displayName: 'Sepolia',
+          nativeSymbol: 'ETH',
+          explorerBaseUrl: 'https://sepolia.etherscan.io',
+        },
+        role: 'signer',
+        address: row.addressDisplay.toLowerCase(),
+        addressDisplay: row.addressDisplay,
+        enabled: row.enabled,
+        criticalAtStartup: false,
+        reconciliationEnabled: false,
+        policy: undefined,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      });
+    },
+    insert: () => Promise.reject(new Error('unused')),
+    list: () => Promise.reject(new Error('unused')),
+    update: () => Promise.reject(new Error('unused')),
+  };
+}
+
 function deps(overrides: {
   readonly signer?: ReturnType<typeof createFakeSigner>;
   readonly isFundingEnabled?: boolean;
   readonly isFundingKillSwitchActive?: boolean;
   readonly stores?: ReturnType<typeof createInMemoryFundingStores>;
   readonly lock?: ReturnType<typeof createInMemoryFundingStores>['lock'];
+  readonly managedWallets?: ReturnType<typeof createManagedWalletRepo>;
 }) {
   const stores = overrides.stores ?? createInMemoryFundingStores();
   const clock = createFixedClock();
@@ -59,6 +109,7 @@ function deps(overrides: {
     dependencies: {
       operations: stores.operations,
       transactions: stores.transactions,
+      managedWallets: overrides.managedWallets ?? createManagedWalletRepo(),
       lock: overrides.lock ?? stores.lock,
       signer,
       clock,
@@ -88,14 +139,31 @@ describe('dispatchFunding', () => {
   });
 
   it('refuses when a managed wallet is disabled', async () => {
-    const { dependencies, signer } = deps({});
-    await expect(
-      dispatchFunding(
-        dependencies,
-        baseInput({ wallet: { id: 'wallet-1', address: WALLET_ADDRESS, enabled: false } }),
-      ),
-    ).rejects.toMatchObject({ code: 'ENTITY_DISABLED' });
+    const { dependencies, signer } = deps({
+      managedWallets: createManagedWalletRepo({ enabled: false }),
+    });
+    await expect(dispatchFunding(dependencies, baseInput())).rejects.toMatchObject({
+      code: 'ENTITY_DISABLED',
+    });
     expect(signer.sendCalls).toBe(0);
+  });
+
+  it('signs only to the repository address, never a caller-supplied destination', async () => {
+    const registered = '0x2222222222222222222222222222222222222222';
+    const signer = createFakeSigner({
+      send: (input) => {
+        expect(input.to).toBe(registered);
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+    const { dependencies } = deps({
+      signer,
+      managedWallets: createManagedWalletRepo({ addressDisplay: registered }),
+    });
+    // DispatchFundingInput has no address field; an arbitrary destination cannot be supplied.
+    const result = await dispatchFunding(dependencies, baseInput());
+    expect(result.kind).toBe('submitted');
+    expect(signer.sendCalls).toBe(1);
   });
 
   it('submits a transfer after re-checking policy and persists the hash as submitted', async () => {
@@ -292,7 +360,6 @@ describe('dispatchFunding', () => {
   });
 
   it('counts in-flight transfers to other wallets against the treasury reserve', async () => {
-    const { dependencies, stores } = deps({});
     const reserveWei = 9n * ONE_ETH;
     const treasury = { balanceWei: 10n * ONE_ETH, reserveWei };
     // Each wallet may draw up to 0.9 ETH; three would breach a 9 ETH reserve
@@ -303,34 +370,42 @@ describe('dispatchFunding', () => {
       maximumTopUpWei: (9n * ONE_ETH) / 10n,
       isEnabled: true,
     };
-    const walletInput = (id: string, address: string, idempotencyKey: string) =>
+    const wallets = new Map([
+      [
+        'wallet-a',
+        { enabled: true, addressDisplay: '0x000000000000000000000000000000000000000a', chainId: 11_155_111 },
+      ],
+      [
+        'wallet-b',
+        { enabled: true, addressDisplay: '0x000000000000000000000000000000000000000b', chainId: 11_155_111 },
+      ],
+      [
+        'wallet-c',
+        { enabled: true, addressDisplay: '0x000000000000000000000000000000000000000c', chainId: 11_155_111 },
+      ],
+    ]);
+    const { dependencies, stores } = deps({
+      managedWallets: createManagedWalletRepo({ wallets }),
+    });
+    const walletInput = (id: string, idempotencyKey: string) =>
       baseInput({
         idempotencyKey,
         policy,
         treasury: { ...baseInput().treasury, ...treasury },
-        wallet: { id, address, enabled: true },
+        walletId: id,
         walletBalanceWei: 0n,
       });
 
-    const first = await dispatchFunding(
-      dependencies,
-      walletInput('wallet-a', '0x000000000000000000000000000000000000000a', 'reserve-a'),
-    );
+    const first = await dispatchFunding(dependencies, walletInput('wallet-a', 'reserve-a'));
     expect(first.kind).toBe('submitted');
 
     // The observed balance still reads 10 ETH because nothing has mined, so
     // only in-flight accounting can bound the second transfer.
-    const second = await dispatchFunding(
-      dependencies,
-      walletInput('wallet-b', '0x000000000000000000000000000000000000000b', 'reserve-b'),
-    );
+    const second = await dispatchFunding(dependencies, walletInput('wallet-b', 'reserve-b'));
     expect(second.kind).toBe('submitted');
 
     // Spendable is now exhausted, so the third wallet is refused outright.
-    const third = await dispatchFunding(
-      dependencies,
-      walletInput('wallet-c', '0x000000000000000000000000000000000000000c', 'reserve-c'),
-    );
+    const third = await dispatchFunding(dependencies, walletInput('wallet-c', 'reserve-c'));
     expect(third.kind).toBe('blocked');
     if (third.kind === 'blocked') {
       expect(third.reason).toBe('reserve');

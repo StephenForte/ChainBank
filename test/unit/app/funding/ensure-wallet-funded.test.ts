@@ -1,0 +1,414 @@
+import { describe, expect, it, vi } from 'vitest';
+import { ensureWalletFunded } from '../../../../src/app/funding/ensure-wallet-funded.js';
+import type {
+  AuditEventRepository,
+  BalanceObservationRepository,
+  BalanceReader,
+  CredentialScope,
+  CredentialScopeRepository,
+  ManagedWallet,
+  ManagedWalletRepository,
+  Treasury,
+  TreasuryRepository,
+} from '../../../../src/app/ports.js';
+import { ChainBankError } from '../../../../src/domain/errors.js';
+import type { Role } from '../../../../src/domain/auth/roles.js';
+import { createLogger } from '../../../../src/observability/logger.js';
+import { createFixedClock } from '../../../support/clock.js';
+import {
+  createFakeReceiptTracker,
+  createFakeSigner,
+  createInMemoryFundingStores,
+} from '../../../support/funding-fakes.js';
+
+const ONE_ETH = 10n ** 18n;
+const WALLET_ID = '44444444-4444-4444-8444-444444444444';
+const CREDENTIAL_ID = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
+const ENV_ID = '22222222-2222-4222-8222-222222222222';
+const OTHER_PROJECT = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const REGISTERED_ADDRESS = '0x2222222222222222222222222222222222222222';
+const ARBITRARY_ADDRESS = '0xDeadBeefDeadBeefDeadBeefDeadBeefDeadBeef';
+
+const now = new Date('2026-07-29T12:00:00.000Z');
+
+function buildWallet(overrides: Partial<ManagedWallet> = {}): ManagedWallet {
+  return {
+    id: WALLET_ID,
+    project: { id: PROJECT_ID, slug: 'fortel2', name: 'ForteL2', enabled: true },
+    environment: {
+      id: ENV_ID,
+      projectId: PROJECT_ID,
+      slug: 'dev',
+      name: 'Development',
+      enabled: true,
+    },
+    chain: {
+      id: 'chain-1',
+      slug: 'sepolia',
+      chainId: 11_155_111,
+      displayName: 'Sepolia',
+      nativeSymbol: 'ETH',
+      explorerBaseUrl: 'https://sepolia.etherscan.io',
+    },
+    role: 'signer',
+    address: REGISTERED_ADDRESS.toLowerCase(),
+    addressDisplay: REGISTERED_ADDRESS,
+    enabled: true,
+    criticalAtStartup: false,
+    reconciliationEnabled: false,
+    policy: {
+      id: 'policy-1',
+      managedWalletId: WALLET_ID,
+      minimumBalanceWei: ONE_ETH,
+      targetBalanceWei: 2n * ONE_ETH,
+      maximumTopUpWei: 5n * ONE_ETH,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function buildTreasury(): Treasury {
+  return {
+    id: 'treasury-1',
+    chain: {
+      id: 'chain-1',
+      slug: 'sepolia',
+      chainId: 11_155_111,
+      displayName: 'Sepolia',
+      nativeSymbol: 'ETH',
+      explorerBaseUrl: 'https://sepolia.etherscan.io',
+    },
+    address: '0x1111111111111111111111111111111111111111',
+    addressDisplay: '0x1111111111111111111111111111111111111111',
+    thresholds: {
+      warningBalanceWei: ONE_ETH,
+      criticalBalanceWei: ONE_ETH / 4n,
+      recoveryBalanceWei: 2n * ONE_ETH,
+      minimumReserveWei: ONE_ETH / 2n,
+    },
+    status: 'healthy',
+    lastObservedBalanceWei: 20n * ONE_ETH,
+    lastObservedAt: now,
+    lastCheckedAt: now,
+    lastCheckErrorCode: undefined,
+    enabled: true,
+  };
+}
+
+function createBalanceReader(balances: Readonly<Record<string, bigint>>): BalanceReader & {
+  readonly reads: string[];
+} {
+  const reads: string[] = [];
+  return {
+    reads,
+    readBalance(address) {
+      reads.push(address.toLowerCase());
+      const balanceWei = balances[address.toLowerCase()];
+      if (balanceWei === undefined) {
+        return Promise.resolve({
+          kind: 'unavailable',
+          errorCode: 'RPC_UNAVAILABLE',
+          reason: 'missing fixture balance',
+          observedAt: now,
+        });
+      }
+      return Promise.resolve({
+        kind: 'observed',
+        balanceWei,
+        blockNumber: 1n,
+        observedAt: now,
+      });
+    },
+    verifyChainId() {
+      return Promise.resolve({ matches: true, observedChainId: 11_155_111 });
+    },
+  };
+}
+
+function createScopeRepo(scopes: readonly CredentialScope[]): CredentialScopeRepository {
+  return {
+    listByCredentialId: vi.fn(() => Promise.resolve(scopes)),
+    insert: vi.fn(),
+  };
+}
+
+function buildDeps(options?: {
+  readonly role?: Role;
+  readonly scopes?: readonly CredentialScope[];
+  readonly wallet?: ManagedWallet | undefined;
+  readonly walletBalanceWei?: bigint;
+  readonly treasuryBalanceWei?: bigint;
+  readonly isFundingEnabled?: boolean;
+  readonly isFundingKillSwitchActive?: boolean;
+  readonly signer?: ReturnType<typeof createFakeSigner>;
+  readonly receiptOutcome?: 'confirmed' | 'pending';
+  readonly estimatedCostWei?: bigint;
+}) {
+  const wallet = options && 'wallet' in options ? options.wallet : buildWallet();
+  const treasury = buildTreasury();
+  const stores = createInMemoryFundingStores();
+  const signer =
+    options?.signer ??
+    createFakeSigner({
+      ...(options?.estimatedCostWei === undefined ? {} : { estimatedCostWei: options.estimatedCostWei }),
+      send: (input) => {
+        // Destination must be the registered allowlisted address only.
+        expect(input.to.toLowerCase()).toBe(REGISTERED_ADDRESS.toLowerCase());
+        expect(input.to.toLowerCase()).not.toBe(ARBITRARY_ADDRESS.toLowerCase());
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+  const balanceReader = createBalanceReader({
+    [REGISTERED_ADDRESS.toLowerCase()]: options?.walletBalanceWei ?? ONE_ETH / 10n,
+    [treasury.address.toLowerCase()]: options?.treasuryBalanceWei ?? 20n * ONE_ETH,
+  });
+  const auditEvents: AuditEventRepository = {
+    record: vi.fn(() => Promise.resolve()),
+  };
+  const balanceObservations: BalanceObservationRepository = {
+    record: vi.fn(() => Promise.resolve()),
+    findLatest: vi.fn(),
+  };
+  const managedWallets: ManagedWalletRepository = {
+    findById: vi.fn(() => Promise.resolve(wallet)),
+    insert: vi.fn(),
+    list: vi.fn(),
+    update: vi.fn(),
+  };
+  const treasuries: TreasuryRepository = {
+    listEnabled: vi.fn(() => Promise.resolve([treasury])),
+    findById: vi.fn(),
+    upsert: vi.fn(),
+    recordCheckSuccess: vi.fn(),
+    recordCheckFailure: vi.fn(),
+  };
+
+  let n = 0;
+  const clock = createFixedClock(now);
+  const dependencies = {
+    managedWallets,
+    treasuries,
+    balanceObservations,
+    balanceReader,
+    credentialScopes: createScopeRepo(options?.scopes ?? []),
+    auditEvents,
+    operations: stores.operations,
+    transactions: stores.transactions,
+    lock: stores.lock,
+    receiptTracker: createFakeReceiptTracker(
+      options?.receiptOutcome === 'pending' ? { kind: 'pending' } : { kind: 'confirmed', confirmedAt: now },
+    ),
+    signer,
+    clock,
+    idGenerator: { next: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` },
+    logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
+    isFundingEnabled: options?.isFundingEnabled ?? true,
+    isFundingKillSwitchActive: options?.isFundingKillSwitchActive ?? false,
+    confirmations: 1,
+    confirmationTimeoutMs: 1_000,
+  };
+
+  return {
+    dependencies,
+    signer,
+    auditEvents,
+    balanceObservations,
+    balanceReader,
+    managedWallets,
+    input: {
+      walletId: WALLET_ID,
+      idempotencyKey: 'idem-1',
+      role: options?.role ?? 'operator',
+      credentialId: CREDENTIAL_ID,
+      correlationId: 'corr-1',
+      sourceIp: '127.0.0.1',
+    },
+  };
+}
+
+describe('ensureWalletFunded', () => {
+  it('returns funded after a fresh balance read and confirmed transfer', async () => {
+    const { dependencies, input, balanceReader, balanceObservations, auditEvents, signer } = buildDeps({});
+    const result = await ensureWalletFunded(dependencies, input);
+
+    expect(result.status).toBe('funded');
+    // deficit to target: 2 ETH - 0.1 ETH = 1.9 ETH
+    expect(result.transferredWei).toBe(2n * ONE_ETH - ONE_ETH / 10n);
+    expect(result.balanceBeforeWei).toBe(ONE_ETH / 10n);
+    expect(result.transactionHash).toMatch(/^0x/);
+    expect(balanceReader.reads.length).toBeGreaterThanOrEqual(2);
+    expect(balanceObservations.record).toHaveBeenCalledTimes(2);
+    expect(auditEvents.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'wallet.ensure_funded', actorId: CREDENTIAL_ID }),
+    );
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('returns no-op when the fresh wallet balance is already at minimum', async () => {
+    const { dependencies, input, signer } = buildDeps({ walletBalanceWei: ONE_ETH });
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('no-op');
+    expect(result.transferredWei).toBeUndefined();
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('returns pending when confirmation times out', async () => {
+    const { dependencies, input } = buildDeps({ receiptOutcome: 'pending' });
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('pending');
+    expect(result.transactionHash).toBeDefined();
+  });
+
+  it('returns blocked with FUNDING_BLOCKED_RESERVE when reserve would be breached', async () => {
+    const { dependencies, input, signer } = buildDeps({
+      treasuryBalanceWei: ONE_ETH,
+      estimatedCostWei: ONE_ETH,
+    });
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('blocked');
+    expect(result.reasonCode).toBe('FUNDING_BLOCKED_RESERVE');
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('refuses FUNDING_ENABLED=false without calling the signer', async () => {
+    const { dependencies, input, signer, auditEvents } = buildDeps({ isFundingEnabled: false });
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'FUNDING_DISABLED',
+    });
+    expect(signer.sendCalls).toBe(0);
+    expect(auditEvents.record).toHaveBeenCalled();
+  });
+
+  it('refuses when the kill switch is active without calling the signer', async () => {
+    const { dependencies, input, signer } = buildDeps({ isFundingKillSwitchActive: true });
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'FUNDING_DISABLED',
+    });
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('maps PENDING_FUNDING_EXISTS to a conflict error', async () => {
+    const { dependencies, input, signer } = buildDeps({});
+    // Seed an in-flight transfer for the same wallet.
+    await dependencies.operations.insertPending({
+      id: 'prior-op',
+      operationType: 'ensure_funded',
+      projectId: PROJECT_ID,
+      environmentId: ENV_ID,
+      idempotencyKey: undefined,
+      requestedBy: 'other',
+      startedAt: now,
+    });
+    await dependencies.transactions.insertCreated({
+      id: 'prior-tx',
+      operationId: 'prior-op',
+      treasuryId: 'treasury-1',
+      managedWalletId: WALLET_ID,
+      amountWei: ONE_ETH,
+      createdAt: now,
+    });
+    await dependencies.transactions.markSubmitted('prior-tx', {
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      nonce: 1,
+      submittedAt: now,
+    });
+
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'PENDING_FUNDING_EXISTS',
+    });
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  describe('authorization matrix', () => {
+    it('allows operator', async () => {
+      const { dependencies, input } = buildDeps({ role: 'operator' });
+      await expect(ensureWalletFunded(dependencies, input)).resolves.toMatchObject({
+        status: 'funded',
+      });
+    });
+
+    it('allows project-service when scoped to the wallet environment', async () => {
+      const { dependencies, input } = buildDeps({
+        role: 'project-service',
+        scopes: [
+          {
+            id: '1',
+            credentialId: CREDENTIAL_ID,
+            projectId: PROJECT_ID,
+            environmentId: ENV_ID,
+            createdAt: now,
+          },
+        ],
+      });
+      await expect(ensureWalletFunded(dependencies, input)).resolves.toMatchObject({
+        status: 'funded',
+      });
+    });
+
+    it('denies project-service when out of scope', async () => {
+      const { dependencies, input, signer } = buildDeps({
+        role: 'project-service',
+        scopes: [
+          {
+            id: '1',
+            credentialId: CREDENTIAL_ID,
+            projectId: OTHER_PROJECT,
+            environmentId: undefined,
+            createdAt: now,
+          },
+        ],
+      });
+      await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+        code: 'SCOPE_DENIED',
+      });
+      expect(signer.sendCalls).toBe(0);
+    });
+
+    it('denies read-only', async () => {
+      const { dependencies, input, signer } = buildDeps({ role: 'read-only' });
+      await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+        code: 'INSUFFICIENT_ROLE',
+      });
+      expect(signer.sendCalls).toBe(0);
+    });
+
+    it('denies cron roles', async () => {
+      for (const role of ['cron-treasury-monitor', 'cron-reconciler'] as const) {
+        const { dependencies, input, signer } = buildDeps({ role });
+        await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+          code: 'INSUFFICIENT_ROLE',
+        });
+        expect(signer.sendCalls).toBe(0);
+      }
+    });
+  });
+
+  it('never lets an arbitrary caller address reach the signer', async () => {
+    // The service input and dispatch input have no address field. Even if a
+    // caller somehow tried to influence destination, only the DB row is used.
+    const { dependencies, input, signer, managedWallets } = buildDeps({});
+    const result = await ensureWalletFunded(dependencies, {
+      ...input,
+      // @ts-expect-error intentional: prove unknown address fields are ignored
+      address: ARBITRARY_ADDRESS,
+      to: ARBITRARY_ADDRESS,
+    });
+    expect(result.status).toBe('funded');
+    expect(managedWallets.findById).toHaveBeenCalledWith(WALLET_ID);
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('returns WALLET_NOT_FOUND when the id is unknown', async () => {
+    const { dependencies, input } = buildDeps({ wallet: undefined });
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toBeInstanceOf(ChainBankError);
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'WALLET_NOT_FOUND',
+    });
+  });
+});
