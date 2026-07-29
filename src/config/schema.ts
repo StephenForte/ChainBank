@@ -89,6 +89,15 @@ export const environmentSchema = z.object({
    * treasury-monitor configuration.
    */
   TREASURY_PRIVATE_KEY: z.string().trim().min(1).optional(),
+
+  /** Receipt confirmations before a funding tx is marked confirmed (D4). */
+  FUNDING_CONFIRMATIONS: positiveInteger.default(1),
+
+  /**
+   * Max wait for confirmations. Timeout leaves the tx `submitted` / operation
+   * resumable as `pending` — never a false failure (D4).
+   */
+  FUNDING_CONFIRMATION_TIMEOUT_MS: positiveInteger.default(60_000),
 });
 
 export type RawEnvironment = z.infer<typeof environmentSchema>;

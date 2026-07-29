@@ -241,6 +241,34 @@ Local design choices (T2.1, 2026-07-28):
   `assertProjectReadPermission` then `authorizeScope` / `resolveReadableProjectIds`.
 - No scope rows ⇒ empty list and `SCOPE_DENIED` on get.
 
+### C7 — Funding dispatch engine (owner: T1.5)
+
+```ts
+// src/app/funding/dispatch-funding.ts — sole path that submits treasury transfers
+function dispatchFunding(deps, input): Promise<DispatchFundingResult>;
+// Result kinds: replay | no-op | blocked | submitted
+// Throws: FUNDING_DISABLED | ENTITY_DISABLED | PENDING_FUNDING_EXISTS |
+//         SIGNER_CHAIN_MISMATCH | RPC/signer errors after committing failed status
+
+// src/app/funding/track-transaction.ts
+function trackTransaction(deps, input): Promise<TrackTransactionResult>;
+// Outcome kinds: confirmed | reverted | replaced | dropped | pending | already-terminal
+// Timeout ⇒ pending (D4); never treats submission as confirmation
+```
+
+Local design choices (T1.5, 2026-07-28):
+
+- Idempotency: `funding_operations` row committed before any RPC; unique-violation
+  race on `(requested_by, idempotency_key)` re-reads the winner.
+- Serialization: `pg_advisory_xact_lock(hashtext(treasuryId), evmChainId)` via
+  `FundingDispatchLock` (D7); nonce fetch + submit + hash persist share that txn.
+- Pending-tx gate: `created|submitted` rows for the same managed wallet abort with
+  `PENDING_FUNDING_EXISTS` (status updates commit, then error is thrown).
+- Enable gates: `FUNDING_ENABLED`, `FUNDING_KILL_SWITCH`, plus treasury / project /
+  environment / wallet `enabled` flags — all fail closed before signing.
+- Config: `FUNDING_CONFIRMATIONS` / `FUNDING_CONFIRMATION_TIMEOUT_MS` loaded in
+  `FundingConfig` for `trackTransaction` (shared with T2.3).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                 | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -249,8 +277,8 @@ Local design choices (T2.1, 2026-07-28):
 | `FUNDING_ENABLED`                   | all                            | no                          | `false`                                          | exists (gate flips in T1.4) |
 | `FUNDING_KILL_SWITCH`               | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                        |
 | `TREASURY_RESERVE_WEI`              | web, reconciler                | when funding enabled        | —                                                | T1.6                        |
-| `FUNDING_CONFIRMATIONS`             | web, reconciler                | no                          | `1`                                              | T2.3                        |
-| `FUNDING_CONFIRMATION_TIMEOUT_MS`   | web                            | no                          | `60000`                                          | T2.3                        |
+| `FUNDING_CONFIRMATIONS`             | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)    |
+| `FUNDING_CONFIRMATION_TIMEOUT_MS`   | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
 | `ALERT_REMINDER_INTERVAL_HOURS`     | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
 | `RECONCILE_FAILURE_ALERT_THRESHOLD` | reconciler                     | no                          | `3`                                              | T4.3                        |
 
@@ -262,3 +290,4 @@ Local design choices (T2.1, 2026-07-28):
 - 2026-07-28 — T2.1 published scoped authorization contract C6 (`authorizeScope`, `hasProjectScope`, `hasEnvironmentScope`, `resolveReadableProjectIds`) and migration `0002` for `api_credential_scopes`.
 - 2026-07-28 — T3.1 published `OpenAlertState`, `applyAlertTransition`, and recovery-hysteresis alert bands under C3.
 - 2026-07-28 — T1.3 published managed-wallet registration/policy API contract C5 (`wallet:read`/`wallet:write`, versioned policy upsert, audit actions).
+- 2026-07-28 — T1.5 published C7 (`dispatchFunding`, `trackTransaction`; originally numbered C5, renumbered at rebase), wired confirmation env vars into `FundingConfig`, and documented advisory-lock + idempotency crash-recovery behavior.

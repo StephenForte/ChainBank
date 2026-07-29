@@ -7,7 +7,7 @@ Treasury and wallet-funding service for EVM development environments.
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
 **Current phase: Phase 1 in progress — treasury MVP and on-demand funding.**  
-This build can observe the Sepolia treasury, persist observations, and send a test email. **It cannot send ETH yet.** The Phase 1 foundation is merged (schema for wallets/policies/funding, pure funding math, and a fail-closed `TreasurySigner` adapter), but there is no dispatch path or funding endpoint, so no process can submit a transaction. Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
+This build can observe the Sepolia treasury, persist observations, and send a test email. Phase 1 foundation includes funding schema, math, a fail-closed `TreasurySigner`, and the **funding dispatch engine** (`dispatchFunding` / `trackTransaction`). There is still **no HTTP funding endpoint** (T1.6); keep `FUNDING_ENABLED=false` until that lands and operators are ready. Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
 
 ## Stack
 
@@ -166,7 +166,7 @@ Integration and e2e projects are wired but still placeholders until local Postgr
 
 ## Security notes
 
-- Keep `FUNDING_ENABLED=false` in every deployment until Phase 1 dispatch lands. Enabling it requires a structurally valid `TREASURY_PRIVATE_KEY` for the signing role; the signer fails closed on absent or malformed key config, and the treasury-monitor cron never receives the key.
+- Keep `FUNDING_ENABLED=false` until T1.6 and operational runbooks are ready. Enabling requires a structurally valid `TREASURY_PRIVATE_KEY` on signing-capable roles; the dispatch engine and signer fail closed on kill switch, disabled entities, chain mismatch, and DB unavailability. The treasury-monitor cron never receives the key.
 - Sepolia is the only supported chain ID; mainnet is rejected at startup.
 - RPC failures become status `unknown`, never a fabricated zero balance.
 - Bearer tokens are stored as SHA-256 hashes; the raw token is shown once.

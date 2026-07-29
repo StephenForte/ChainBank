@@ -82,6 +82,24 @@ describe('loadConfig', () => {
     expect(config.isFundingKillSwitchActive).toBe(true);
   });
 
+  it('defaults funding confirmation settings per D4', () => {
+    const config = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(config.funding.confirmations).toBe(1);
+    expect(config.funding.confirmationTimeoutMs).toBe(60_000);
+  });
+
+  it('parses funding confirmation overrides', () => {
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({
+        FUNDING_CONFIRMATIONS: '3',
+        FUNDING_CONFIRMATION_TIMEOUT_MS: '120000',
+      }),
+    });
+    expect(config.funding.confirmations).toBe(3);
+    expect(config.funding.confirmationTimeoutMs).toBe(120_000);
+  });
+
   it('boots the treasury monitor without reading TREASURY_PRIVATE_KEY', () => {
     const privateKey = generatePrivateKey();
     const config = loadConfig({

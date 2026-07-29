@@ -9,10 +9,9 @@ Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting.
 ## Status (updated 2026-07-28)
 
 - ✅ **Done, merged to main (PR #2):** T1.1, T1.2, T1.4
-- 🔄 **In progress (Wave 2 workers):** T1.5, T1.3, T3.1
-- 🔄 **In progress (side session):** pre-existing lint-debt cleanup on Phase 0 files
-- 📋 **Prompts issued, ready to run:** T3.2, T2.1, TX.1
-- Everything else: not started.
+- ✅ **Merged to main:** T1.1, T1.2, T1.4 (PR #2); lint-debt cleanup (PR #3); TX.1 (PR #4); T3.1 (PR #5); T3.2 (PR #6); T1.3 + T2.1 (PR #7)
+- 🔄 **In review:** T1.5 (PR #8, this branch)
+- Everything else: not started. Next wave: T1.6, T2.3, T3.3, T1.7.
 
 ## Task tree
 
@@ -37,7 +36,7 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Fail-closed on absent/malformed key, chain-ID verification before signing,
   `FUNDING_ENABLED` gate flip, `FUNDING_KILL_SWITCH`, wallet client constructed
   only in signing-capable processes; monitor cron still boots with no key.
-- **T1.5** 🔄 🔴 Funding dispatch engine `[T1.1, T1.4]` — IN PROGRESS
+- **T1.5** ✅ 🔴 Funding dispatch engine `[T1.1, T1.4]` — DONE (PR #8)
   `funding_operations`/`funding_transactions` state machines (contract C4),
   idempotency persisted before submission, per-treasury advisory lock (D7),
   nonce inside the lock, pending-tx-per-wallet check, receipt tracking

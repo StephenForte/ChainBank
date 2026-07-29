@@ -74,6 +74,8 @@ export interface ApiSecurityConfig {
 export interface FundingConfig {
   readonly enabled: boolean;
   readonly killSwitch: boolean;
+  readonly confirmations: number;
+  readonly confirmationTimeoutMs: number;
   /**
    * Present only for signing-capable roles with a structurally valid key.
    * Never enumerable on the returned config object so accidental JSON
@@ -170,6 +172,8 @@ export function getTreasuryPrivateKey(config: ChainBankConfig): `0x${string}` | 
 
 function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): FundingConfig {
   const killSwitch = env.FUNDING_KILL_SWITCH;
+  const confirmations = env.FUNDING_CONFIRMATIONS;
+  const confirmationTimeoutMs = env.FUNDING_CONFIRMATION_TIMEOUT_MS;
 
   // The monitor must never read or require the signing key, even when a shared
   // hosted environment sets FUNDING_ENABLED=true for sibling services.
@@ -177,6 +181,8 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
     return createFundingConfig({
       enabled: false,
       killSwitch,
+      confirmations,
+      confirmationTimeoutMs,
       privateKey: undefined,
     });
   }
@@ -197,6 +203,8 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
   return createFundingConfig({
     enabled: env.FUNDING_ENABLED,
     killSwitch,
+    confirmations,
+    confirmationTimeoutMs,
     privateKey,
   });
 }
@@ -204,12 +212,16 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
 function createFundingConfig(input: {
   readonly enabled: boolean;
   readonly killSwitch: boolean;
+  readonly confirmations: number;
+  readonly confirmationTimeoutMs: number;
   readonly privateKey: `0x${string}` | undefined;
 }): FundingConfig {
   // Keep the private key non-enumerable so JSON.stringify(config) cannot leak it.
   const funding = {
     enabled: input.enabled,
     killSwitch: input.killSwitch,
+    confirmations: input.confirmations,
+    confirmationTimeoutMs: input.confirmationTimeoutMs,
   } as FundingConfig;
   Object.defineProperty(funding, 'privateKey', {
     value: input.privateKey,
