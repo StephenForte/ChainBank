@@ -131,6 +131,10 @@ jobs:
   secret-scan:
     name: secret scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks-action lists the PR's commits to build the scan range.
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -140,6 +144,9 @@ jobs:
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
         env:
+          # Automatic per-run token (read-only on fork PRs) — required by the
+          # action to resolve pull_request commit ranges; not a stored secret.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
 
   migration:
