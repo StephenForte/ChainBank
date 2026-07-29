@@ -7,7 +7,7 @@ Treasury and wallet-funding service for EVM development environments.
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
 **Current phase: Phase 1 in progress — treasury MVP and on-demand funding.**  
-This build can observe the Sepolia treasury, persist observations, and send a test email. Phase 1 foundation includes funding schema, math, a fail-closed `TreasurySigner`, and the **funding dispatch engine** (`dispatchFunding` / `trackTransaction`). There is still **no HTTP funding endpoint** (T1.6); keep `FUNDING_ENABLED=false` until that lands and operators are ready. Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
+This build can observe the Sepolia treasury, persist observations, and send a test email. Phase 1 includes funding schema, math, a fail-closed `TreasurySigner`, the funding dispatch engine, and **`POST /v1/wallets/:id/ensure-funded`** (P1-US3). Keep `FUNDING_ENABLED=false` until operators are ready and runbooks exist; the kill switch and enable gates fail closed without touching the signer. Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
 
 ## Stack
 
@@ -166,11 +166,12 @@ Integration and e2e projects are wired but still placeholders until local Postgr
 
 ## Security notes
 
-- Keep `FUNDING_ENABLED=false` until T1.6 and operational runbooks are ready. Enabling requires a structurally valid `TREASURY_PRIVATE_KEY` on signing-capable roles; the dispatch engine and signer fail closed on kill switch, disabled entities, chain mismatch, and DB unavailability. The treasury-monitor cron never receives the key.
+- `POST /v1/wallets/:id/ensure-funded` funds only registered managed wallets. The request body accepts an idempotency key only (`additionalProperties: false`); destination addresses are resolved exclusively from the database (AGENTS.md §7.1).
+- Keep `FUNDING_ENABLED=false` until operational runbooks are ready. Enabling requires a structurally valid `TREASURY_PRIVATE_KEY` on signing-capable roles; the dispatch engine and signer fail closed on kill switch, disabled entities, chain mismatch, and DB unavailability. The treasury-monitor cron never receives the key.
 - Sepolia is the only supported chain ID; mainnet is rejected at startup.
 - RPC failures become status `unknown`, never a fabricated zero balance.
 - Bearer tokens are stored as SHA-256 hashes; the raw token is shown once.
-- Authorization is enforced in application services, not only route middleware.
+- Authorization is enforced in application services, not only route middleware. Operator and scoped project-service credentials may fund; read-only and cron roles cannot.
 - Secrets are redacted in structured logs.
 - See [`AGENTS.md`](./AGENTS.md) for mandatory contributor rules.
 

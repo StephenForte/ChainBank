@@ -2,8 +2,14 @@ import type { Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { CredentialScope, CredentialScopeRepository } from '../ports.js';
 
-/** Whether the caller may read or mutate a scoped project/environment resource. */
-export type ScopeAction = 'read' | 'mutate';
+/**
+ * Whether the caller may read, mutate admin resources, or fund wallets in a
+ * scoped project/environment.
+ *
+ * `fund` is for on-demand funding (ensure-funded): operator and scoped
+ * project-service only. Project/environment admin mutations stay on `mutate`.
+ */
+export type ScopeAction = 'read' | 'mutate' | 'fund';
 
 export interface AuthorizeScopeInput {
   readonly role: Role;
@@ -21,8 +27,8 @@ export interface AuthorizeScopeDependencies {
 /**
  * Decides whether an authenticated credential may access a project/environment.
  *
- * Operator: all projects and environments. Read-only: read all, mutate none.
- * Project-service: only rows in api_credential_scopes; deny when none match.
+ * Operator: all projects and environments. Read-only: read all, mutate/fund none.
+ * Project-service: read and fund only via api_credential_scopes; mutate denied.
  * Cron and other roles: deny unless handled above.
  */
 export async function authorizeScope(
@@ -34,10 +40,12 @@ export async function authorizeScope(
   }
 
   if (input.role === 'read-only') {
-    if (input.action === 'mutate') {
+    if (input.action === 'mutate' || input.action === 'fund') {
       throw new ChainBankError(
         'INSUFFICIENT_ROLE',
-        'Read-only credentials cannot mutate projects or environments',
+        input.action === 'fund'
+          ? 'Read-only credentials cannot fund wallets'
+          : 'Read-only credentials cannot mutate projects or environments',
         { context: { role: input.role, action: input.action } },
       );
     }

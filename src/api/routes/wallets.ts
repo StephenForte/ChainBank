@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { ensureWalletFunded } from '../../app/funding/ensure-wallet-funded.js';
 import { listWallets } from '../../app/wallets/list-wallets.js';
 import { registerWallet } from '../../app/wallets/register-wallet.js';
 import { setWalletPolicy } from '../../app/wallets/set-wallet-policy.js';
@@ -109,6 +110,33 @@ const managedWalletResponseSchema = {
     'updatedAt',
   ],
   properties: managedWalletResponseProperties,
+} as const;
+
+const ensureFundedResponseSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'status',
+    'operationId',
+    'balanceBeforeWei',
+    'minimumBalanceWei',
+    'targetBalanceWei',
+    'transferredWei',
+    'transactionHash',
+    'explorerUrl',
+    'reasonCode',
+  ],
+  properties: {
+    status: { type: 'string', enum: ['no-op', 'funded', 'pending', 'blocked', 'failed'] },
+    operationId: { type: 'string', format: 'uuid' },
+    balanceBeforeWei: weiDecimalString,
+    minimumBalanceWei: weiDecimalString,
+    targetBalanceWei: weiDecimalString,
+    transferredWei: { anyOf: [{ type: 'null' }, weiDecimalString] },
+    transactionHash: { anyOf: [{ type: 'null' }, { type: 'string', minLength: 66, maxLength: 66 }] },
+    explorerUrl: { anyOf: [{ type: 'null' }, { type: 'string' }] },
+    reasonCode: { anyOf: [{ type: 'null' }, { type: 'string' }] },
+  },
 } as const;
 
 export function registerWalletRoutes(app: AppInstance, container: Container): void {
@@ -375,6 +403,93 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
       );
 
       return { data: serializeManagedWallet(wallet) };
+    },
+  );
+
+  /**
+   * On-demand funding for one managed wallet (P1-US3).
+   *
+   * Destination address is never accepted from the client — only the wallet id
+   * in the path, resolved via ManagedWalletRepository (AGENTS.md §7.1).
+   */
+  app.post(
+    '/v1/wallets/:id/ensure-funded',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: walletIdParams,
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['idempotencyKey'],
+          properties: {
+            idempotencyKey: { type: 'string', minLength: 1, maxLength: 128 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data'],
+            properties: {
+              data: ensureFundedResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+      const body = request.body as { idempotencyKey: string };
+
+      const result = await ensureWalletFunded(
+        {
+          managedWallets: container.repositories.managedWallets,
+          treasuries: container.repositories.treasuries,
+          balanceObservations: container.repositories.balanceObservations,
+          balanceReader: container.balanceReader,
+          credentialScopes: container.repositories.credentialScopes,
+          auditEvents: container.repositories.auditEvents,
+          operations: container.repositories.fundingOperations,
+          transactions: container.repositories.fundingTransactions,
+          lock: container.fundingDispatchLock,
+          receiptTracker: container.transactionReceiptTracker,
+          signer: container.treasurySigner,
+          clock: container.clock,
+          idGenerator: container.idGenerator,
+          logger: container.logger,
+          isFundingEnabled: container.config.isFundingEnabled,
+          isFundingKillSwitchActive: container.config.isFundingKillSwitchActive,
+          confirmations: container.config.funding.confirmations,
+          confirmationTimeoutMs: container.config.funding.confirmationTimeoutMs,
+        },
+        {
+          walletId: id,
+          idempotencyKey: body.idempotencyKey,
+          role: actor.role,
+          credentialId: actor.credentialId,
+          correlationId: request.id,
+          sourceIp: request.ip,
+        },
+      );
+
+      return {
+        data: {
+          status: result.status,
+          operationId: result.operationId,
+          balanceBeforeWei: result.balanceBeforeWei.toString(),
+          minimumBalanceWei: result.minimumBalanceWei.toString(),
+          targetBalanceWei: result.targetBalanceWei.toString(),
+          transferredWei: result.transferredWei === undefined ? null : result.transferredWei.toString(),
+          transactionHash: result.transactionHash ?? null,
+          explorerUrl:
+            result.transactionHash === undefined
+              ? null
+              : `${result.explorerBaseUrl}/tx/${result.transactionHash}`,
+          reasonCode: result.reasonCode ?? null,
+        },
+      };
     },
   );
 }

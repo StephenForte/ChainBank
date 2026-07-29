@@ -109,6 +109,39 @@ describe('authorizeScope authorization matrix', () => {
     ).rejects.toMatchObject({ code: 'INSUFFICIENT_ROLE' });
   });
 
+  it('allows project-service fund when scoped and denies read-only fund', async () => {
+    await expect(
+      authorizeScope(deps([projectWideScope]), {
+        role: 'project-service',
+        credentialId: CREDENTIAL_ID,
+        action: 'fund',
+        projectId: PROJECT_A,
+        environmentId: ENV_A2,
+      }),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      authorizeScope(deps([]), {
+        role: 'read-only',
+        credentialId: CREDENTIAL_ID,
+        action: 'fund',
+        projectId: PROJECT_A,
+      }),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_ROLE' });
+  });
+
+  it('denies project-service fund when out of scope', async () => {
+    await expect(
+      authorizeScope(deps([envScope]), {
+        role: 'project-service',
+        credentialId: CREDENTIAL_ID,
+        action: 'fund',
+        projectId: PROJECT_A,
+        environmentId: ENV_A2,
+      }),
+    ).rejects.toMatchObject({ code: 'SCOPE_DENIED' });
+  });
+
   it('denies project-service read with no scope rows', async () => {
     await expect(
       authorizeScope(deps([]), {
