@@ -140,6 +140,9 @@ jobs:
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
         env:
+          # Automatic per-run token (read-only on fork PRs) — required by the
+          # action to resolve pull_request commit ranges; not a stored secret.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
 
   migration:
