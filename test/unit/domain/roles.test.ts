@@ -7,27 +7,44 @@ import {
   type Role,
 } from '../../../src/domain/auth/roles.js';
 
-describe('role permissions (Phase 0)', () => {
-  it('grants the operator full Phase 0 capabilities', () => {
+describe('role permissions', () => {
+  it('grants the operator treasury and wallet capabilities', () => {
     expect(roleHasPermission('operator', 'treasury:read')).toBe(true);
     expect(roleHasPermission('operator', 'treasury:check')).toBe(true);
     expect(roleHasPermission('operator', 'email:test')).toBe(true);
+    expect(roleHasPermission('operator', 'wallet:read')).toBe(true);
+    expect(roleHasPermission('operator', 'wallet:write')).toBe(true);
+    expect(roleHasPermission('operator', 'project:read')).toBe(true);
+    expect(roleHasPermission('operator', 'project:write')).toBe(true);
   });
 
   it('keeps read-only credentials from mutating actions', () => {
     expect(roleHasPermission('read-only', 'treasury:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'wallet:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'project:read')).toBe(true);
     expect(roleHasPermission('read-only', 'treasury:check')).toBe(false);
     expect(roleHasPermission('read-only', 'email:test')).toBe(false);
+    expect(roleHasPermission('read-only', 'wallet:write')).toBe(false);
+    expect(roleHasPermission('read-only', 'project:write')).toBe(false);
   });
 
   it('allows the treasury monitor to check balances but not send test email', () => {
     expect(roleHasPermission('cron-treasury-monitor', 'treasury:check')).toBe(true);
     expect(roleHasPermission('cron-treasury-monitor', 'email:test')).toBe(false);
+    expect(roleHasPermission('cron-treasury-monitor', 'wallet:write')).toBe(false);
   });
 
-  it('denies by default for roles with no Phase 0 permissions', () => {
+  it('denies by default for roles with no granted permissions', () => {
     const deferred: readonly Role[] = ['project-service', 'cron-reconciler'];
-    const permissions: readonly Permission[] = ['treasury:read', 'treasury:check', 'email:test'];
+    const permissions: readonly Permission[] = [
+      'treasury:read',
+      'treasury:check',
+      'email:test',
+      'wallet:read',
+      'wallet:write',
+      'project:read',
+      'project:write',
+    ];
     for (const role of deferred) {
       for (const permission of permissions) {
         expect(roleHasPermission(role, permission)).toBe(false);

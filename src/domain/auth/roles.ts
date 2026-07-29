@@ -15,18 +15,38 @@ export const ROLES = [
 
 export type Role = (typeof ROLES)[number];
 
-/** Capabilities that exist in Phase 0. Funding permissions arrive with Phase 1. */
-export const PERMISSIONS = ['treasury:read', 'treasury:check', 'email:test'] as const;
+/**
+ * Capabilities granted so far.
+ * Wallet read/write arrive with Phase 1 registration (P1-US1/P1-US2).
+ * Funding dispatch permissions arrive with later Phase 1 stories.
+ */
+export const PERMISSIONS = [
+  'treasury:read',
+  'treasury:check',
+  'email:test',
+  'wallet:read',
+  'wallet:write',
+  'project:read',
+  'project:write',
+] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
 const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
-  operator: ['treasury:read', 'treasury:check', 'email:test'],
-  'read-only': ['treasury:read'],
+  operator: [
+    'treasury:read',
+    'treasury:check',
+    'email:test',
+    'wallet:read',
+    'wallet:write',
+    'project:read',
+    'project:write',
+  ],
+  'read-only': ['treasury:read', 'wallet:read', 'project:read'],
   // The monitor reads the treasury and records observations. It never signs and
   // never triggers operator-facing administrative actions.
   'cron-treasury-monitor': ['treasury:read', 'treasury:check'],
-  // No Phase 0 capabilities. Deny by default until their phases land.
+  // No Phase 0/1 wallet-admin capabilities. Deny by default until scoping lands.
   'project-service': [],
   'cron-reconciler': [],
 };

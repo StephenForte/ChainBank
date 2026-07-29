@@ -15,6 +15,13 @@
       "when": 1785268861702,
       "tag": "0001_puzzling_warpath",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785284643050,
+      "tag": "0002_new_the_initiative",
+      "breakpoints": true
     }
   ]
 }

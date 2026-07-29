@@ -12,7 +12,9 @@ import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerProjectRoutes } from './routes/projects.js';
 import { registerTreasuryRoutes } from './routes/treasuries.js';
+import { registerWalletRoutes } from './routes/wallets.js';
 import type { AppInstance } from './types.js';
 
 /** Requests carry no large payloads in this phase; a tight ceiling limits abuse. */
@@ -72,7 +74,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   await app.register(cors, {
     origin: security.corsAllowedOrigins.length === 0 ? false : [...security.corsAllowedOrigins],
     credentials: false,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT'],
   });
 
   await app.register(rateLimit, {
@@ -93,6 +95,8 @@ export async function buildApp(container: Container): Promise<AppInstance> {
 
   registerHealthRoutes(app, container);
   registerTreasuryRoutes(app, container);
+  registerProjectRoutes(app, container);
+  registerWalletRoutes(app, container);
   registerAdminRoutes(app, container);
 
   await registerDashboard(app);

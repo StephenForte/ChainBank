@@ -30,6 +30,14 @@ export type ErrorCode =
   // resources
   | 'TREASURY_NOT_FOUND'
   | 'CHAIN_NOT_FOUND'
+  | 'PROJECT_NOT_FOUND'
+  | 'ENVIRONMENT_NOT_FOUND'
+  | 'WALLET_NOT_FOUND'
+  | 'WALLET_ALREADY_REGISTERED'
+  | 'PROJECT_SLUG_CONFLICT'
+  | 'ENVIRONMENT_SLUG_CONFLICT'
+  | 'SCOPE_ALREADY_ASSIGNED'
+  | 'SCOPE_DENIED'
   // dependencies
   | 'DATABASE_UNAVAILABLE'
   | 'RPC_UNAVAILABLE'
@@ -54,6 +62,14 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   FUNDING_DISABLED: 'authorization',
   TREASURY_NOT_FOUND: 'not_found',
   CHAIN_NOT_FOUND: 'not_found',
+  PROJECT_NOT_FOUND: 'not_found',
+  ENVIRONMENT_NOT_FOUND: 'not_found',
+  WALLET_NOT_FOUND: 'not_found',
+  WALLET_ALREADY_REGISTERED: 'conflict',
+  PROJECT_SLUG_CONFLICT: 'conflict',
+  ENVIRONMENT_SLUG_CONFLICT: 'conflict',
+  SCOPE_ALREADY_ASSIGNED: 'conflict',
+  SCOPE_DENIED: 'authorization',
   DATABASE_UNAVAILABLE: 'dependency_unavailable',
   RPC_UNAVAILABLE: 'dependency_unavailable',
   CHAIN_ID_MISMATCH: 'dependency_unavailable',

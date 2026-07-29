@@ -4,7 +4,12 @@ import type {
   BalanceObservationRepository,
   BalanceReader,
   ChainRepository,
+  CredentialScopeRepository,
   EmailSender,
+  EnvironmentRepository,
+  FundingPolicyRepository,
+  ManagedWalletRepository,
+  ProjectRepository,
   ServiceHeartbeatRepository,
   TreasuryRepository,
   TreasurySigner,
@@ -16,6 +21,11 @@ import { createApiCredentialRepository } from './infrastructure/db/repositories/
 import { createAuditEventRepository } from './infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from './infrastructure/db/repositories/balance-observation-repository.js';
 import { createChainRepository } from './infrastructure/db/repositories/chain-repository.js';
+import { createCredentialScopeRepository } from './infrastructure/db/repositories/credential-scope-repository.js';
+import { createEnvironmentRepository } from './infrastructure/db/repositories/environment-repository.js';
+import { createFundingPolicyRepository } from './infrastructure/db/repositories/funding-policy-repository.js';
+import { createManagedWalletRepository } from './infrastructure/db/repositories/managed-wallet-repository.js';
+import { createProjectRepository } from './infrastructure/db/repositories/project-repository.js';
 import { createServiceHeartbeatRepository } from './infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from './infrastructure/db/repositories/treasury-repository.js';
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
@@ -45,6 +55,11 @@ export interface Container {
     readonly apiCredentials: ApiCredentialRepository;
     readonly auditEvents: AuditEventRepository;
     readonly serviceHeartbeats: ServiceHeartbeatRepository;
+    readonly managedWallets: ManagedWalletRepository;
+    readonly fundingPolicies: FundingPolicyRepository;
+    readonly projects: ProjectRepository;
+    readonly environments: EnvironmentRepository;
+    readonly credentialScopes: CredentialScopeRepository;
   };
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
@@ -89,6 +104,11 @@ export function buildContainer(options: BuildContainerOptions): Container {
       apiCredentials: createApiCredentialRepository(database.db),
       auditEvents: createAuditEventRepository(database.db),
       serviceHeartbeats: createServiceHeartbeatRepository(database.db),
+      managedWallets: createManagedWalletRepository(database.db),
+      fundingPolicies: createFundingPolicyRepository(database.db),
+      projects: createProjectRepository(database.db),
+      environments: createEnvironmentRepository(database.db),
+      credentialScopes: createCredentialScopeRepository(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),

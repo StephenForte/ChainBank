@@ -61,6 +61,8 @@ export interface RecordCheckFailureInput {
 export interface ChainRepository {
   /** Idempotently reconciles the configured chain into the database. */
   upsert(registration: ChainRegistration): Promise<ChainDescriptor>;
+  /** Looks up a registered chain by its EVM chain ID. */
+  findByNumericChainId(chainId: number): Promise<ChainDescriptor | undefined>;
 }
 
 export interface TreasuryRepository {
@@ -197,4 +199,167 @@ export type EmailSendResult =
 
 export interface EmailSender {
   send(message: EmailMessage): Promise<EmailSendResult>;
+}
+
+/** Project summary used when registering or listing managed wallets. */
+export interface ProjectSummary {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
+/** Full project record returned by project management APIs. */
+export interface Project extends ProjectSummary {
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+/** Environment summary used when registering or listing managed wallets. */
+export interface EnvironmentSummary {
+  readonly id: string;
+  readonly projectId: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
+/** Full environment record returned by project management APIs. */
+export interface Environment extends EnvironmentSummary {
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface ProjectInsert {
+  readonly slug: string;
+  readonly name: string;
+}
+
+export interface EnvironmentInsert {
+  readonly projectId: string;
+  readonly slug: string;
+  readonly name: string;
+}
+
+export interface ProjectListPage {
+  readonly items: readonly Project[];
+  readonly total: number;
+}
+
+/** One row from api_credential_scopes. Null environmentId = all environments in the project. */
+export interface CredentialScope {
+  readonly id: string;
+  readonly credentialId: string;
+  readonly projectId: string;
+  readonly environmentId: string | undefined;
+  readonly createdAt: Date;
+}
+
+export interface CredentialScopeInsert {
+  readonly credentialId: string;
+  readonly projectId: string;
+  readonly environmentId: string | undefined;
+}
+
+export interface ProjectRepository {
+  insert(input: ProjectInsert): Promise<Project>;
+  findById(id: string): Promise<Project | undefined>;
+  findBySlug(slug: string): Promise<Project | undefined>;
+  list(pagination: { readonly limit: number; readonly offset: number }): Promise<ProjectListPage>;
+  listByIds(ids: readonly string[]): Promise<readonly Project[]>;
+  setEnabled(id: string, enabled: boolean): Promise<Project>;
+}
+
+export interface EnvironmentRepository {
+  insert(input: EnvironmentInsert): Promise<Environment>;
+  findById(id: string): Promise<Environment | undefined>;
+  setEnabled(id: string, enabled: boolean): Promise<Environment>;
+}
+
+export interface CredentialScopeRepository {
+  listByCredentialId(credentialId: string): Promise<readonly CredentialScope[]>;
+  insert(input: CredentialScopeInsert): Promise<CredentialScope>;
+}
+
+/** Persisted funding policy for one managed wallet (versioned). */
+export interface StoredFundingPolicy {
+  readonly id: string;
+  readonly managedWalletId: string;
+  readonly minimumBalanceWei: bigint;
+  readonly targetBalanceWei: bigint;
+  readonly maximumTopUpWei: bigint;
+  readonly version: number;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+/**
+ * Managed recipient wallet. Never holds private-key material — only a public
+ * address on an allowlisted chain under a project/environment.
+ */
+export interface ManagedWallet {
+  readonly id: string;
+  readonly project: ProjectSummary;
+  readonly environment: EnvironmentSummary;
+  readonly chain: ChainDescriptor;
+  /** Application role label (e.g. signer, relayer); not an API credential role. */
+  readonly role: string;
+  /** Lowercase normalized address used for uniqueness and lookups. */
+  readonly address: string;
+  /** EIP-55 checksummed address for display and explorer links. */
+  readonly addressDisplay: string;
+  readonly enabled: boolean;
+  readonly criticalAtStartup: boolean;
+  readonly reconciliationEnabled: boolean;
+  readonly policy: StoredFundingPolicy | undefined;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+export interface ManagedWalletInsert {
+  readonly environmentId: string;
+  readonly chainRowId: string;
+  readonly role: string;
+  readonly address: string;
+  readonly criticalAtStartup: boolean;
+  readonly reconciliationEnabled: boolean;
+}
+
+export interface ManagedWalletListFilter {
+  readonly projectId: string | undefined;
+  readonly environmentId: string | undefined;
+  readonly enabled: boolean | undefined;
+}
+
+export interface ManagedWalletListPage {
+  readonly items: readonly ManagedWallet[];
+  readonly total: number;
+}
+
+export interface ManagedWalletPatch {
+  readonly enabled: boolean | undefined;
+  readonly criticalAtStartup: boolean | undefined;
+  readonly reconciliationEnabled: boolean | undefined;
+}
+
+export interface FundingPolicyUpsertInput {
+  readonly managedWalletId: string;
+  readonly minimumBalanceWei: bigint;
+  readonly targetBalanceWei: bigint;
+  readonly maximumTopUpWei: bigint;
+}
+
+export interface ManagedWalletRepository {
+  insert(input: ManagedWalletInsert): Promise<ManagedWallet>;
+  findById(id: string): Promise<ManagedWallet | undefined>;
+  list(
+    filter: ManagedWalletListFilter,
+    pagination: { readonly limit: number; readonly offset: number },
+  ): Promise<ManagedWalletListPage>;
+  update(id: string, patch: ManagedWalletPatch): Promise<ManagedWallet>;
+}
+
+export interface FundingPolicyRepository {
+  upsert(input: FundingPolicyUpsertInput): Promise<StoredFundingPolicy>;
+  findByManagedWalletId(managedWalletId: string): Promise<StoredFundingPolicy | undefined>;
 }

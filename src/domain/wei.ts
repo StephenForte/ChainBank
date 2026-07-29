@@ -71,6 +71,26 @@ export function assertNonNegativeWei(value: bigint, fieldName: string): void {
 }
 
 /**
+ * Parses a decimal-string wei quantity at an API/config boundary.
+ *
+ * JSON cannot represent wei exactly as a number; clients send decimal strings
+ * of non-negative integers, which become `bigint` once here.
+ */
+export function parseWeiDecimalString(value: string, fieldName: string): bigint {
+  const trimmed = value.trim();
+  if (!INTEGER_PATTERN.test(trimmed)) {
+    throw new ChainBankError(
+      'INVALID_AMOUNT',
+      `${fieldName} must be a non-negative decimal wei string, received "${trimmed}"`,
+      { publicMessage: `${fieldName} must be a non-negative integer wei amount.` },
+    );
+  }
+  const parsed = BigInt(trimmed);
+  assertNonNegativeWei(parsed, fieldName);
+  return parsed;
+}
+
+/**
  * Converts a `numeric(78,0)` column value, which the driver returns as a
  * string, into a bigint. Rejects anything non-integral rather than truncating.
  */
