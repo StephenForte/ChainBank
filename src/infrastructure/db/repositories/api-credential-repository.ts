@@ -75,6 +75,26 @@ export function createApiCredentialRepository(db: Database): ApiCredentialReposi
       });
     },
 
+    /**
+     * Re-enables a disabled credential. Deliberately leaves `revoked_at`
+     * untouched: revocation is terminal, and the application layer refuses to
+     * re-enable a revoked credential rather than silently clearing the field.
+     */
+    async enable(id: string, at: Date): Promise<ApiCredentialSummary> {
+      return withDatabaseErrors('api_credentials.enable', async () => {
+        const [row] = await db
+          .update(apiCredentials)
+          .set({ enabled: true, updatedAt: at })
+          .where(eq(apiCredentials.id, id))
+          .returning();
+
+        if (row === undefined) {
+          throw new ChainBankError('CREDENTIAL_NOT_FOUND', `Credential ${id} was not found`);
+        }
+        return toApiCredentialSummary(row);
+      });
+    },
+
     async touchLastUsed(id: string, at: Date): Promise<void> {
       await withDatabaseErrors('api_credentials.touchLastUsed', async () => {
         await db.update(apiCredentials).set({ lastUsedAt: at }).where(eq(apiCredentials.id, id));

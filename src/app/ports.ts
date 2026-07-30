@@ -136,6 +136,8 @@ export interface ApiCredentialRepository {
   list(pagination: { readonly limit: number; readonly offset: number }): Promise<ApiCredentialListPage>;
   disable(id: string, at: Date): Promise<ApiCredentialSummary>;
   revoke(id: string, at: Date): Promise<ApiCredentialSummary>;
+  /** Re-enables a disabled credential. Never clears `revoked_at`. */
+  enable(id: string, at: Date): Promise<ApiCredentialSummary>;
   touchLastUsed(id: string, at: Date): Promise<void>;
 }
 

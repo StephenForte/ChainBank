@@ -43,6 +43,12 @@ function buildRepository(overrides: Partial<ApiCredentialRepository> = {}): ApiC
         revokedAt: now,
       }),
     ),
+    enable: vi.fn(() =>
+      Promise.resolve({
+        ...targetCredential,
+        enabled: true,
+      }),
+    ),
     touchLastUsed: vi.fn(),
     ...overrides,
   };
@@ -170,7 +176,7 @@ describe('mutateCredential guards', () => {
       ),
     ).rejects.toMatchObject({
       code: 'CREDENTIAL_SELF_MUTATION_DENIED',
-      publicMessage: 'You cannot disable or revoke the credential you are currently using.',
+      publicMessage: 'You cannot change the credential you are currently using.',
     });
   });
 
@@ -246,5 +252,102 @@ describe('mutateCredential audit metadata', () => {
       previous: { enabled: true, revokedAt: null },
       next: { enabled: false, revokedAt: now.toISOString() },
     });
+  });
+});
+
+describe('mutateCredential enable', () => {
+  it('re-enables a disabled credential and audits the transition', async () => {
+    const disabled = { ...targetCredential, enabled: false };
+    const repository = buildRepository({
+      findById: vi.fn(() => Promise.resolve(disabled)),
+    });
+    const auditEvents = buildAuditEvents();
+
+    const result = await mutateCredential(
+      { apiCredentials: repository, auditEvents, clock: createFixedClock(now) },
+      {
+        role: 'operator',
+        credentialId: targetCredential.id,
+        actorCredentialId: operatorCredentialId,
+        action: 'enable',
+        operationId: 'req-enable',
+        sourceIp: undefined,
+      },
+    );
+
+    expect(result.enabled).toBe(true);
+    expect(repository.enable).toHaveBeenCalledWith(targetCredential.id, now);
+    expect(repository.revoke).not.toHaveBeenCalled();
+    const auditCall = vi.mocked(auditEvents.record).mock.calls[0]?.[0];
+    expect(auditCall?.action).toBe('credential.enabled');
+    expect(auditCall?.metadata).toMatchObject({
+      previous: { enabled: false },
+      next: { enabled: true },
+    });
+  });
+
+  it('refuses to re-enable a revoked credential, keeping revocation terminal', async () => {
+    // Revocation is the response to a suspected compromise. If `enable` could
+    // undo it, the endpoint that removes a leaked token could also restore it.
+    const revoked = { ...targetCredential, enabled: false, revokedAt: now };
+    const repository = buildRepository({
+      findById: vi.fn(() => Promise.resolve(revoked)),
+    });
+    const auditEvents = buildAuditEvents();
+
+    await expect(
+      mutateCredential(
+        { apiCredentials: repository, auditEvents, clock: createFixedClock(now) },
+        {
+          role: 'operator',
+          credentialId: targetCredential.id,
+          actorCredentialId: operatorCredentialId,
+          action: 'enable',
+          operationId: 'req-enable-revoked',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'CREDENTIAL_REVOKED' });
+
+    expect(repository.enable).not.toHaveBeenCalled();
+    expect(auditEvents.record).not.toHaveBeenCalled();
+  });
+
+  it('denies enabling the credential making the request', async () => {
+    const repository = buildRepository();
+    await expect(
+      mutateCredential(
+        { apiCredentials: repository, auditEvents: buildAuditEvents(), clock: createFixedClock(now) },
+        {
+          role: 'operator',
+          credentialId: operatorCredentialId,
+          actorCredentialId: operatorCredentialId,
+          action: 'enable',
+          operationId: 'req-self-enable',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'CREDENTIAL_SELF_MUTATION_DENIED' });
+    expect(repository.enable).not.toHaveBeenCalled();
+  });
+
+  it('denies every non-operator role from enabling', async () => {
+    for (const role of ROLES.filter((r): r is Role => r !== 'operator')) {
+      const repository = buildRepository();
+      await expect(
+        mutateCredential(
+          { apiCredentials: repository, auditEvents: buildAuditEvents(), clock: createFixedClock(now) },
+          {
+            role,
+            credentialId: targetCredential.id,
+            actorCredentialId: operatorCredentialId,
+            action: 'enable',
+            operationId: 'req-role',
+            sourceIp: undefined,
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'INSUFFICIENT_ROLE' });
+      expect(repository.enable).not.toHaveBeenCalled();
+    }
   });
 });

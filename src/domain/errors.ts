@@ -27,6 +27,7 @@ export type ErrorCode =
   | 'CREDENTIAL_DISABLED'
   | 'CREDENTIAL_NOT_FOUND'
   | 'CREDENTIAL_SELF_MUTATION_DENIED'
+  | 'CREDENTIAL_REVOKED'
   | 'INSUFFICIENT_ROLE'
   | 'FUNDING_DISABLED'
   | 'ENTITY_DISABLED'
@@ -73,6 +74,7 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   CREDENTIAL_DISABLED: 'authentication',
   CREDENTIAL_NOT_FOUND: 'not_found',
   CREDENTIAL_SELF_MUTATION_DENIED: 'validation',
+  CREDENTIAL_REVOKED: 'conflict',
   INSUFFICIENT_ROLE: 'authorization',
   FUNDING_DISABLED: 'authorization',
   ENTITY_DISABLED: 'authorization',

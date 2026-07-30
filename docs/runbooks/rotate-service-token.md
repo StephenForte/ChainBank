@@ -82,17 +82,20 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
   "$BASE/v1/admin/credentials/<old-credential-uuid>" | jq
 ```
 
-For a planned rotation where you may need to re-enable via SQL if cutover fails,
-use `"action":"disable"` instead (sets `enabled = false` only; `revoked_at` stays
-null). Revoke is preferred once the new token is confirmed everywhere.
+For a planned rotation, use `"action":"disable"` first (sets `enabled = false`
+only; `revoked_at` stays null) so a failed cutover can be undone with
+`"action":"enable"` through the same endpoint. Revoke once the new token is
+confirmed everywhere — revocation is terminal and `enable` will refuse it with
+`CREDENTIAL_REVOKED`.
 
 `authenticate-credential` rejects when `enabled` is false **or** `revoked_at` is
 set (`CREDENTIAL_DISABLED` internally; clients see the same public message as an
 invalid credential: `The supplied credential is not valid.`).
 
-You **cannot** disable or revoke the operator token you are currently using — the
-API returns `CREDENTIAL_SELF_MUTATION_DENIED`. Use a second operator credential for
-the mutation, or perform the SQL fallback below.
+You **cannot** disable, revoke, or enable the operator token you are currently
+using — the API returns `CREDENTIAL_SELF_MUTATION_DENIED`. **Keep a second
+operator credential issued and stored ahead of time**; it is the intended path
+for mutating an operator token, and the SQL fallback below is the last resort.
 
 5. **If the API is unavailable** — SQL fallback (writes no audit event; record the
    change in your incident / change log):
@@ -132,8 +135,9 @@ curl -s -H "Authorization: Bearer $OLD_TOKEN" "$BASE/v1/treasuries" | jq
 - New token lost before clients updated: issue another credential (new name);
   leave the old one enabled until cutover succeeds, then disable both abandoned
   extras.
-- Disabled the wrong row via API: only re-enable if you still trust that token,
-  using the SQL fallback in
-  [`disable-compromised-project-credential.md`](./disable-compromised-project-credential.md).
+- Disabled the wrong row via API: re-enable it through the API if you still trust
+  that token — `PATCH /v1/admin/credentials/<uuid>` with `{"action":"enable"}`.
+  If it was **revoked** rather than disabled, that is terminal by design; issue a
+  replacement instead.
 - `credential:issue` fails on unique `name`: choose a new `--name` or rename the
   existing row in SQL first.

@@ -124,6 +124,16 @@ npm run credential:issue -- --name "operator-render" --role operator
 
 3. Store the `cb_…` token in a password manager. It is shown once.
 
+4. **Issue a second operator credential now and store it separately.** The
+   credential admin API refuses to disable, revoke, or enable the token making
+   the request (`CREDENTIAL_SELF_MUTATION_DENIED`), so rotating or disabling an
+   operator token requires a different operator token. Without a second one you
+   are left with the SQL fallback during an incident.
+
+```bash
+npm run credential:issue -- --name "operator-backup" --role operator
+```
+
 Alternative: Render Shell on the web service with `npx tsx scripts/issue-credential.ts --name operator-render --role operator` (token will appear in that shell session).
 
 ## 5. Smoke checks
