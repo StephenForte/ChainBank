@@ -105,7 +105,7 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
           additionalProperties: false,
           required: ['action'],
           properties: {
-            action: { type: 'string', enum: ['disable', 'revoke'] },
+            action: { type: 'string', enum: ['disable', 'revoke', 'enable'] },
           },
         },
         response: {

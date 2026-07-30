@@ -12,6 +12,7 @@ function repositoryStub(find: ApiCredentialRepository['findByTokenHash']): ApiCr
     list: vi.fn(() => Promise.resolve({ items: [], total: 0 })),
     disable: vi.fn(),
     revoke: vi.fn(),
+    enable: vi.fn(),
     touchLastUsed: vi.fn(() => Promise.resolve(undefined)),
   };
 }

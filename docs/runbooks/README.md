@@ -36,6 +36,13 @@ out as a **manual workaround**. Do not invent scripts or endpoints to fill these
 | No in-repo database backup/restore tooling                                  | Restore is entirely a Render Postgres provider operation                                                                                          | Render Dashboard backup restore, then verify migrate + readiness (runbook 8)                                     |
 | No API to set `treasuries.enabled`                                          | Operators cannot soft-disable a treasury without SQL                                                                                              | Same SQL workaround as treasury rotation                                                                         |
 
+## Operational prerequisites
+
+- **Two operator credentials.** The credential admin API refuses to mutate the
+  token making the request, so disabling or rotating an operator credential
+  requires a second one. Issue and store both before you need them — see
+  [`deploy-render-phase0.md`](./deploy-render-phase0.md) step 4.
+
 ## Rules for every runbook
 
 - Prefer API / npm scripts / Render UI that exist in this repo (`package.json`,

@@ -43,8 +43,12 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
 Use `"action":"disable"` only when you need a reversible stop (no `revoked_at`);
 for active compromise, always **revoke**.
 
-You **cannot** revoke the operator token you are currently using — use a second
-operator credential or the SQL fallback below.
+You **cannot** disable, revoke, or enable the operator token you are currently
+using (`CREDENTIAL_SELF_MUTATION_DENIED`). Authentication rejects disabled and
+revoked credentials alike, so self-mutation would lock you out with no
+in-product way back. **Keep a second operator credential issued and stored
+before you need this runbook** — that is the intended recovery path, and the
+SQL fallback below is the last resort if you have neither.
 
 3. Confirm via the list endpoint:
 
@@ -126,17 +130,17 @@ WHERE id = '<credential-uuid>';
 
 ## Rollback / if this goes wrong
 
-- Wrong credential disabled: only re-enable if you still trust the token:
+- Wrong credential **disabled** (not revoked), and you still trust the token:
 
-```sql
-SELECT id, name, enabled, revoked_at FROM api_credentials WHERE id = '<uuid>';
-
-UPDATE api_credentials
-SET enabled = true,
-    revoked_at = NULL,
-    updated_at = now()
-WHERE id = '<uuid>';
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"action":"enable"}' \
+  "$BASE/v1/admin/credentials/<credential-uuid>" | jq
 ```
 
+- Wrong credential **revoked**: revocation is terminal and `enable` will refuse
+  it with `CREDENTIAL_REVOKED` (HTTP 409). This is deliberate — the endpoint that
+  removes a leaked token must not be able to restore it. Issue a replacement
+  credential instead.
 - Prefer issuing a **new** credential over re-enabling one that may have been
-  exposed.
+  exposed at all.

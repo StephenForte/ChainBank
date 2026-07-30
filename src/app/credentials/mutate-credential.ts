@@ -1,9 +1,10 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
+import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock } from '../../domain/ports.js';
 import type { ApiCredentialRepository, ApiCredentialSummary, AuditEventRepository } from '../ports.js';
 
-export type CredentialMutationAction = 'disable' | 'revoke';
+export type CredentialMutationAction = 'disable' | 'revoke' | 'enable';
 
 export interface MutateCredentialDependencies {
   readonly apiCredentials: ApiCredentialRepository;
@@ -21,11 +22,17 @@ export interface MutateCredentialInput {
 }
 
 /**
- * Disables or revokes an API credential.
+ * Disables, revokes, or re-enables an API credential.
  *
- * Disable sets `enabled = false` and is reversible via SQL during incidents.
- * Revoke is terminal: sets `enabled = false` and `revoked_at`, and must not
- * be applied to the credential making this request (operator self-lockout).
+ * `disable` sets `enabled = false` and is reversible with `enable`.
+ * `revoke` is terminal: it sets `enabled = false` and stamps `revoked_at`, and
+ * `enable` refuses to undo it — a token believed compromised must never come
+ * back through the same endpoint that took it out.
+ *
+ * No action may target the credential making the request. Authentication
+ * rejects disabled and revoked credentials alike, so a self-mutation would
+ * leave the operator locked out with no in-product way back; a second operator
+ * credential is the intended recovery path.
  */
 export async function mutateCredential(
   dependencies: MutateCredentialDependencies,
@@ -36,9 +43,9 @@ export async function mutateCredential(
   if (input.credentialId === input.actorCredentialId) {
     throw new ChainBankError(
       'CREDENTIAL_SELF_MUTATION_DENIED',
-      `Credential ${input.credentialId} cannot disable or revoke itself`,
+      `Credential ${input.credentialId} cannot mutate itself`,
       {
-        publicMessage: 'You cannot disable or revoke the credential you are currently using.',
+        publicMessage: 'You cannot change the credential you are currently using.',
       },
     );
   }
@@ -48,13 +55,23 @@ export async function mutateCredential(
     throw new ChainBankError('CREDENTIAL_NOT_FOUND', `Credential ${input.credentialId} does not exist`);
   }
 
-  const at = dependencies.clock.now();
-  const credential =
-    input.action === 'disable'
-      ? await dependencies.apiCredentials.disable(input.credentialId, at)
-      : await dependencies.apiCredentials.revoke(input.credentialId, at);
+  // Revocation is terminal. Allowing `enable` to clear it would turn the
+  // compromise response into a reversible toggle, so a revoked credential can
+  // only be replaced by issuing a new one.
+  if (input.action === 'enable' && existing.revokedAt !== undefined) {
+    throw new ChainBankError(
+      'CREDENTIAL_REVOKED',
+      `Credential ${input.credentialId} was revoked at ${existing.revokedAt.toISOString()} and cannot be re-enabled`,
+      {
+        publicMessage: 'A revoked credential cannot be re-enabled. Issue a new credential instead.',
+      },
+    );
+  }
 
-  const auditAction = input.action === 'disable' ? 'credential.disabled' : 'credential.revoked';
+  const at = dependencies.clock.now();
+  const credential = await applyAction(dependencies, input.action, input.credentialId, at);
+
+  const auditAction = AUDIT_ACTION_BY_MUTATION[input.action];
   await dependencies.auditEvents.record({
     actorType: 'api_credential',
     actorId: input.actorCredentialId,
@@ -79,4 +96,29 @@ export async function mutateCredential(
   });
 
   return credential;
+}
+
+const AUDIT_ACTION_BY_MUTATION: Readonly<Record<CredentialMutationAction, string>> = {
+  disable: 'credential.disabled',
+  revoke: 'credential.revoked',
+  enable: 'credential.enabled',
+};
+
+/** Exhaustive so a new action cannot silently fall through to a wrong write. */
+async function applyAction(
+  dependencies: MutateCredentialDependencies,
+  action: CredentialMutationAction,
+  credentialId: string,
+  at: Date,
+): Promise<ApiCredentialSummary> {
+  switch (action) {
+    case 'disable':
+      return dependencies.apiCredentials.disable(credentialId, at);
+    case 'revoke':
+      return dependencies.apiCredentials.revoke(credentialId, at);
+    case 'enable':
+      return dependencies.apiCredentials.enable(credentialId, at);
+    default:
+      return assertNever(action, 'CredentialMutationAction');
+  }
 }

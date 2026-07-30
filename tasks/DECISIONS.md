@@ -201,7 +201,7 @@ TX.6 amendment (2026-07-30):
 ```ts
 // HTTP (operator only; enforced in application services)
 // GET   /v1/admin/credentials?limit&offset
-// PATCH /v1/admin/credentials/:id  body: { action: 'disable' | 'revoke' }
+// PATCH /v1/admin/credentials/:id  body: { action: 'disable' | 'revoke' | 'enable' }
 
 // Application ports (src/app/ports.ts) — ApiCredentialRepository extensions
 findById(id) /
@@ -220,11 +220,21 @@ findById(id) /
 Local design choices (TX.4, 2026-07-30):
 
 - List returns `ApiCredentialSummary` (includes `tokenPrefix`; never `token_hash`).
-- **Disable** sets `enabled = false` only (reversible via SQL). **Revoke** is
-  terminal: `enabled = false` and `revoked_at = now()`. Both write audit events
-  (`credential.disabled` / `credential.revoked`).
+- **Disable** sets `enabled = false` only. **Revoke** is terminal:
+  `enabled = false` and `revoked_at = now()`. **Enable** (added 2026-07-30)
+  reverses a disable and never clears `revoked_at` — attempting to enable a
+  revoked credential returns `CREDENTIAL_REVOKED` (409). Revocation is the
+  response to a suspected compromise, so the endpoint that removes a leaked
+  token must not be able to restore it; issue a replacement instead. All three
+  write audit events (`credential.disabled` / `credential.revoked` /
+  `credential.enabled`) recording previous and next state.
 - Mutations refuse when `credentialId === actorCredentialId`
-  (`CREDENTIAL_SELF_MUTATION_DENIED`) to prevent operator self-lockout.
+  (`CREDENTIAL_SELF_MUTATION_DENIED`), covering enable as well as the
+  destructive actions. Authentication rejects disabled and revoked credentials
+  alike, so self-mutation would lock the operator out with no in-product way
+  back. **This makes a second operator credential an operational prerequisite**,
+  now set up at deploy time (`docs/runbooks/deploy-render-phase0.md` step 4) and
+  stated in the runbook index.
 - Revoke/disable do not delete `api_credential_scopes` rows or audit history.
 
 ### C4 — Funding operation status values (owner: T1.5)
@@ -517,3 +527,4 @@ stranded one.
 - 2026-07-29 — D6 penciled in as Anvil (external binary, spawned only if on `PATH`, suite skips otherwise — no npm dependency, so AGENTS.md §14 is not engaged). To reconfirm when T4.4 starts. Added **TX.6**: `AlertRepository.findOpenByEntity` ignores `alert_type`, so a second alert type on the `treasury` entity would collide with T3.3's balance alerts and break P3-US2 exactly-once email semantics. Sequenced before T1.8 because only one alert type exists today, making the filter provably a no-op on current data; doing it afterward would require migrating the entity key on live alert rows instead.
 - 2026-07-30 — TX.6 closed the alert-type lookup gap: `AlertRepository.findOpenByEntity(entityType, entityId, alertType)` now filters on `alert_type` (C3a), so T1.8 reserve alerts and later types can share a treasury entity without colliding with balance alerts.
 - 2026-07-30 — TX.4 published credential admin contract C9: operator-only `GET/PATCH /v1/admin/credentials`, `credential:read`/`credential:write` permissions, disable vs revoke semantics, self-mutation guard, audited mutations (AGENTS.md §7.7 / PRD §14).
+- 2026-07-30 — TX.4 follow-ups closed: added `enable` to the credential admin API (C9) so a mistaken **disable** is reversible in-product, while **revoke** stays terminal (`CREDENTIAL_REVOKED`, 409) because the endpoint that removes a leaked token must not restore it. The self-mutation guard now covers all three actions, which makes a second operator credential a prerequisite rather than a nicety — issued at deploy time (runbook step 4) and stated in the runbook index. Removes the last SQL-only rollback from the credential runbooks.
