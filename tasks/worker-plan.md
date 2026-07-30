@@ -4,7 +4,10 @@ Planner-owned. Scope: finish the application per `tasks/ChainBank_PRD_v4.md`.
 Phase 0 is complete (read-only monitoring, auth, test email, cron, Render blueprint).
 Phases 5–8 are explicitly out of scope for this effort.
 
-Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting.
+Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting, and must
+follow the **[commit and merge contract](#commit-and-merge-contract)** below — it
+governs the branch to work in, which files may be touched, the commit convention, and
+the report handed back on completion.
 
 ## Status (updated 2026-07-29)
 
@@ -50,6 +53,142 @@ runbooks in T3.4 exist — that is the §20 blocking item, not a preference.
 **T3.4** 🟢 runbooks — highest value, it unblocks ever enabling funding.
 **T2.2** 🔴 `ensure-ready`, **T1.8** 🟢 reserve-exhaustion email, **T1.9** 🔴
 concurrency tests, **T2.4** 🟢 dashboard views. Then Phase 4.
+
+## Commit and merge contract
+
+**Every task in the tree below carries this contract.** It is not optional and it is
+not per-task boilerplate to restate — a worker prompt may add task-specific rules,
+but never relaxes what follows. Each clause exists because its absence cost real
+rework in an earlier wave; the parenthetical notes say which.
+
+### 1. Branch and workspace
+
+- **One task, one branch, one working copy.** Branch from current `origin/main`:
+  `git fetch origin && git switch -c <branch> origin/main`.
+- **Naming:** `feat/<task-id-lowercase>-<short-slug>` (e.g. `feat/t2.2-ensure-ready`),
+  or `fix/<slug>` for defect work.
+- **Never work in a checkout another worker is using.** Use a separate clone or
+  `git worktree add`. (Wave 2 ran five workers in one checkout; their output landed
+  as a single undifferentiated pile of uncommitted changes that had to be split into
+  five PRs by hand, with two of them entangled beyond clean separation.)
+- **Do not commit to `main`, and do not merge your own PR.** The operator merges.
+
+### 2. What you may touch
+
+Classify every file you are about to edit:
+
+- **Owned** — files this task creates, plus files no other in-flight task lists as
+  owned. Edit freely.
+- **Shared** — edit only as much as the task genuinely requires, additively, and
+  list every shared file you touched in your handoff. These are the ones that
+  collide: `src/app/ports.ts`, `src/container.ts`, `src/api/app.ts`,
+  `src/domain/errors.ts`, `src/infrastructure/db/schema.ts`,
+  `test/support/funding-fakes.ts`, `README.md`, `tasks/DECISIONS.md`.
+- **Off-limits without explicit instruction** — `AGENTS.md`, `tasks/ChainBank_PRD_v4.md`
+  sections 1–24, `tasks/worker-plan.md`, `.github/workflows/`, `package.json`
+  dependencies, and any existing `drizzle/*.sql` migration file. Adding a _new_
+  migration is fine; editing a committed one is not.
+
+Specific collision rules:
+
+- **`tasks/DECISIONS.md`:** append your contract and your one-line decision-log
+  entry at the very end of their sections. Expect a conflict on rebase and resolve
+  it by **keeping both sides** — these are append-only logs, never either/or.
+  (Every single rebase this project has done conflicted here.)
+- **Interface contract numbers:** before claiming `C<n>`, grep the file for the
+  highest existing number and take the next one. (Two workers both published a
+  "C5" and one had to be renumbered during a rebase.)
+- **Migrations:** run `npm run db:generate` only after rebasing onto latest `main`,
+  so your migration number does not collide with one merged while you worked.
+- **Never weaken a security check or an existing test to make your change pass**
+  (AGENTS.md §1.5). If an existing test encodes behavior you believe is wrong,
+  changing it is allowed but must be called out explicitly in the handoff with the
+  reasoning. (A T1.5 test asserted `RPC_UNAVAILABLE ⇒ terminal failure`, which was
+  itself the bug; the fix legitimately rewrote it — that has to be visible, not
+  buried in a diff.)
+
+### 3. Commits
+
+- Imperative subject under ~72 characters, describing the change, not the task id.
+- Body explains **why** and names the PRD user story or AGENTS.md section it
+  satisfies. Security-relevant reasoning goes here, not only in the PR.
+- End every commit message with:
+  `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- Never commit secrets, real `.env` files, private keys, or live database URLs —
+  not even in a commit you intend to amend away.
+- Keep generated build output (`dist/`, `coverage/`) out of the commit.
+- Multiple commits are fine; a tidy history is not worth a broken bisect. Do not
+  rewrite history that has been pushed and reviewed.
+
+### 4. Before you hand off — the gate
+
+Run all of these from the branch, **after** a final `git fetch origin && git rebase origin/main`:
+
+```bash
+npm run format:check && npm run lint && npm run typecheck && npm test && npm run build
+```
+
+Then, against a scratch database (integration tests are opt-in and CI runs them, so
+a failure here is yours to find, not the operator's):
+
+```bash
+createdb chainbank_task_check
+DATABASE_URL=postgres://localhost:5432/chainbank_task_check \
+CHAINBANK_RUN_INTEGRATION=true \
+  npm run db:migrate && npm run test:integration
+dropdb chainbank_task_check
+```
+
+If your task adds a migration, additionally prove it applies **forward from the
+previous migration**, not just to an empty database.
+
+The rebase-then-re-run order matters: a text-clean rebase can still break the
+build. (T3.3 added an `alerts` repository to the container; T1.6's test stub merged
+without conflict and then failed to compile.)
+
+Do not report success with any check skipped or failing. "Tests pass except X" is a
+failed gate — say so plainly instead.
+
+### 5. What you hand back
+
+Open a PR against `main` with the AGENTS.md §15 body (problem and phase/user-story
+reference, implementation summary, security impact, migration/configuration
+changes, tests added, operational and rollback notes). Open it **ready for review,
+not as a draft**, unless the work is deliberately incomplete — and if it is, say so
+in the title. (Two PRs sat silently as drafts and could not be merged until the
+operator noticed.)
+
+Then reply with exactly this report and nothing padded around it:
+
+```text
+TASK:        <id and one-line description>
+BRANCH:      <branch name>
+PR:          <url, or "not opened — reason">
+STATUS:      complete | complete-with-caveats | blocked
+
+GATE:        format ✅/❌  lint ✅/❌  typecheck ✅/❌  build ✅/❌
+             unit <n> passed  integration <n> passed  (or "not run — reason")
+MIGRATION:   <none | number + verified fresh and forward>
+
+SHARED FILES TOUCHED:
+  <path> — <what changed, one line each>
+
+CONTRACTS PUBLISHED / CHANGED:
+  <C<n> name, or "none">
+
+EXISTING TESTS MODIFIED:
+  <path — what changed and why it was not a weakening, or "none">
+
+DECISIONS NEEDED FROM OPERATOR:
+  <question, or "none">
+
+RISKS AND FOLLOW-UPS:
+  <what you left undone, what a reviewer should look hardest at, or "none">
+```
+
+`complete-with-caveats` and `blocked` are respected answers. A worker that stops and
+reports an unresolved security question is behaving correctly (AGENTS.md §1.7); one
+that guesses and reports success is not.
 
 ## Task tree
 
