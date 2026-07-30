@@ -49,9 +49,11 @@ function createFakeAlerts(): AlertRepository & { readonly rows: Map<string, Stor
 
   return {
     rows,
-    async findOpenByEntity(entityType, entityId) {
+    async findOpenByEntity(entityType, entityId, alertType) {
       return Promise.resolve(
-        [...rows.values()].find((row) => row.entityType === entityType && row.entityId === entityId),
+        [...rows.values()].find(
+          (row) => row.entityType === entityType && row.entityId === entityId && row.alertType === alertType,
+        ),
       );
     },
     async insertOpen(input) {

@@ -85,7 +85,11 @@ export async function evaluateTreasuryAlerts(
   }
 
   const now = dependencies.clock.now();
-  const existing = await dependencies.alerts.findOpenByEntity(TREASURY_ALERT_ENTITY_TYPE, input.treasury.id);
+  const existing = await dependencies.alerts.findOpenByEntity(
+    TREASURY_ALERT_ENTITY_TYPE,
+    input.treasury.id,
+    TREASURY_BALANCE_ALERT_TYPE,
+  );
 
   const openAlertState = toOpenAlertState(existing);
   let transition = evaluateTreasuryAlert({

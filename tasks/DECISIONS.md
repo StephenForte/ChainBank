@@ -165,7 +165,7 @@ function evaluateTreasuryAlerts(deps, input): Promise<EvaluateTreasuryAlertsResu
 // and POST /v1/treasuries/:id/check.
 
 // src/app/ports.ts — AlertRepository
-findOpenByEntity /
+findOpenByEntity(entityType, entityId, alertType) /
   insertOpen /
   markEscalated /
   markPendingEmail /
@@ -186,6 +186,15 @@ Local design choices (T3.3, 2026-07-29):
 - `ALERT_REMINDER_INTERVAL_HOURS` (default 24) → `config.alerts.reminderIntervalMs`
   for web and treasury-monitor. Monitor gains email config; still never receives
   `TREASURY_PRIVATE_KEY` (`isSigningCapableRole` / omit-before-parse unchanged).
+
+TX.6 amendment (2026-07-30):
+
+- `findOpenByEntity` filters on `alert_type` alongside `entity_type`, `entity_id`,
+  and `state='open'`, so multiple alert types may coexist on one entity without
+  colliding (P3-US2 exactly-once email; PRD §7.9). Other `AlertRepository`
+  mutators address rows by `id` and were left unchanged.
+- Behavior-preserving while only `treasury_balance` exists: every open row shares
+  that type, so the added predicate cannot change which row current callers see.
 
 ### C4 — Funding operation status values (owner: T1.5)
 
@@ -475,3 +484,4 @@ stranded one.
 - 2026-07-29 — D3 resolved by the operator from the Render environment: warning 1 / critical 0.25 / recovery 2 / reserve 0.5 ETH. Values pass `assertValidTreasuryThresholds`. Recorded the reserve-between-critical-and-warning consequence (funding halts while status still reads `warning`; the critical email is not the funding-stopped signal) and the un-validated `minimumReserveWei` gap. Raises T1.8's priority. Remaining PENDING decision: D6 only.
 - 2026-07-29 — D3 thresholds moved from Render dashboard (`sync: false`) into `render.yaml` as literal values on both services, after a `.15`-for-`1.5` recovery typo that would have failed both processes at boot. Final ladder: warning 0.75 / critical 0.3 / recovery 1.5 / reserve 0.1 ETH. CI now validates the declared ladder (startup rules, reserve < critical, both services identical) via `test/unit/config/render-blueprint-thresholds.test.ts`; guards mutation-tested. Changing a threshold is now a PR — see `docs/runbooks/change-thresholds-safely.md`.
 - 2026-07-29 — D6 penciled in as Anvil (external binary, spawned only if on `PATH`, suite skips otherwise — no npm dependency, so AGENTS.md §14 is not engaged). To reconfirm when T4.4 starts. Added **TX.6**: `AlertRepository.findOpenByEntity` ignores `alert_type`, so a second alert type on the `treasury` entity would collide with T3.3's balance alerts and break P3-US2 exactly-once email semantics. Sequenced before T1.8 because only one alert type exists today, making the filter provably a no-op on current data; doing it afterward would require migrating the entity key on live alert rows instead.
+- 2026-07-30 — TX.6 closed the alert-type lookup gap: `AlertRepository.findOpenByEntity(entityType, entityId, alertType)` now filters on `alert_type` (C3a), so T1.8 reserve alerts and later types can share a treasury entity without colliding with balance alerts.

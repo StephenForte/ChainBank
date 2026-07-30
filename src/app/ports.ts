@@ -245,7 +245,11 @@ export interface InsertOpenAlertInput {
  * successful send.
  */
 export interface AlertRepository {
-  findOpenByEntity(entityType: string, entityId: string): Promise<StoredOpenAlert | undefined>;
+  findOpenByEntity(
+    entityType: string,
+    entityId: string,
+    alertType: string,
+  ): Promise<StoredOpenAlert | undefined>;
   insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert>;
   /** warning → critical; leaves last_sent_at unchanged. */
   markEscalated(input: {

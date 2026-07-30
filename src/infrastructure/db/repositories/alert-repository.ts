@@ -16,12 +16,13 @@ const PENDING_EMAIL_VALUES = new Set<PendingAlertEmail>(['warning', 'critical', 
 
 export function createAlertRepository(db: Database): AlertRepository {
   return {
-    async findOpenByEntity(entityType, entityId): Promise<StoredOpenAlert | undefined> {
+    async findOpenByEntity(entityType, entityId, alertType): Promise<StoredOpenAlert | undefined> {
       return withDatabaseErrors('alerts.findOpenByEntity', async () => {
         const row = await db.query.alerts.findFirst({
           where: and(
             eq(alerts.entityType, entityType),
             eq(alerts.entityId, entityId),
+            eq(alerts.alertType, alertType),
             eq(alerts.state, 'open'),
           ),
           orderBy: [desc(alerts.firstTriggeredAt)],
