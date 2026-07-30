@@ -113,8 +113,29 @@ export interface ApiCredential {
   readonly revokedAt: Date | undefined;
 }
 
+/** Operator-facing credential metadata. Never includes token_hash. */
+export interface ApiCredentialSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly role: Role;
+  readonly tokenPrefix: string;
+  readonly enabled: boolean;
+  readonly revokedAt: Date | undefined;
+  readonly lastUsedAt: Date | undefined;
+  readonly createdAt: Date;
+}
+
+export interface ApiCredentialListPage {
+  readonly items: readonly ApiCredentialSummary[];
+  readonly total: number;
+}
+
 export interface ApiCredentialRepository {
   findByTokenHash(tokenHash: string): Promise<ApiCredential | undefined>;
+  findById(id: string): Promise<ApiCredentialSummary | undefined>;
+  list(pagination: { readonly limit: number; readonly offset: number }): Promise<ApiCredentialListPage>;
+  disable(id: string, at: Date): Promise<ApiCredentialSummary>;
+  revoke(id: string, at: Date): Promise<ApiCredentialSummary>;
   touchLastUsed(id: string, at: Date): Promise<void>;
 }
 

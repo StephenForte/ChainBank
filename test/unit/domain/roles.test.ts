@@ -16,6 +16,8 @@ describe('role permissions', () => {
     expect(roleHasPermission('operator', 'wallet:write')).toBe(true);
     expect(roleHasPermission('operator', 'project:read')).toBe(true);
     expect(roleHasPermission('operator', 'project:write')).toBe(true);
+    expect(roleHasPermission('operator', 'credential:read')).toBe(true);
+    expect(roleHasPermission('operator', 'credential:write')).toBe(true);
   });
 
   it('keeps read-only credentials from mutating actions', () => {
@@ -44,6 +46,8 @@ describe('role permissions', () => {
       'wallet:write',
       'project:read',
       'project:write',
+      'credential:read',
+      'credential:write',
     ];
     for (const role of deferred) {
       for (const permission of permissions) {
