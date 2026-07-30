@@ -153,16 +153,8 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
       metadata: {},
     });
 
-    const foundBalance = await alerts.findOpenByEntity(
-      'treasury',
-      seed.treasuryId,
-      'treasury_balance',
-    );
-    const foundReserve = await alerts.findOpenByEntity(
-      'treasury',
-      seed.treasuryId,
-      'treasury_reserve',
-    );
+    const foundBalance = await alerts.findOpenByEntity('treasury', seed.treasuryId, 'treasury_balance');
+    const foundReserve = await alerts.findOpenByEntity('treasury', seed.treasuryId, 'treasury_reserve');
 
     expect(foundBalance?.id).toBe(balance.id);
     expect(foundBalance?.alertType).toBe('treasury_balance');
