@@ -45,7 +45,7 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
     expect(created.lastSentAt).toBeUndefined();
     expect(created.pendingEmail).toBe('warning');
 
-    const found = await alerts.findOpenByEntity('treasury', seed.treasuryId);
+    const found = await alerts.findOpenByEntity('treasury', seed.treasuryId, 'treasury_balance');
     expect(found?.id).toBe(created.id);
     expect(found?.severity).toBe('warning');
     expect(found?.pendingEmail).toBe('warning');
@@ -115,7 +115,7 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
     });
     expect(resolved.pendingEmail).toBeUndefined();
 
-    const open = await alerts.findOpenByEntity('treasury', seed.treasuryId);
+    const open = await alerts.findOpenByEntity('treasury', seed.treasuryId, 'treasury_balance');
     expect(open).toBeUndefined();
 
     const result = await handle.pool.query<{ state: string; has_resolved: boolean }>(
@@ -125,5 +125,49 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.state).toBe('resolved');
     expect(result.rows[0]?.has_resolved).toBe(true);
+  });
+
+  it('finds open alerts by type when multiple types share an entity', async () => {
+    const alerts = createAlertRepository(handle.db);
+    const earlier = new Date('2026-07-29T12:00:00.000Z');
+    const later = new Date('2026-07-29T13:00:00.000Z');
+
+    const balance = await alerts.insertOpen({
+      alertType: 'treasury_balance',
+      severity: 'warning',
+      entityType: 'treasury',
+      entityId: seed.treasuryId,
+      firstTriggeredAt: earlier,
+      lastEvaluatedAt: earlier,
+      pendingEmail: 'warning',
+      metadata: {},
+    });
+    const reserve = await alerts.insertOpen({
+      alertType: 'treasury_reserve',
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: seed.treasuryId,
+      firstTriggeredAt: later,
+      lastEvaluatedAt: later,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+
+    const foundBalance = await alerts.findOpenByEntity(
+      'treasury',
+      seed.treasuryId,
+      'treasury_balance',
+    );
+    const foundReserve = await alerts.findOpenByEntity(
+      'treasury',
+      seed.treasuryId,
+      'treasury_reserve',
+    );
+
+    expect(foundBalance?.id).toBe(balance.id);
+    expect(foundBalance?.alertType).toBe('treasury_balance');
+    expect(foundReserve?.id).toBe(reserve.id);
+    expect(foundReserve?.alertType).toBe('treasury_reserve');
+    expect(foundBalance?.id).not.toBe(foundReserve?.id);
   });
 });
