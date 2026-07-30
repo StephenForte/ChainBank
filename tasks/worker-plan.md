@@ -15,24 +15,24 @@ the report handed back on completion.
 262 unit tests across 35 files plus 40 integration tests, with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
-| Task                                                          | Status      | Landed in          |
-| ------------------------------------------------------------- | ----------- | ------------------ |
-| T1.1 schema + migration `0001`                                | ✅ done     | PR #2              |
-| T1.2 funding math domain                                      | ✅ done     | PR #2              |
-| T1.3 wallet registration + policy APIs                        | ✅ done     | PR #7              |
-| T1.4 signer infrastructure                                    | ✅ done     | PR #2              |
-| T1.5 funding dispatch engine                                  | ✅ done     | PR #8              |
-| T1.6 `ensure-funded` endpoint                                 | ✅ done     | PR #13             |
-| T1.7 funding history API + dashboard                          | ✅ done     | PR #11             |
-| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done     | PR #7              |
-| T2.3 operation status + confirmation resume                   | ✅ done     | PR #10             |
-| T3.1 alert state machine                                      | ✅ done     | PR #5              |
-| T3.2 email templates                                          | ✅ done     | PR #6              |
-| T3.3 alert persistence + cron/manual orchestration            | ✅ done     | PR #12             |
-| T3.4 operational runbooks (PRD §19)                           | ✅ done     | PR #14             |
-| TX.1 CI pipeline                                              | ✅ done     | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done     | Phase 0 + PR #13   |
-| Remaining: T1.8, T1.9, T2.2, T2.4, TX.4, TX.5, all of Phase 4 | not started | —                  |
+| Task                                                                | Status      | Landed in          |
+| ------------------------------------------------------------------- | ----------- | ------------------ |
+| T1.1 schema + migration `0001`                                      | ✅ done     | PR #2              |
+| T1.2 funding math domain                                            | ✅ done     | PR #2              |
+| T1.3 wallet registration + policy APIs                              | ✅ done     | PR #7              |
+| T1.4 signer infrastructure                                          | ✅ done     | PR #2              |
+| T1.5 funding dispatch engine                                        | ✅ done     | PR #8              |
+| T1.6 `ensure-funded` endpoint                                       | ✅ done     | PR #13             |
+| T1.7 funding history API + dashboard                                | ✅ done     | PR #11             |
+| T2.1 projects/environments + scoped authz (migration `0002`)        | ✅ done     | PR #7              |
+| T2.3 operation status + confirmation resume                         | ✅ done     | PR #10             |
+| T3.1 alert state machine                                            | ✅ done     | PR #5              |
+| T3.2 email templates                                                | ✅ done     | PR #6              |
+| T3.3 alert persistence + cron/manual orchestration                  | ✅ done     | PR #12             |
+| T3.4 operational runbooks (PRD §19)                                 | ✅ done     | PR #14             |
+| TX.1 CI pipeline                                                    | ✅ done     | PR #4, fixed in #9 |
+| TX.2 API hardening (helmet, CORS, rate limit)                       | ✅ done     | Phase 0 + PR #13   |
+| Remaining: TX.6, T1.8, T1.9, T2.2, T2.4, TX.4, TX.5, all of Phase 4 | not started | —                  |
 
 **Phase 1 is functionally complete.** Two security reviews ran on the money path and
 both produced fixes that shipped before merge:
@@ -56,7 +56,8 @@ they belong before `FUNDING_ENABLED=true` in a hosted environment. See the
 
 ### Next wave (all unblocked, run in parallel)
 
-**T2.2** 🔴 `ensure-ready`, **T1.8** 🟢 reserve-exhaustion email, **T1.9** 🔴
+**TX.6** 🟢 alert-lookup filter first (it gates T1.8 — see its entry), then
+**T1.8** 🟢 reserve-exhaustion email, **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴
 concurrency tests, **T2.4** 🟢 dashboard views, **TX.4** 🟢 credential revoke
 tooling, **TX.5** 🔴 treasury row lifecycle. Then Phase 4.
 
@@ -335,21 +336,50 @@ response or a routine rotation dependent on hand-written SQL.
   Reserve accounting, nonce probing, and alert entity ids all key off the resolved
   row, so verify each still describes the intended treasury afterward.
 
+### Prerequisite refactor for multi-type alerting
+
+- **TX.6** 🟢 Filter alert lookups by alert type `[none]` — **do before T1.8**
+  `AlertRepository.findOpenByEntity(entityType, entityId)` matches on entity and
+  `state='open'` only, ignoring `alert_type`. T3.3's balance alerts occupy
+  entityType `'treasury'` with the treasury id, so the moment a second alert type
+  lands on that entity the lookup returns whichever open row triggered most
+  recently — and the treasury monitor could escalate or resolve a reserve alert
+  believing it holds the balance alert. That silently breaks the exactly-once
+  email semantics guaranteed by P3-US2 and a Phase 3 exit criterion.
+  `alert_type` is already a first-class column and PRD §7.9 anticipates several
+  alert types per entity, so this is a latent defect rather than a design change.
+  Deliver: add an explicit alert type to the lookup, update the single `src/`
+  call site, keep T3.3's alert tests passing **unchanged** as the evidence that
+  balance-alert behavior did not move.
+  **Sequencing matters.** Only one alert type exists today
+  (`treasury_balance`), so every stored row shares it and adding the filter is
+  provably a no-op on current data. Once T1.8 introduces a second type the filter
+  becomes load-bearing and that proof is no longer available. Doing this after
+  T1.8 would instead mean migrating the entity key on live alert rows — a data
+  migration in place of a code change. T4.3 (reconciliation-failure alerts) hits
+  the identical wall and inherits the fix for free.
+  No migration required: `alerts.alert_type` is `text`, not a Postgres enum.
+
 ## Remaining wave order
 
-1. **Wave 4 (now, parallel):** T2.2 🔴 `ensure-ready`, T1.8 🟢 reserve-exhaustion
-   email, T1.9 🔴 concurrency tests, T2.4 🟢 dashboard views, plus the two
-   operability follow-ups TX.4 🟢 and TX.5 🔴.
+1. **Wave 4 (now):** **TX.6** 🟢 first and alone — it is small and everything
+   alert-shaped waits on it. Then, in parallel: T1.8 🟢 reserve-exhaustion email,
+   T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, T2.4 🟢 dashboard views,
+   TX.4 🟢 credential revoke tooling, TX.5 🔴 treasury row lifecycle.
 2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
 
 Merge-order cautions for Wave 4:
 
+- **TX.6 before T1.8**, for the reason in its entry: the refactor is only provably
+  behavior-preserving while a single alert type exists.
 - T2.2 (`ensure-ready`) and T1.9 (concurrency tests) both build on the funding
   application layer; land T2.2 first so T1.9 can cover it.
 - TX.5 changes which treasury row funding resolves to, and T2.2 fans out across many
   wallets against one treasury. Land TX.5 before T2.2 if both are in flight, or
   expect T2.2 to need a rebase and a re-read of its reserve assertions.
 - TX.4 is independent of everything else and safe to run at any time.
+- T1.8 and T2.2 both add callers that can hit a reserve refusal. Land T1.8 first so
+  T2.2 inherits the alerting rather than needing it retrofitted.
 
 Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
 T4.4, and ideally before T1.9.
