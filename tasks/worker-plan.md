@@ -15,23 +15,24 @@ the report handed back on completion.
 262 unit tests across 35 files plus 40 integration tests, with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
-| Task                                                         | Status      | Landed in          |
-| ------------------------------------------------------------ | ----------- | ------------------ |
-| T1.1 schema + migration `0001`                               | ✅ done     | PR #2              |
-| T1.2 funding math domain                                     | ✅ done     | PR #2              |
-| T1.3 wallet registration + policy APIs                       | ✅ done     | PR #7              |
-| T1.4 signer infrastructure                                   | ✅ done     | PR #2              |
-| T1.5 funding dispatch engine                                 | ✅ done     | PR #8              |
-| T1.6 `ensure-funded` endpoint                                | ✅ done     | PR #13             |
-| T1.7 funding history API + dashboard                         | ✅ done     | PR #11             |
-| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done     | PR #7              |
-| T2.3 operation status + confirmation resume                  | ✅ done     | PR #10             |
-| T3.1 alert state machine                                     | ✅ done     | PR #5              |
-| T3.2 email templates                                         | ✅ done     | PR #6              |
-| T3.3 alert persistence + cron/manual orchestration           | ✅ done     | PR #12             |
-| TX.1 CI pipeline                                             | ✅ done     | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13   |
-| Remaining: T1.8, T1.9, T2.2, T2.4, T3.4, all of Phase 4      | not started | —                  |
+| Task                                                          | Status      | Landed in          |
+| ------------------------------------------------------------- | ----------- | ------------------ |
+| T1.1 schema + migration `0001`                                | ✅ done     | PR #2              |
+| T1.2 funding math domain                                      | ✅ done     | PR #2              |
+| T1.3 wallet registration + policy APIs                        | ✅ done     | PR #7              |
+| T1.4 signer infrastructure                                    | ✅ done     | PR #2              |
+| T1.5 funding dispatch engine                                  | ✅ done     | PR #8              |
+| T1.6 `ensure-funded` endpoint                                 | ✅ done     | PR #13             |
+| T1.7 funding history API + dashboard                          | ✅ done     | PR #11             |
+| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done     | PR #7              |
+| T2.3 operation status + confirmation resume                   | ✅ done     | PR #10             |
+| T3.1 alert state machine                                      | ✅ done     | PR #5              |
+| T3.2 email templates                                          | ✅ done     | PR #6              |
+| T3.3 alert persistence + cron/manual orchestration            | ✅ done     | PR #12             |
+| T3.4 operational runbooks (PRD §19)                           | ✅ done     | PR #14             |
+| TX.1 CI pipeline                                              | ✅ done     | PR #4, fixed in #9 |
+| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done     | Phase 0 + PR #13   |
+| Remaining: T1.8, T1.9, T2.2, T2.4, TX.4, TX.5, all of Phase 4 | not started | —                  |
 
 **Phase 1 is functionally complete.** Two security reviews ran on the money path and
 both produced fixes that shipped before merge:
@@ -45,14 +46,19 @@ both produced fixes that shipped before merge:
   key is asserted to match the reserve-enforced treasury row; idempotency keys are
   namespaced per wallet.
 
-**Funding is reachable but disabled.** `FUNDING_ENABLED` must stay `false` until the
-runbooks in T3.4 exist — that is the §20 blocking item, not a preference.
+**Funding is reachable but still disabled.** The PRD §19 runbooks now exist, which
+was the §20 gate. Writing them surfaced two operability gaps — no credential
+revoke tooling and no supported way to complete a treasury key rotation — now
+tracked as **TX.4** and **TX.5**. Both fail closed rather than mis-spending, but each
+leaves an incident response or a routine rotation dependent on hand-written SQL, so
+they belong before `FUNDING_ENABLED=true` in a hosted environment. See the
+"Before arming funding" checklist at the end of this document.
 
 ### Next wave (all unblocked, run in parallel)
 
-**T3.4** 🟢 runbooks — highest value, it unblocks ever enabling funding.
 **T2.2** 🔴 `ensure-ready`, **T1.8** 🟢 reserve-exhaustion email, **T1.9** 🔴
-concurrency tests, **T2.4** 🟢 dashboard views. Then Phase 4.
+concurrency tests, **T2.4** 🟢 dashboard views, **TX.4** 🟢 credential revoke
+tooling, **TX.5** 🔴 treasury row lifecycle. Then Phase 4.
 
 ## Commit and merge contract
 
@@ -291,14 +297,64 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   README, PRD implementation appendix (§25), and this plan reflect merged state.
   Refresh again when T2.2 or Phase 4 lands.
 
+### Operability gaps surfaced by the T3.4 runbooks
+
+Writing the PRD §19 runbooks exposed two capabilities an operator needs that do not
+exist. Both are recorded in the Known gaps table in `docs/runbooks/README.md`, and
+both should land **before funding is armed in a hosted environment** — not because
+either is a security hole (both fail closed) but because each leaves an incident
+response or a routine rotation dependent on hand-written SQL.
+
+- **TX.4** 🟢 Credential disable / revoke tooling `[none]`
+  `api_credentials` already has `enabled` and `revoked_at`, and
+  `authenticateCredential` honors both (`CREDENTIAL_DISABLED`) — but nothing can
+  set them. There is no script, no endpoint, and no repository write method, so
+  `rotate-service-token.md` and `disable-compromised-project-credential.md` both
+  instruct the operator to run SQL during an incident.
+  Deliver: a repository method plus either an operator-only endpoint
+  (`PATCH /v1/admin/credentials/:id`) or a `npm run credential:revoke` script —
+  prefer the endpoint, since the script needs database access the operator may not
+  have mid-incident. **Must write an `audit_events` row**: AGENTS.md §7.7 requires
+  authorization-relevant changes to be audited, and the SQL workaround does not,
+  which is itself a listed gap. Update both runbooks to use the real path and move
+  their entries out of Known gaps.
+- **TX.5** 🔴 Treasury row lifecycle and resolution `[none]`
+  There is no supported way to complete a treasury key rotation. The bootstrap
+  upsert conflict target is `(chain_id, address)`, so a new address inserts a new
+  `treasuries` row; `listEnabled()` orders by `created_at ASC` and
+  `resolveTreasuryForWallet` takes the first chain match, so funding keeps binding
+  to the **old** row. Since PR #13 added `assertSignerMatchesTreasury`, the rotated
+  key then mismatches the resolved row and funding fails closed with
+  `INVALID_CONFIGURATION` until the old row is disabled by hand.
+  Decide and implement one of: (a) an operator-only way to disable a treasury row,
+  or (b) make resolution prefer the row whose address matches the signer, or (c)
+  make the rotation path explicit so an address change retires the previous row.
+  Option (b) is the smallest change but silently reinterprets which treasury is
+  authoritative — treat that as a money-path decision, publish it in
+  `tasks/DECISIONS.md`, and cover it with tests for the two-enabled-rows case.
+  Reserve accounting, nonce probing, and alert entity ids all key off the resolved
+  row, so verify each still describes the intended treasury afterward.
+
 ## Remaining wave order
 
-1. **Wave 4 (now):** T3.4 🟢 first — runbooks are the §20 gate on ever enabling
-   funding. In parallel: T2.2 🔴, T1.8 🟢, T1.9 🔴, T2.4 🟢.
+1. **Wave 4 (now, parallel):** T2.2 🔴 `ensure-ready`, T1.8 🟢 reserve-exhaustion
+   email, T1.9 🔴 concurrency tests, T2.4 🟢 dashboard views, plus the two
+   operability follow-ups TX.4 🟢 and TX.5 🔴.
 2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
 
-Merge-order caution for Wave 4: T2.2 (`ensure-ready`) and T1.9 (concurrency tests)
-both build on the funding application layer; land T2.2 first so T1.9 can cover it.
+Merge-order cautions for Wave 4:
+
+- T2.2 (`ensure-ready`) and T1.9 (concurrency tests) both build on the funding
+  application layer; land T2.2 first so T1.9 can cover it.
+- TX.5 changes which treasury row funding resolves to, and T2.2 fans out across many
+  wallets against one treasury. Land TX.5 before T2.2 if both are in flight, or
+  expect T2.2 to need a rebase and a re-read of its reserve assertions.
+- TX.4 is independent of everything else and safe to run at any time.
 
 Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
 T4.4, and ideally before T1.9.
+
+**Before arming funding in a hosted environment:** T3.4 runbooks ✅, then TX.4 and
+TX.5 (so rotation and revocation do not require SQL), decision D3 (real threshold
+values), and a verified hosted deployment of the alerting and funding paths — the
+last of which PRD §20 requires and nothing has done yet.

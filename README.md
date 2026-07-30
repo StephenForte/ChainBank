@@ -6,7 +6,7 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phase 1 complete; Phases 2–3 partially delivered.**
+**Current phase: Phases 1 and 3 complete; Phase 2 partially delivered.**
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -14,10 +14,12 @@ funding policies, and can fund an approved wallet to its target balance through
 `POST /v1/wallets/:id/ensure-funded`.
 
 **Funding stays off until you turn it on.** `FUNDING_ENABLED` defaults to `false`,
-and it should stay false in every deployment until the operational runbooks exist
-(task T3.4). Enabling it additionally requires a valid `TREASURY_PRIVATE_KEY` on a
-signing-capable role. Task status lives in
-[`tasks/worker-plan.md`](./tasks/worker-plan.md).
+and enabling it requires a valid `TREASURY_PRIVATE_KEY` on a signing-capable role.
+The [operator runbooks](./docs/runbooks/README.md) now exist, which was the PRD §20
+gate; before flipping the flag in a hosted environment, also settle the real
+threshold values (decision D3) and read the **Known gaps** table in the runbook
+index — notably that completing a treasury key rotation currently needs manual SQL.
+Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
 
 ## Stack
 
@@ -103,6 +105,7 @@ strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
 | `PATCH` | `/v1/projects/:id`              | operator                           | Enable / disable without deleting history              |
 | `POST`  | `/v1/projects/:id/environments` | operator                           | Create an environment                                  |
 | `GET`   | `/v1/environments/:id`          | bearer                             | Environment detail                                     |
+| `PATCH` | `/v1/environments/:id`          | operator                           | Enable / disable without deleting history              |
 | `GET`   | `/v1/wallets`                   | bearer                             | List managed wallets (filterable)                      |
 | `POST`  | `/v1/wallets`                   | operator                           | Register a managed wallet                              |
 | `PATCH` | `/v1/wallets/:id`               | operator                           | Enable / disable a wallet                              |
@@ -197,7 +200,7 @@ test (T4.4) is its first real workload and needs decision D6 resolved first.
 ## Security notes
 
 - `POST /v1/wallets/:id/ensure-funded` funds only registered managed wallets. The request body accepts an idempotency key only (`additionalProperties: false`); destination addresses are resolved exclusively from the database (AGENTS.md §7.1).
-- Keep `FUNDING_ENABLED=false` until operational runbooks are ready. Enabling requires a structurally valid `TREASURY_PRIVATE_KEY` on signing-capable roles; the dispatch engine and signer fail closed on kill switch, disabled entities, chain mismatch, and DB unavailability. The treasury-monitor cron never receives the key.
+- Keep `FUNDING_ENABLED=false` until you have deliberately decided to arm funding. Enabling requires a structurally valid `TREASURY_PRIVATE_KEY` on signing-capable roles; the dispatch engine and signer fail closed on kill switch, disabled entities, chain mismatch, signer/treasury address mismatch, and DB unavailability. The treasury-monitor cron never receives the key. The emergency stop is [`disable-all-automated-funding.md`](./docs/runbooks/disable-all-automated-funding.md) — note it takes effect only after the signing process restarts.
 - Sepolia is the only supported chain ID; mainnet is rejected at startup.
 - RPC failures become status `unknown`, never a fabricated zero balance.
 - Bearer tokens are stored as SHA-256 hashes; the raw token is shown once.
@@ -240,6 +243,6 @@ Short version:
 | 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                |
 | 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (reserve-exhaustion email and concurrency tests outstanding)                                                   |
 | 2     | Projects / environments / `ensure-ready`                                   | 🔄 projects, environments, scoped auth, and operation status done; `ensure-ready` (T2.2) and dashboard views (T2.4) remain |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | 🔄 alert lifecycle and emails done; runbooks (T3.4) remain — **required before enabling funding**                          |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ functionally complete — alert lifecycle, emails, and the PRD §19 runbooks; hosted verification outstanding              |
 | 4     | Scheduled wallet reconciliation                                            | not started                                                                                                                |
 | 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                               |
