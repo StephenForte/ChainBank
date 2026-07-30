@@ -196,6 +196,37 @@ TX.6 amendment (2026-07-30):
 - Behavior-preserving while only `treasury_balance` exists: every open row shares
   that type, so the added predicate cannot change which row current callers see.
 
+### C9 — Credential admin (owner: TX.4)
+
+```ts
+// HTTP (operator only; enforced in application services)
+// GET   /v1/admin/credentials?limit&offset
+// PATCH /v1/admin/credentials/:id  body: { action: 'disable' | 'revoke' }
+
+// Application ports (src/app/ports.ts) — ApiCredentialRepository extensions
+findById(id) /
+  list(pagination) /
+  disable(id, at) /
+  revoke(
+    id,
+    at,
+  )(
+    // Permissions (src/domain/auth/roles.ts)
+    'credential:read',
+  ); // operator only
+('credential:write'); // operator only
+```
+
+Local design choices (TX.4, 2026-07-30):
+
+- List returns `ApiCredentialSummary` (includes `tokenPrefix`; never `token_hash`).
+- **Disable** sets `enabled = false` only (reversible via SQL). **Revoke** is
+  terminal: `enabled = false` and `revoked_at = now()`. Both write audit events
+  (`credential.disabled` / `credential.revoked`).
+- Mutations refuse when `credentialId === actorCredentialId`
+  (`CREDENTIAL_SELF_MUTATION_DENIED`) to prevent operator self-lockout.
+- Revoke/disable do not delete `api_credential_scopes` rows or audit history.
+
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
@@ -485,3 +516,4 @@ stranded one.
 - 2026-07-29 — D3 thresholds moved from Render dashboard (`sync: false`) into `render.yaml` as literal values on both services, after a `.15`-for-`1.5` recovery typo that would have failed both processes at boot. Final ladder: warning 0.75 / critical 0.3 / recovery 1.5 / reserve 0.1 ETH. CI now validates the declared ladder (startup rules, reserve < critical, both services identical) via `test/unit/config/render-blueprint-thresholds.test.ts`; guards mutation-tested. Changing a threshold is now a PR — see `docs/runbooks/change-thresholds-safely.md`.
 - 2026-07-29 — D6 penciled in as Anvil (external binary, spawned only if on `PATH`, suite skips otherwise — no npm dependency, so AGENTS.md §14 is not engaged). To reconfirm when T4.4 starts. Added **TX.6**: `AlertRepository.findOpenByEntity` ignores `alert_type`, so a second alert type on the `treasury` entity would collide with T3.3's balance alerts and break P3-US2 exactly-once email semantics. Sequenced before T1.8 because only one alert type exists today, making the filter provably a no-op on current data; doing it afterward would require migrating the entity key on live alert rows instead.
 - 2026-07-30 — TX.6 closed the alert-type lookup gap: `AlertRepository.findOpenByEntity(entityType, entityId, alertType)` now filters on `alert_type` (C3a), so T1.8 reserve alerts and later types can share a treasury entity without colliding with balance alerts.
+- 2026-07-30 — TX.4 published credential admin contract C9: operator-only `GET/PATCH /v1/admin/credentials`, `credential:read`/`credential:write` permissions, disable vs revoke semantics, self-mutation guard, audited mutations (AGENTS.md §7.7 / PRD §14).

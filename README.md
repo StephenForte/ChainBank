@@ -113,6 +113,8 @@ strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
 | `POST`  | `/v1/wallets/:id/ensure-funded` | operator or scoped project-service | **Fund a wallet to target** (idempotency key required) |
 | `GET`   | `/v1/funding-operations/:id`    | bearer                             | Operation status; resumes confirmation tracking        |
 | `GET`   | `/v1/funding-transactions`      | bearer                             | Funding history with filters                           |
+| `GET`   | `/v1/admin/credentials`         | operator                           | List API credentials (paginated; no secrets)           |
+| `PATCH` | `/v1/admin/credentials/:id`     | operator                           | Disable or revoke a credential (`action` in body)      |
 | `POST`  | `/v1/admin/email/test`          | operator                           | Send test email                                        |
 
 Not yet implemented: `POST /v1/environments/:id/ensure-ready` (Phase 2, task T2.2).

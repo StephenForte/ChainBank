@@ -28,6 +28,8 @@ export const PERMISSIONS = [
   'wallet:write',
   'project:read',
   'project:write',
+  'credential:read',
+  'credential:write',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -41,6 +43,8 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
     'wallet:write',
     'project:read',
     'project:write',
+    'credential:read',
+    'credential:write',
   ],
   'read-only': ['treasury:read', 'wallet:read', 'project:read'],
   // The monitor reads the treasury and records observations. It never signs and

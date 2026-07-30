@@ -8,6 +8,10 @@ import { createFixedClock } from '../../support/clock.js';
 function repositoryStub(find: ApiCredentialRepository['findByTokenHash']): ApiCredentialRepository {
   return {
     findByTokenHash: find,
+    findById: vi.fn(() => Promise.resolve(undefined)),
+    list: vi.fn(() => Promise.resolve({ items: [], total: 0 })),
+    disable: vi.fn(),
+    revoke: vi.fn(),
     touchLastUsed: vi.fn(() => Promise.resolve(undefined)),
   };
 }

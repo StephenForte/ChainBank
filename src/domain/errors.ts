@@ -25,6 +25,8 @@ export type ErrorCode =
   | 'AUTHENTICATION_REQUIRED'
   | 'INVALID_CREDENTIAL'
   | 'CREDENTIAL_DISABLED'
+  | 'CREDENTIAL_NOT_FOUND'
+  | 'CREDENTIAL_SELF_MUTATION_DENIED'
   | 'INSUFFICIENT_ROLE'
   | 'FUNDING_DISABLED'
   | 'ENTITY_DISABLED'
@@ -69,6 +71,8 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   AUTHENTICATION_REQUIRED: 'authentication',
   INVALID_CREDENTIAL: 'authentication',
   CREDENTIAL_DISABLED: 'authentication',
+  CREDENTIAL_NOT_FOUND: 'not_found',
+  CREDENTIAL_SELF_MUTATION_DENIED: 'validation',
   INSUFFICIENT_ROLE: 'authorization',
   FUNDING_DISABLED: 'authorization',
   ENTITY_DISABLED: 'authorization',

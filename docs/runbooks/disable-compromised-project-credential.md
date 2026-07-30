@@ -11,57 +11,55 @@ is the compromised secret — use
 
 ## Preconditions
 
-- DBA / operator access to the hosted Postgres (Render External Database URL or
-  Shell + `psql`).
-- **There is no revoke API, npm script, or repository method** that sets
-  `enabled` / `revoked_at` (Known gaps in [`README.md`](./README.md)). This
-  runbook **is** the SQL workaround.
+- An **operator** bearer token for the admin credential endpoints.
 - Optional: ability to issue a replacement later via `npm run credential:issue`.
 
 ## Steps
 
-1. Identify the credential — **SELECT first**. Prefer `token_prefix` (first 11
-   characters of the `cb_…` token — non-secret) or known `name` / `id`:
+1. Identify the credential — list via the API (preferred):
 
-```sql
-SELECT id, name, role, enabled, revoked_at, token_prefix, last_used_at, created_at
-FROM api_credentials
-WHERE role = 'project-service'
-ORDER BY created_at DESC;
+```bash
+export BASE='https://chainbank-web.onrender.com'
+export TOKEN='cb_…'   # operator token (not the compromised token)
 
--- Or narrow:
-SELECT id, name, role, enabled, revoked_at, token_prefix, last_used_at
-FROM api_credentials
-WHERE token_prefix = 'cb_………'
-   OR name = '<credential-name>'
-   OR id = '<credential-uuid>';
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE/v1/admin/credentials?limit=100" | jq
 ```
 
-2. Disable it (sets both gates honored by `authenticate-credential`):
+Find the row by `tokenPrefix` (first 11 characters of the `cb_…` token — non-secret),
+`name`, or `id`. For project-service credentials, filter the JSON by
+`"role": "project-service"`.
 
-```sql
-UPDATE api_credentials
-SET enabled = false,
-    revoked_at = now(),
-    updated_at = now()
-WHERE id = '<credential-uuid>'
-  AND (enabled = true OR revoked_at IS NULL);
+2. **Revoke it immediately** (terminal — sets both gates honored by
+   `authenticate-credential`, and writes an audit event):
+
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"action":"revoke"}' \
+  "$BASE/v1/admin/credentials/<credential-uuid>" | jq
 ```
 
-3. Confirm:
+Use `"action":"disable"` only when you need a reversible stop (no `revoked_at`);
+for active compromise, always **revoke**.
 
-```sql
-SELECT id, name, role, enabled, revoked_at, token_prefix
-FROM api_credentials
-WHERE id = '<credential-uuid>';
--- Expect enabled = false AND revoked_at IS NOT NULL
+You **cannot** revoke the operator token you are currently using — use a second
+operator credential or the SQL fallback below.
+
+3. Confirm via the list endpoint:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE/v1/admin/credentials/<credential-uuid>"  # not supported — re-list and filter
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE/v1/admin/credentials?limit=100" | jq '.data[] | select(.id=="<credential-uuid>")'
+# Expect enabled = false AND revokedAt set (for revoke)
 ```
 
 4. Prove auth fails (HTTP 401). Internal code is `CREDENTIAL_DISABLED`; public
    message matches invalid credentials (`The supplied credential is not valid.`):
 
 ```bash
-export BASE='https://chainbank-web.onrender.com'
 curl -s -H "Authorization: Bearer $COMPROMISED_TOKEN" \
   "$BASE/v1/wallets" | jq
 ```
@@ -70,8 +68,6 @@ curl -s -H "Authorization: Bearer $COMPROMISED_TOKEN" \
    funding until review (these **do** have APIs):
 
 ```bash
-export TOKEN='cb_…'   # operator
-
 curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"enabled":false}' \
@@ -85,14 +81,46 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
 
 Disabled entities refuse funding with `ENTITY_DISABLED`.
 
-6. SQL disable does **not** append `audit_events`. Record who/when/why in your
-   incident log. Issue a replacement only after the leak is contained
+6. Issue a replacement only after the leak is contained
    ([`rotate-service-token.md`](./rotate-service-token.md)).
+
+## If the API is unavailable — SQL fallback
+
+Writes **no** audit event; record who/when/why in your incident log.
+
+```sql
+SELECT id, name, role, enabled, revoked_at, token_prefix, last_used_at, created_at
+FROM api_credentials
+WHERE role = 'project-service'
+ORDER BY created_at DESC;
+
+-- Or narrow:
+SELECT id, name, role, enabled, revoked_at, token_prefix, last_used_at
+FROM api_credentials
+WHERE token_prefix = 'cb_………'
+   OR name = '<credential-name>'
+   OR id = '<credential-uuid>';
+
+UPDATE api_credentials
+SET enabled = false,
+    revoked_at = now(),
+    updated_at = now()
+WHERE id = '<credential-uuid>'
+  AND (enabled = true OR revoked_at IS NULL);
+
+SELECT id, name, role, enabled, revoked_at, token_prefix
+FROM api_credentials
+WHERE id = '<credential-uuid>';
+-- Expect enabled = false AND revoked_at IS NOT NULL
+```
 
 ## Verification
 
 - Compromised token → 401 on any `/v1/*` authenticated route.
-- Row shows `enabled = false`, `revoked_at` set.
+- List or SQL confirms `enabled = false`, `revoked_at` set (for revoke).
+- API path: `audit_events` contains `credential.revoked` with the acting operator
+  credential id.
+- Scope rows on `api_credential_scopes` are **not** deleted (forensic value).
 - If you disabled the project/environment, ensure-funded for its wallets returns
   `ENTITY_DISABLED` even with a valid operator token when those flags are off.
 
