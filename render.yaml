@@ -38,6 +38,18 @@ services:
         value: info
       - key: FUNDING_ENABLED
         value: 'false'
+      # Emergency stop. Declared here so halting funding is a one-value edit
+      # rather than creating a variable mid-incident. Every signing-capable
+      # service must carry it; today that is web only. Takes effect on restart.
+      # See docs/runbooks/disable-all-automated-funding.md
+      - key: FUNDING_KILL_SWITCH
+        value: 'false'
+      # Render terminates TLS one hop in front of the service. Never raise this
+      # without a matching proxy chain: each extra trusted hop lets a client
+      # forge request.ip through X-Forwarded-For, which would defeat per-IP rate
+      # limiting and corrupt audit provenance.
+      - key: TRUSTED_PROXY_HOPS
+        value: '1'
       - key: HOST
         value: 0.0.0.0
       - key: CHAIN_ID
