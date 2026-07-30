@@ -354,7 +354,29 @@ Merge-order cautions for Wave 4:
 Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
 T4.4, and ideally before T1.9.
 
-**Before arming funding in a hosted environment:** T3.4 runbooks ✅, then TX.4 and
-TX.5 (so rotation and revocation do not require SQL), decision D3 (real threshold
-values), and a verified hosted deployment of the alerting and funding paths — the
-last of which PRD §20 requires and nothing has done yet.
+**Before arming funding in a hosted environment:**
+
+- ✅ T3.4 runbooks (PR #14).
+- ✅ D3 thresholds — warning 1 / critical 0.25 / recovery 2 / reserve 0.5 ETH, set in
+  the Render environment. See the D3 detail note in `tasks/DECISIONS.md`: the reserve
+  sits between critical and warning, so funding halts while status still reads
+  `warning` and the critical email is **not** the funding-stopped signal.
+- **T1.8** — now higher priority than its 🟢 sizing suggests. With these thresholds
+  the only notification between "warning at 1 ETH" and "requests failing with
+  `FUNDING_BLOCKED_RESERVE` at 0.5" is the reserve-exhaustion email that T1.8 builds
+  (PRD P1-US5). Without it, funding can be silently refusing requests with no new
+  operator signal.
+- **TX.4 and TX.5** — so credential revocation and treasury key rotation do not
+  require hand-written SQL mid-incident.
+- **`render.yaml` gap:** `FUNDING_KILL_SWITCH` is not declared in the Blueprint, so
+  the emergency-stop runbook currently instructs the operator to _create_ the
+  variable under pressure. Pre-declare it as `false` (and `TRUSTED_PROXY_HOPS: 1`,
+  which is security-relevant and currently relying on its default) so the emergency
+  action is flipping an existing value. Small, do it with T1.8 or TX.4.
+- **Hosted verification** — PRD §20 requires it and nothing has done it. Render is
+  the host and the Blueprint provisions web + monitor cron + Postgres, but no one has
+  smoke-tested the Phase 1–3 paths against a deployed instance: alert transitions and
+  a real email, `ensure-funded` end to end on Sepolia with a disposable wallet, the
+  kill switch taking effect after restart, and `verify-cron-execution.md`. The
+  existing `deploy-render-phase0.md` checklist only covers read-only Phase 0.
+  Consider this a task if you want it tracked rather than done by hand.

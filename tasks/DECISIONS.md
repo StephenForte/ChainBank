@@ -16,7 +16,7 @@ Status values: **PENDING** (blocks dependent work), **DECIDED** (cite date + dec
 | --- | ------------------------------------------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------- |
 | D1  | Signing key: Render secret env var for MVP, or external signer before Phase 1? | DECIDED (default) | Render secret env (`TREASURY_PRIVATE_KEY`) behind the `TreasurySigner` interface; external signer is a later swap. Only signing-capable services receive the secret group.                                                                           | 2026-07-28 | planner (override if operator disagrees) |
 | D2  | Dashboard auth: operator API tokens or identity provider?                      | DECIDED (default) | Operator bearer tokens (existing hashed-credential system). No IdP in MVP.                                                                                                                                                                           | 2026-07-28 | planner                                  |
-| D3  | Exact warning / critical / recovery / reserve balances for ForteL2             | PENDING           | Config-only values; engineering unblocked. Operator sets real numbers in Render env.                                                                                                                                                                 | —          | operator                                 |
+| D3  | Exact warning / critical / recovery / reserve balances for ForteL2             | DECIDED           | Set in the Render environment: warning 1 ETH, critical 0.25, recovery 2, minimum reserve 0.5. Passes `assertValidTreasuryThresholds` (critical ≤ warning ≤ recovery). Note the reserve sits **between** critical and warning — see below.            | 2026-07-29 | operator                                 |
 | D4  | Startup confirmation count on Sepolia                                          | DECIDED (default) | 1 confirmation, configurable via `FUNDING_CONFIRMATIONS` (default 1), timeout `FUNDING_CONFIRMATION_TIMEOUT_MS` (default 60000). Timeout ⇒ `pending`, never failure.                                                                                 | 2026-07-28 | planner                                  |
 | D5  | Local dev DB: SQLite locally or local Postgres?                                | DECIDED           | Local Postgres without Docker (Postgres.app / Homebrew) — already the Phase 0 convention. No SQLite path.                                                                                                                                            | 2026-07-28 | existing repo convention                 |
 | D6  | E2E chain: Anvil, or mocked JSON-RPC only?                                     | PENDING           | Proposal: `anvil` (foundry) as an opt-in dev dependency-free external tool (spawned if on PATH, suite skips otherwise); unit/integration suites use mocked JSON-RPC and Viem test accounts. Needs approval per AGENTS.md §14 before any new package. | —          | operator                                 |
@@ -383,6 +383,31 @@ Local design choices (T2.3, 2026-07-29):
   construction. Response includes wei as decimal strings and explorer URL for
   the transaction hash when present.
 
+### D3 detail — threshold interaction worth knowing (2026-07-29)
+
+Chosen values: warning **1**, critical **0.25**, recovery **2**, minimum reserve
+**0.5** ETH. Valid, and defensively ordered. Two consequences follow from the reserve
+sitting between critical and warning:
+
+- **Funding halts at ~0.5 ETH while treasury status still reads `warning`.** Spendable
+  is `balance − reserve − gas − in-flight`, so ordinary funding activity cannot push
+  the balance below 0.5, and therefore cannot reach the 0.25 critical threshold. The
+  critical email becomes a "something other than funding drained the treasury" signal
+  (external transfer, or gas burned by the treasury itself), not a "funding is about
+  to fail" signal.
+- **Nothing yet signals the moment funding starts being refused.** The warning email
+  fires once at 1 ETH; between there and the 0.5 floor the operator gets no new
+  notification, and requests begin failing with `FUNDING_BLOCKED_RESERVE`. Closing
+  that gap is exactly **T1.8** (PRD P1-US5: "A critical operator email is generated
+  when legitimate demand cannot be served due to reserve constraints"), which is not
+  yet built. These values raise T1.8's priority rather than lowering it.
+
+Related validation gap: `assertValidTreasuryThresholds` checks
+`critical ≤ warning ≤ recovery` but validates `minimumReserveWei` only for
+non-negativity — it is never compared against the alert thresholds. A future
+misconfiguration such as reserve above recovery would make funding permanently
+impossible with no startup complaint. Worth adding a check.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                 | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -415,3 +440,4 @@ Local design choices (T2.3, 2026-07-29):
 - 2026-07-29 — T1.6 published `POST /v1/wallets/:id/ensure-funded` (`ensureWalletFunded`), extended C6 with `fund` scope action, and hardened C7 so `dispatchFunding` accepts only `walletId` and resolves the destination via `ManagedWalletRepository.findById` (AGENTS.md §7.1). Reserve continues to use existing `TREASURY_MINIMUM_RESERVE_ETH` / `minimumReserveWei`.
 - 2026-07-29 — Security review of PR #13 confirmed the destination-allowlist requirement is met, and found three latent weaknesses that this PR turned into money-path exposures; all fixed on the branch: rate limiting keyed on the bearer-token hash (the `request.actor` key was dead code at `onRequest`), `TRUSTED_PROXY_HOPS` (default 1) replacing `trustProxy: true` so `X-Forwarded-For` cannot forge `request.ip`, `assertSignerMatchesTreasury` binding the signing key to the reserve-enforced treasury row, and idempotency keys namespaced by wallet id. Full report: `tasks/SECURITY-REVIEW-T1.6.md`.
 - 2026-07-30 — T3.4 added the ten PRD §19 operational runbooks under `docs/runbooks/` plus an index. Documented Known gaps (no credential revoke tooling, no treasury enable API, env-only kill switch, deferred `submission_unknown` resolution) rather than inventing operator commands. Threshold changes remain env+redeploy via `registerConfiguredTreasury` upsert; treasury address change creates a new `(chain_id, address)` row.
+- 2026-07-29 — D3 resolved by the operator from the Render environment: warning 1 / critical 0.25 / recovery 2 / reserve 0.5 ETH. Values pass `assertValidTreasuryThresholds`. Recorded the reserve-between-critical-and-warning consequence (funding halts while status still reads `warning`; the critical email is not the funding-stopped signal) and the un-validated `minimumReserveWei` gap. Raises T1.8's priority. Remaining PENDING decision: D6 only.
