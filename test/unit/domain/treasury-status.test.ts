@@ -12,7 +12,7 @@ const thresholds: TreasuryThresholds = {
   criticalBalanceWei: parseEtherToWei('0.25', 'critical'),
   warningBalanceWei: parseEtherToWei('1', 'warning'),
   recoveryBalanceWei: parseEtherToWei('2', 'recovery'),
-  minimumReserveWei: parseEtherToWei('0.5', 'reserve'),
+  minimumReserveWei: parseEtherToWei('0.1', 'reserve'),
 };
 
 describe('assertValidTreasuryThresholds', () => {
@@ -113,12 +113,11 @@ describe('deployed threshold ladder (D3)', () => {
     }
   });
 
-  it('still accepts a reserve at or above critical, which strands the critical alert', () => {
-    // Not a validation error, and deliberately not made one: the original
-    // deployed ladder (reserve 0.5, critical 0.25) had this shape and worked.
-    // The consequence is that funding halts before the balance can reach
-    // critical, so the critical email stops being the "funding is about to
-    // stop" signal. Documented in the D3 note in tasks/DECISIONS.md.
+  it('rejects a reserve at or above critical, which would strand the critical alert', () => {
+    // The original ladder (reserve 0.5, critical 0.25) had this shape. It is now
+    // a hard error rather than a documented quirk: funding cannot spend below
+    // the reserve, so the balance could never fall to critical through ordinary
+    // activity and the operator's most urgent signal was unreachable.
     const strandedCritical: TreasuryThresholds = {
       criticalBalanceWei: parseEtherToWei('0.25', 'critical'),
       warningBalanceWei: parseEtherToWei('1', 'warning'),
@@ -126,10 +125,21 @@ describe('deployed threshold ladder (D3)', () => {
       minimumReserveWei: parseEtherToWei('0.5', 'reserve'),
     };
 
-    expect(() => assertValidTreasuryThresholds(strandedCritical)).not.toThrow();
-    // Proof of the interaction: nothing is spendable by the time the balance
-    // has fallen to the critical threshold.
+    expect(() => assertValidTreasuryThresholds(strandedCritical)).toThrow(/minimumReserveWei/);
+    // The mechanism the rule protects against: nothing would be spendable by the
+    // time the balance had fallen to the critical threshold.
     expect(calculateSpendableWei(strandedCritical.criticalBalanceWei, strandedCritical)).toBe(0n);
+  });
+
+  it('rejects a reserve exactly equal to critical', () => {
+    // Strict inequality: at equality the critical alert fires precisely as
+    // funding stops, leaving no spendable runway for the operator to act on.
+    expect(() =>
+      assertValidTreasuryThresholds({
+        ...deployed,
+        minimumReserveWei: deployed.criticalBalanceWei,
+      }),
+    ).toThrow(/minimumReserveWei/);
   });
 });
 
@@ -145,9 +155,11 @@ describe('evaluateTreasuryStatus', () => {
 
 describe('calculateSpendableWei', () => {
   it('returns balance above reserve and floors at zero', () => {
+    // Fixture reserve is 0.1 ETH.
     expect(calculateSpendableWei(parseEtherToWei('2', 'b'), thresholds)).toBe(
-      parseEtherToWei('1.5', 'expected'),
+      parseEtherToWei('1.9', 'expected'),
     );
-    expect(calculateSpendableWei(parseEtherToWei('0.25', 'b'), thresholds)).toBe(0n);
+    expect(calculateSpendableWei(parseEtherToWei('0.1', 'b'), thresholds)).toBe(0n);
+    expect(calculateSpendableWei(parseEtherToWei('0.05', 'b'), thresholds)).toBe(0n);
   });
 });

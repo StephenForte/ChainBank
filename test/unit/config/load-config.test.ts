@@ -183,11 +183,11 @@ describe('loadConfig', () => {
       serviceRole: 'treasury-monitor',
       env: validMonitorEnv({
         TREASURY_CRITICAL_BALANCE_ETH: '.25',
-        TREASURY_MINIMUM_RESERVE_ETH: '.5',
+        TREASURY_MINIMUM_RESERVE_ETH: '.1',
       }),
     });
     expect(config.treasury.criticalBalanceWei).toBe(parseEtherToWei('0.25', 'c'));
-    expect(config.treasury.minimumReserveWei).toBe(parseEtherToWei('0.5', 'r'));
+    expect(config.treasury.minimumReserveWei).toBe(parseEtherToWei('0.1', 'r'));
   });
 
   it('requires DATABASE_SSL_CA when hosted database TLS is enabled', () => {

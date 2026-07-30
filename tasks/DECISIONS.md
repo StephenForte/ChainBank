@@ -426,12 +426,19 @@ operator email is generated when legitimate demand cannot be served due to reser
 constraints"), still unbuilt. Critical at 0.3 is now a useful early warning, but it is
 not the same signal.
 
-Remaining validation gap: `assertValidTreasuryThresholds` still checks only
-`critical ≤ warning ≤ recovery` plus non-negativity — it never compares
-`minimumReserveWei` against the alert thresholds. CI now enforces reserve < critical
-for the values declared in `render.yaml`, which covers the deployed path, but a local
-`.env` or a dashboard override could still start a service with a stranded critical
-alert. Moving the check into the runtime validator would close it everywhere.
+**Closed (2026-07-29):** `assertValidTreasuryThresholds` now enforces
+`minimumReserveWei < criticalBalanceWei` as a hard error, so every entry point is
+covered — hosted, local `.env`, and dashboard override alike — not just the
+`render.yaml` values CI reads. The inequality is strict: at equality the critical
+alert fires exactly as funding stops, leaving no runway to act on.
+
+Cost of the stricter rule, recorded deliberately: it forbids the otherwise coherent
+posture of "protect the treasury aggressively, page me only when nearly empty"
+(a high reserve with a much lower critical). That configuration is now rejected,
+on the grounds that a critical alert which cannot fire is worse than a
+conservative one that can. Every test fixture was updated to a compliant ladder,
+which also means fixtures now model a sane production shape rather than the
+stranded one.
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 

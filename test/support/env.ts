@@ -19,7 +19,7 @@ export function validWebEnv(overrides: Record<string, string | undefined> = {}):
     TREASURY_WARNING_BALANCE_ETH: '1',
     TREASURY_CRITICAL_BALANCE_ETH: '0.25',
     TREASURY_RECOVERY_BALANCE_ETH: '2',
-    TREASURY_MINIMUM_RESERVE_ETH: '0.5',
+    TREASURY_MINIMUM_RESERVE_ETH: '0.1',
     EMAIL_PROVIDER: 'log-only',
     EMAIL_FROM_ADDRESS: 'chainbank@example.com',
     EMAIL_OPERATOR_RECIPIENTS: 'operator@example.com',

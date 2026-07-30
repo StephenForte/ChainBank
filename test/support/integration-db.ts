@@ -99,7 +99,7 @@ export async function seedPhase1Fixtures(db: Database): Promise<Phase1Seed> {
       warningBalanceWei: '1000000000000000000',
       criticalBalanceWei: '250000000000000000',
       recoveryBalanceWei: '2000000000000000000',
-      minimumReserveWei: '500000000000000000',
+      minimumReserveWei: '100000000000000000',
     })
     .returning({ id: treasuries.id });
 

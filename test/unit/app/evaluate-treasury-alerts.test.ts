@@ -31,7 +31,7 @@ const treasury: Treasury = {
     criticalBalanceWei: parseEtherToWei('0.25', 'c'),
     warningBalanceWei: parseEtherToWei('1', 'w'),
     recoveryBalanceWei: parseEtherToWei('2', 'r'),
-    minimumReserveWei: parseEtherToWei('0.5', 'm'),
+    minimumReserveWei: parseEtherToWei('0.1', 'm'),
   },
   status: 'warning',
   lastObservedBalanceWei: parseEtherToWei('0.5', 'b'),

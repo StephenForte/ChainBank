@@ -15,7 +15,7 @@ const thresholds: TreasuryThresholds = {
   criticalBalanceWei: 25n,
   warningBalanceWei: 100n,
   recoveryBalanceWei: 200n,
-  minimumReserveWei: 50n,
+  minimumReserveWei: 10n,
 };
 
 const t0 = new Date('2026-07-28T12:00:00.000Z');
