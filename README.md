@@ -214,6 +214,7 @@ treasury-monitor cron, and shared Postgres. **No signing key on any service** โ€
 reconciler cron that needs one arrives with Phase 4 (T4.2).
 
 Follow the operator checklist: [`docs/runbooks/deploy-render-phase0.md`](./docs/runbooks/deploy-render-phase0.md).
+Operational incident runbooks (PRD ยง19): [`docs/runbooks/README.md`](./docs/runbooks/README.md).
 
 Short version:
 
