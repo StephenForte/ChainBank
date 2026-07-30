@@ -68,14 +68,20 @@ services:
         sync: false
       - key: TREASURY_ADDRESS
         sync: false
+      # Thresholds are version-controlled rather than dashboard-set (decision
+      # D3) so an invalid ladder is caught by CI instead of failing the service
+      # at boot. Quoted because the config schema parses decimal ETH strings.
+      # Ordering must hold: reserve < critical <= warning <= recovery.
+      # Keep both services identical. To change them, see
+      # docs/runbooks/change-thresholds-safely.md
       - key: TREASURY_WARNING_BALANCE_ETH
-        sync: false
+        value: '0.75'
       - key: TREASURY_CRITICAL_BALANCE_ETH
-        sync: false
+        value: '0.3'
       - key: TREASURY_RECOVERY_BALANCE_ETH
-        sync: false
+        value: '1.5'
       - key: TREASURY_MINIMUM_RESERVE_ETH
-        sync: false
+        value: '0.1'
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS
@@ -125,14 +131,17 @@ services:
         sync: false
       - key: TREASURY_ADDRESS
         sync: false
+      # Must stay identical to the web service — the monitor upserts the same
+      # treasury row on every run, so a mismatch would flip thresholds back and
+      # forth between the two processes.
       - key: TREASURY_WARNING_BALANCE_ETH
-        sync: false
+        value: '0.75'
       - key: TREASURY_CRITICAL_BALANCE_ETH
-        sync: false
+        value: '0.3'
       - key: TREASURY_RECOVERY_BALANCE_ETH
-        sync: false
+        value: '1.5'
       - key: TREASURY_MINIMUM_RESERVE_ETH
-        sync: false
+        value: '0.1'
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS

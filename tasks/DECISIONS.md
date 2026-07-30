@@ -12,18 +12,18 @@ Status values: **PENDING** (blocks dependent work), **DECIDED** (cite date + dec
 
 ## 1. Open product/architecture decisions
 
-| #   | Question                                                                       | Status            | Decision                                                                                                                                                                                                                                             | Date       | Decider                                  |
-| --- | ------------------------------------------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------- |
-| D1  | Signing key: Render secret env var for MVP, or external signer before Phase 1? | DECIDED (default) | Render secret env (`TREASURY_PRIVATE_KEY`) behind the `TreasurySigner` interface; external signer is a later swap. Only signing-capable services receive the secret group.                                                                           | 2026-07-28 | planner (override if operator disagrees) |
-| D2  | Dashboard auth: operator API tokens or identity provider?                      | DECIDED (default) | Operator bearer tokens (existing hashed-credential system). No IdP in MVP.                                                                                                                                                                           | 2026-07-28 | planner                                  |
-| D3  | Exact warning / critical / recovery / reserve balances for ForteL2             | DECIDED           | Set in the Render environment: warning 1 ETH, critical 0.25, recovery 2, minimum reserve 0.5. Passes `assertValidTreasuryThresholds` (critical ≤ warning ≤ recovery). Note the reserve sits **between** critical and warning — see below.            | 2026-07-29 | operator                                 |
-| D4  | Startup confirmation count on Sepolia                                          | DECIDED (default) | 1 confirmation, configurable via `FUNDING_CONFIRMATIONS` (default 1), timeout `FUNDING_CONFIRMATION_TIMEOUT_MS` (default 60000). Timeout ⇒ `pending`, never failure.                                                                                 | 2026-07-28 | planner                                  |
-| D5  | Local dev DB: SQLite locally or local Postgres?                                | DECIDED           | Local Postgres without Docker (Postgres.app / Homebrew) — already the Phase 0 convention. No SQLite path.                                                                                                                                            | 2026-07-28 | existing repo convention                 |
-| D6  | E2E chain: Anvil, or mocked JSON-RPC only?                                     | PENDING           | Proposal: `anvil` (foundry) as an opt-in dev dependency-free external tool (spawned if on PATH, suite skips otherwise); unit/integration suites use mocked JSON-RPC and Viem test accounts. Needs approval per AGENTS.md §14 before any new package. | —          | operator                                 |
-| D7  | Reconciliation lock mechanism                                                  | DECIDED (default) | Postgres advisory lock (`pg_advisory_xact_lock`) keyed by (treasury, chain) hash, plus a `funding_operations` row-level state machine for idempotency. No new dependency.                                                                            | 2026-07-28 | planner                                  |
-| D8  | Rate limiting implementation                                                   | DECIDED (moot)    | `@fastify/rate-limit` was already a dependency from the Phase 0 bootstrap and is registered in `src/api/app.ts` alongside helmet and deny-by-default CORS. Raised as needing approval in error; no new dependency was ever introduced.               | 2026-07-29 | planner (correction)                     |
-| D9  | CI secret-scan tooling                                                         | DECIDED (default) | `gitleaks` official GitHub Action, pinned by commit SHA. A CI action, not an npm dependency; override if operator prefers another scanner.                                                                                                           | 2026-07-28 | planner                                  |
-| D10 | Credential project/environment scoping storage                                 | DECIDED (default) | New `api_credential_scopes` table (credential FK + project FK + nullable environment FK), migration `0002`, owned by T2.1. Null environment = all environments in that project. Non-scoped roles (operator, read-only, crons) ignore the table.      | 2026-07-28 | planner                                  |
+| #   | Question                                                                       | Status            | Decision                                                                                                                                                                                                                                                           | Date       | Decider                                  |
+| --- | ------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
+| D1  | Signing key: Render secret env var for MVP, or external signer before Phase 1? | DECIDED (default) | Render secret env (`TREASURY_PRIVATE_KEY`) behind the `TreasurySigner` interface; external signer is a later swap. Only signing-capable services receive the secret group.                                                                                         | 2026-07-28 | planner (override if operator disagrees) |
+| D2  | Dashboard auth: operator API tokens or identity provider?                      | DECIDED (default) | Operator bearer tokens (existing hashed-credential system). No IdP in MVP.                                                                                                                                                                                         | 2026-07-28 | planner                                  |
+| D3  | Exact warning / critical / recovery / reserve balances for ForteL2             | DECIDED           | Warning 0.75 ETH, critical 0.3, recovery 1.5, reserve 0.1 — declared as literal `value:` entries in `render.yaml` (both services), not dashboard-set, so CI validates the ladder before it can reach a service. Ordering: reserve < critical ≤ warning ≤ recovery. | 2026-07-29 | operator                                 |
+| D4  | Startup confirmation count on Sepolia                                          | DECIDED (default) | 1 confirmation, configurable via `FUNDING_CONFIRMATIONS` (default 1), timeout `FUNDING_CONFIRMATION_TIMEOUT_MS` (default 60000). Timeout ⇒ `pending`, never failure.                                                                                               | 2026-07-28 | planner                                  |
+| D5  | Local dev DB: SQLite locally or local Postgres?                                | DECIDED           | Local Postgres without Docker (Postgres.app / Homebrew) — already the Phase 0 convention. No SQLite path.                                                                                                                                                          | 2026-07-28 | existing repo convention                 |
+| D6  | E2E chain: Anvil, or mocked JSON-RPC only?                                     | PENDING           | Proposal: `anvil` (foundry) as an opt-in dev dependency-free external tool (spawned if on PATH, suite skips otherwise); unit/integration suites use mocked JSON-RPC and Viem test accounts. Needs approval per AGENTS.md §14 before any new package.               | —          | operator                                 |
+| D7  | Reconciliation lock mechanism                                                  | DECIDED (default) | Postgres advisory lock (`pg_advisory_xact_lock`) keyed by (treasury, chain) hash, plus a `funding_operations` row-level state machine for idempotency. No new dependency.                                                                                          | 2026-07-28 | planner                                  |
+| D8  | Rate limiting implementation                                                   | DECIDED (moot)    | `@fastify/rate-limit` was already a dependency from the Phase 0 bootstrap and is registered in `src/api/app.ts` alongside helmet and deny-by-default CORS. Raised as needing approval in error; no new dependency was ever introduced.                             | 2026-07-29 | planner (correction)                     |
+| D9  | CI secret-scan tooling                                                         | DECIDED (default) | `gitleaks` official GitHub Action, pinned by commit SHA. A CI action, not an npm dependency; override if operator prefers another scanner.                                                                                                                         | 2026-07-28 | planner                                  |
+| D10 | Credential project/environment scoping storage                                 | DECIDED (default) | New `api_credential_scopes` table (credential FK + project FK + nullable environment FK), migration `0002`, owned by T2.1. Null environment = all environments in that project. Non-scoped roles (operator, read-only, crons) ignore the table.                    | 2026-07-28 | planner                                  |
 
 ## 2. Interface contracts (append-only; workers add entries)
 
@@ -383,30 +383,55 @@ Local design choices (T2.3, 2026-07-29):
   construction. Response includes wei as decimal strings and explorer URL for
   the transaction hash when present.
 
-### D3 detail — threshold interaction worth knowing (2026-07-29)
+### D3 detail — final values, and why they are in version control (2026-07-29)
 
-Chosen values: warning **1**, critical **0.25**, recovery **2**, minimum reserve
-**0.5** ETH. Valid, and defensively ordered. Two consequences follow from the reserve
-sitting between critical and warning:
+**Final ladder:** warning **0.75**, critical **0.3**, recovery **1.5**, reserve
+**0.1** ETH, declared in `render.yaml` on both services.
 
-- **Funding halts at ~0.5 ETH while treasury status still reads `warning`.** Spendable
-  is `balance − reserve − gas − in-flight`, so ordinary funding activity cannot push
-  the balance below 0.5, and therefore cannot reach the 0.25 critical threshold. The
-  critical email becomes a "something other than funding drained the treasury" signal
-  (external transfer, or gas burned by the treasury itself), not a "funding is about
-  to fail" signal.
-- **Nothing yet signals the moment funding starts being refused.** The warning email
-  fires once at 1 ETH; between there and the 0.5 floor the operator gets no new
-  notification, and requests begin failing with `FUNDING_BLOCKED_RESERVE`. Closing
-  that gap is exactly **T1.8** (PRD P1-US5: "A critical operator email is generated
-  when legitimate demand cannot be served due to reserve constraints"), which is not
-  yet built. These values raise T1.8's priority rather than lowering it.
+Two revisions got here. The first set (warning 1, critical 0.25, recovery 2, reserve
+0.5) was valid but put the reserve _above_ critical, which strands the critical
+alert — see the note below, which still applies to any ladder shaped that way. The
+second attempt set recovery to `.15` where `1.5` was intended; since
+`buildTreasuryConfig` runs unconditionally in `loadConfig`, that would have failed
+the web service **and** the monitor cron at boot, not just funding.
 
-Related validation gap: `assertValidTreasuryThresholds` checks
-`critical ≤ warning ≤ recovery` but validates `minimumReserveWei` only for
-non-negativity — it is never compared against the alert thresholds. A future
-misconfiguration such as reserve above recovery would make funding permanently
-impossible with no startup complaint. Worth adding a check.
+That second near-miss is why the values are now version-controlled rather than
+dashboard-set: CI validates the declared ladder
+(`test/unit/config/render-blueprint-thresholds.test.ts`) before it can reach a
+service, checking the startup rules, that reserve stays below critical, and that
+both services declare identical values. The trade is that changing a threshold is
+now a pull request — see `docs/runbooks/change-thresholds-safely.md`.
+
+#### Why reserve must stay below critical
+
+The consequences below are what the CI check exists to prevent. They apply whenever
+the reserve sits at or above the critical threshold:
+
+- **The critical alert becomes unreachable through funding.** Spendable is
+  `balance − reserve − gas − in-flight`, so funding cannot push the balance below the
+  reserve. If the reserve is at or above critical, the balance never falls far enough
+  to trigger the critical email through ordinary activity, and that email degrades
+  into a "something other than funding drained the treasury" signal (an external
+  transfer, or gas burned by the treasury itself).
+- **Funding stops with no escalation.** Requests begin failing with
+  `FUNDING_BLOCKED_RESERVE` while the treasury still reads `warning`, so the last
+  notification the operator received was the warning email fired much earlier.
+
+With the final ladder the first problem is gone: critical (0.3) fires above the
+reserve (0.1), giving roughly 0.2 ETH of spendable runway as advance notice.
+
+**The second problem is not fixed by threshold choice.** Nothing yet fires at the
+moment funding is actually refused — that is **T1.8** (PRD P1-US5: "A critical
+operator email is generated when legitimate demand cannot be served due to reserve
+constraints"), still unbuilt. Critical at 0.3 is now a useful early warning, but it is
+not the same signal.
+
+Remaining validation gap: `assertValidTreasuryThresholds` still checks only
+`critical ≤ warning ≤ recovery` plus non-negativity — it never compares
+`minimumReserveWei` against the alert thresholds. CI now enforces reserve < critical
+for the values declared in `render.yaml`, which covers the deployed path, but a local
+`.env` or a dashboard override could still start a service with a stranded critical
+alert. Moving the check into the runtime validator would close it everywhere.
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
@@ -441,3 +466,4 @@ impossible with no startup complaint. Worth adding a check.
 - 2026-07-29 — Security review of PR #13 confirmed the destination-allowlist requirement is met, and found three latent weaknesses that this PR turned into money-path exposures; all fixed on the branch: rate limiting keyed on the bearer-token hash (the `request.actor` key was dead code at `onRequest`), `TRUSTED_PROXY_HOPS` (default 1) replacing `trustProxy: true` so `X-Forwarded-For` cannot forge `request.ip`, `assertSignerMatchesTreasury` binding the signing key to the reserve-enforced treasury row, and idempotency keys namespaced by wallet id. Full report: `tasks/SECURITY-REVIEW-T1.6.md`.
 - 2026-07-30 — T3.4 added the ten PRD §19 operational runbooks under `docs/runbooks/` plus an index. Documented Known gaps (no credential revoke tooling, no treasury enable API, env-only kill switch, deferred `submission_unknown` resolution) rather than inventing operator commands. Threshold changes remain env+redeploy via `registerConfiguredTreasury` upsert; treasury address change creates a new `(chain_id, address)` row.
 - 2026-07-29 — D3 resolved by the operator from the Render environment: warning 1 / critical 0.25 / recovery 2 / reserve 0.5 ETH. Values pass `assertValidTreasuryThresholds`. Recorded the reserve-between-critical-and-warning consequence (funding halts while status still reads `warning`; the critical email is not the funding-stopped signal) and the un-validated `minimumReserveWei` gap. Raises T1.8's priority. Remaining PENDING decision: D6 only.
+- 2026-07-29 — D3 thresholds moved from Render dashboard (`sync: false`) into `render.yaml` as literal values on both services, after a `.15`-for-`1.5` recovery typo that would have failed both processes at boot. Final ladder: warning 0.75 / critical 0.3 / recovery 1.5 / reserve 0.1 ETH. CI now validates the declared ladder (startup rules, reserve < critical, both services identical) via `test/unit/config/render-blueprint-thresholds.test.ts`; guards mutation-tested. Changing a threshold is now a PR — see `docs/runbooks/change-thresholds-safely.md`.

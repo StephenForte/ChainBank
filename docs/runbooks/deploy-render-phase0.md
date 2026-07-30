@@ -9,7 +9,7 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 - Values ready:
   - Sepolia RPC URL (`CHAIN_RPC_URL`)
   - Hot-wallet treasury address (`TREASURY_ADDRESS`)
-  - Threshold ETH strings (warning / critical / recovery / reserve)
+  - (Thresholds are **not** prompted for — they are version-controlled in `render.yaml`; see `change-thresholds-safely.md`)
   - Resend API key + from address + operator recipient list
   - Postgres leaf certificate PEM (`DATABASE_SSL_CA`) — required for hosted TLS leaf pinning
 - Confirm you will **not** set `TREASURY_PRIVATE_KEY` anywhere
@@ -39,10 +39,6 @@ Before treating a deploy as healthy:
 | `DATABASE_SSL_CA`               | web + cron             | Leaf certificate PEM for fingerprint pinning (see below)                                                             |
 | `CHAIN_RPC_URL`                 | web + cron             | Real JSON-RPC URL, not etherscan.io                                                                                  |
 | `TREASURY_ADDRESS`              | web + cron             | Hot wallet only                                                                                                      |
-| `TREASURY_WARNING_BALANCE_ETH`  | web + cron             | e.g. `1`                                                                                                             |
-| `TREASURY_CRITICAL_BALANCE_ETH` | web + cron             | e.g. `0.25`                                                                                                          |
-| `TREASURY_RECOVERY_BALANCE_ETH` | web + cron             | e.g. `2`                                                                                                             |
-| `TREASURY_MINIMUM_RESERVE_ETH`  | web + cron             | e.g. `0.5`                                                                                                           |
 | `RESEND_API_KEY`                | web + treasury-monitor | Required when `EMAIL_PROVIDER=resend`                                                                                |
 | `EMAIL_FROM_ADDRESS`            | web + treasury-monitor | Verified sender in Resend                                                                                            |
 | `EMAIL_OPERATOR_RECIPIENTS`     | web + treasury-monitor | Comma-separated                                                                                                      |
@@ -116,10 +112,11 @@ export DATABASE_URL='postgres://…external-render-url…'
 export CHAIN_ID=11155111
 export CHAIN_RPC_URL='https://ethereum-sepolia-rpc.publicnode.com'
 export TREASURY_ADDRESS='0xYourHotWallet'
-export TREASURY_WARNING_BALANCE_ETH=1
-export TREASURY_CRITICAL_BALANCE_ETH=0.25
-export TREASURY_RECOVERY_BALANCE_ETH=2
-export TREASURY_MINIMUM_RESERVE_ETH=0.5
+# Match render.yaml so a local run behaves like the deployed services.
+export TREASURY_WARNING_BALANCE_ETH=0.75
+export TREASURY_CRITICAL_BALANCE_ETH=0.3
+export TREASURY_RECOVERY_BALANCE_ETH=1.5
+export TREASURY_MINIMUM_RESERVE_ETH=0.1
 export CHAINBANK_ENVIRONMENT=local
 
 npm run credential:issue -- --name "operator-render" --role operator
@@ -172,15 +169,15 @@ Cron:
 
 ## Common failures
 
-| Symptom                                                  | Likely cause                                                                                                                                                      |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vite: not found` / `tsc: not found`                     | Build omitted devDependencies; Blueprint must use `npm ci --include=dev`                                                                                          |
-| Migrate / boot fails requiring `DATABASE_SSL_CA`         | Hosted TLS leaf pinning is mandatory. Set the leaf PEM on web and cron.                                                                                           |
-| Peer fingerprint does not match leaf pin                 | `DATABASE_SSL_CA` is stale or from the wrong host. Re-run `print-database-ca.mjs` in Render web Shell and redeploy web + cron.                                    |
-| `ERR_TLS_CERT_ALTNAME_INVALID` (host `dpg-…` vs UUID CN) | App uses leaf-pin `checkServerIdentity` (pg overwrites `servername`). Redeploy current `main`; do not disable TLS verification.                                   |
-| TLS handshake / certificate verify failed                | Wrong or incomplete leaf PEM; re-export with `node scripts/print-database-ca.mjs` in Render web Shell.                                                            |
-| `TREASURY_*` rejected for `.25` / `.5`                   | Leading-dot fractions are now accepted; `0.25` also fine.                                                                                                         |
-| Migrate fails on treasury threshold validation           | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup, fix `TREASURY_*_ETH` to plain decimals like `0.25` (no `ETH`, no commas, no blanks) |
-| RPC failed / degraded                                    | `CHAIN_RPC_URL` is an explorer URL or blocked                                                                                                                     |
-| `INVALID_CREDENTIAL`                                     | Token not issued against this database                                                                                                                            |
-| Cron missing email vars                                  | Expected — monitor role does not load email config                                                                                                                |
+| Symptom                                                  | Likely cause                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vite: not found` / `tsc: not found`                     | Build omitted devDependencies; Blueprint must use `npm ci --include=dev`                                                                                                                                                                                                                                         |
+| Migrate / boot fails requiring `DATABASE_SSL_CA`         | Hosted TLS leaf pinning is mandatory. Set the leaf PEM on web and cron.                                                                                                                                                                                                                                          |
+| Peer fingerprint does not match leaf pin                 | `DATABASE_SSL_CA` is stale or from the wrong host. Re-run `print-database-ca.mjs` in Render web Shell and redeploy web + cron.                                                                                                                                                                                   |
+| `ERR_TLS_CERT_ALTNAME_INVALID` (host `dpg-…` vs UUID CN) | App uses leaf-pin `checkServerIdentity` (pg overwrites `servername`). Redeploy current `main`; do not disable TLS verification.                                                                                                                                                                                  |
+| TLS handshake / certificate verify failed                | Wrong or incomplete leaf PEM; re-export with `node scripts/print-database-ca.mjs` in Render web Shell.                                                                                                                                                                                                           |
+| `TREASURY_*` rejected for `.25` / `.5`                   | Leading-dot fractions are now accepted; `0.25` also fine.                                                                                                                                                                                                                                                        |
+| Migrate fails on treasury threshold validation           | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup with `INVALID_CONFIGURATION`, the threshold ladder in `render.yaml` is wrong — it must satisfy reserve < critical ≤ warning ≤ recovery. Fix it there (CI checks it) rather than in the dashboard; see `change-thresholds-safely.md` |
+| RPC failed / degraded                                    | `CHAIN_RPC_URL` is an explorer URL or blocked                                                                                                                                                                                                                                                                    |
+| `INVALID_CREDENTIAL`                                     | Token not issued against this database                                                                                                                                                                                                                                                                           |
+| Cron missing email vars                                  | Expected — monitor role does not load email config                                                                                                                                                                                                                                                               |
