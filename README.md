@@ -139,22 +139,39 @@ The cron process loads the `treasury-monitor` config role: email settings for al
 
 ## Scripts
 
-| Script                     | Purpose                                      |
-| -------------------------- | -------------------------------------------- |
-| `npm run dev`              | API with reload                              |
-| `npm run dev:dashboard`    | Vite dashboard (proxies `/v1` and `/health`) |
-| `npm run build`            | Compile server + dashboard                   |
-| `npm start`                | Run compiled web service                     |
-| `npm run db:migrate`       | Apply Drizzle migrations                     |
-| `npm run db:generate`      | Generate a migration from schema changes     |
-| `npm run credential:issue` | Create a hashed API credential               |
-| `npm test`                 | Unit tests (default)                         |
-| `npm run test:coverage`    | Unit tests with coverage report              |
-| `npm run test:integration` | Opt-in Postgres tests                        |
-| `npm run test:e2e`         | Opt-in e2e tests                             |
-| `npm run typecheck`        | `tsc --noEmit`                               |
-| `npm run lint`             | ESLint                                       |
-| `npm run format:check`     | Prettier check                               |
+| Script                  | Purpose                                      |
+| ----------------------- | -------------------------------------------- |
+| `npm run dev`           | API with reload                              |
+| `npm run dev:dashboard` | Vite dashboard (proxies `/v1` and `/health`) |
+| `npm run build`         | Compile server + dashboard                   |
+| `npm start`             | Run compiled web service                     |
+
+### Operator dashboard
+
+The React console under `dashboard/` is built into `dist/dashboard` and served by
+the Fastify web process. Locally, run `npm run dev` plus `npm run dev:dashboard`
+(Vite proxies `/v1` and `/health` same-origin).
+
+MVP views (PRD §12.2 / P2-US1):
+
+- Session (operator bearer token in `sessionStorage` only), service readiness, treasuries, funding history
+- Projects (list + enable/disable)
+- Environments (detail by id + enable/disable; discovery for a selected project via wallet membership — there is no list-by-project environments route)
+- Managed wallets (filters, explorer links, enable/disable)
+- Funding policy (ETH input converted once to decimal wei strings; confirm shows the exact wei body)
+
+Panels load and fail independently. Mutations confirm before firing. The dashboard
+never renders private keys, seed phrases, or raw credential material.
+| `npm run db:migrate` | Apply Drizzle migrations |
+| `npm run db:generate` | Generate a migration from schema changes |
+| `npm run credential:issue` | Create a hashed API credential |
+| `npm test` | Unit tests (default) |
+| `npm run test:coverage` | Unit tests with coverage report |
+| `npm run test:integration` | Opt-in Postgres tests |
+| `npm run test:e2e` | Opt-in e2e tests |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | ESLint |
+| `npm run format:check` | Prettier check |
 
 ## Testing
 
@@ -240,11 +257,11 @@ Short version:
 
 ## Phase roadmap (short)
 
-| Phase | Focus                                                                      | Status                                                                                                                     |
-| ----- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                |
-| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (reserve-exhaustion email and concurrency tests outstanding)                                                   |
-| 2     | Projects / environments / `ensure-ready`                                   | 🔄 projects, environments, scoped auth, and operation status done; `ensure-ready` (T2.2) and dashboard views (T2.4) remain |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ functionally complete — alert lifecycle, emails, and the PRD §19 runbooks; hosted verification outstanding              |
-| 4     | Scheduled wallet reconciliation                                            | not started                                                                                                                |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                               |
+| Phase | Focus                                                                      | Status                                                                                                            |
+| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                       |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (reserve-exhaustion email and concurrency tests outstanding)                                          |
+| 2     | Projects / environments / `ensure-ready`                                   | 🔄 projects, environments, scoped auth, operation status, and dashboard views done; `ensure-ready` (T2.2) remains |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ functionally complete — alert lifecycle, emails, and the PRD §19 runbooks; hosted verification outstanding     |
+| 4     | Scheduled wallet reconciliation                                            | not started                                                                                                       |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                      |

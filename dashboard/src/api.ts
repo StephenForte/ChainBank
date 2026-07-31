@@ -242,3 +242,197 @@ export async function listFundingTransactions(
   }
   return body as FundingTransactionListResponse;
 }
+
+export interface ProjectResource {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface EnvironmentResource {
+  readonly id: string;
+  readonly projectId: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface FundingPolicyResource {
+  readonly minimumBalanceWei: string;
+  readonly targetBalanceWei: string;
+  readonly maximumTopUpWei: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
+export interface ManagedWalletResource {
+  readonly id: string;
+  readonly project: {
+    readonly id: string;
+    readonly slug: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  };
+  readonly environment: {
+    readonly id: string;
+    readonly slug: string;
+    readonly name: string;
+    readonly enabled: boolean;
+  };
+  readonly chain: {
+    readonly slug: string;
+    readonly chainId: number;
+    readonly displayName: string;
+    readonly nativeSymbol: string;
+  };
+  readonly role: string;
+  readonly address: string;
+  readonly explorerUrl: string;
+  readonly enabled: boolean;
+  readonly criticalAtStartup: boolean;
+  readonly reconciliationEnabled: boolean;
+  readonly policy: FundingPolicyResource | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface PaginatedListResponse<T> {
+  readonly data: readonly T[];
+  readonly pagination: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly total: number;
+  };
+}
+
+async function authorizedJson(token: string, path: string, init: RequestInit = {}): Promise<unknown> {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  if (init.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const response = await fetch(path, { ...init, headers });
+  const body: unknown = await parseJson(response);
+  if (!response.ok) {
+    if (isApiErrorBody(body)) {
+      throw new ApiClientError(response.status, body);
+    }
+    throw new Error(`Request failed (${String(response.status)})`);
+  }
+  return body;
+}
+
+export async function listProjects(
+  token: string,
+  query: {
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<PaginatedListResponse<ProjectResource>> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(token, `/v1/projects${suffix}`);
+  return body as PaginatedListResponse<ProjectResource>;
+}
+
+export async function setProjectEnabled(
+  token: string,
+  projectId: string,
+  enabled: boolean,
+): Promise<ProjectResource> {
+  const body = await authorizedJson(token, `/v1/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  return (body as { data: ProjectResource }).data;
+}
+
+export async function getEnvironment(token: string, environmentId: string): Promise<EnvironmentResource> {
+  const body = await authorizedJson(token, `/v1/environments/${environmentId}`);
+  return (body as { data: EnvironmentResource }).data;
+}
+
+export async function setEnvironmentEnabled(
+  token: string,
+  environmentId: string,
+  enabled: boolean,
+): Promise<EnvironmentResource> {
+  const body = await authorizedJson(token, `/v1/environments/${environmentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  return (body as { data: EnvironmentResource }).data;
+}
+
+export async function listWallets(
+  token: string,
+  query: {
+    readonly projectId?: string;
+    readonly environmentId?: string;
+    readonly enabled?: boolean;
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<PaginatedListResponse<ManagedWalletResource>> {
+  const params = new URLSearchParams();
+  if (query.projectId !== undefined) {
+    params.set('projectId', query.projectId);
+  }
+  if (query.environmentId !== undefined) {
+    params.set('environmentId', query.environmentId);
+  }
+  // Query schema expects the strings "true" / "false" (coerceTypes is false).
+  if (query.enabled !== undefined) {
+    params.set('enabled', String(query.enabled));
+  }
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(token, `/v1/wallets${suffix}`);
+  return body as PaginatedListResponse<ManagedWalletResource>;
+}
+
+export async function setWalletEnabled(
+  token: string,
+  walletId: string,
+  enabled: boolean,
+): Promise<ManagedWalletResource> {
+  const body = await authorizedJson(token, `/v1/wallets/${walletId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ enabled }),
+  });
+  return (body as { data: ManagedWalletResource }).data;
+}
+
+export async function setWalletPolicy(
+  token: string,
+  walletId: string,
+  policy: {
+    readonly minimumBalanceWei: string;
+    readonly targetBalanceWei: string;
+    readonly maximumTopUpWei: string;
+  },
+): Promise<ManagedWalletResource> {
+  const body = await authorizedJson(token, `/v1/wallets/${walletId}/policy`, {
+    method: 'PUT',
+    body: JSON.stringify(policy),
+  });
+  return (body as { data: ManagedWalletResource }).data;
+}
