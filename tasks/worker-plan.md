@@ -246,9 +246,11 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 - **T1.7** ✅ 🟢 Funding history API + dashboard `[T1.5]` — DONE (PR #11)
   `GET /v1/funding-transactions` with filters + pagination, explorer links,
   dashboard table including failed/abandoned and `submission_unknown` rows.
-- **T1.8** 🟢 Reserve-exhaustion alert email `[T1.5, T3.1, T3.2]`
-  Critical email when legitimate demand is rejected for reserve; alert row dedupe.
-  Template already exists (`funding-unavailable-reserve-template.ts`); this is wiring.
+- **T1.8** ✅ 🟢 Reserve-exhaustion alert email `[T1.5, T3.1, T3.2]` — DONE (PR #21)
+  Treasury-scoped `treasury_reserve` critical alert on `FUNDING_BLOCKED_RESERVE`,
+  persist-then-send dedupe, resolves on the next successful transfer for that
+  treasury (contract C10). Hosted Phase 2 confirmed the alert lifecycle against
+  real traffic — see `docs/runbooks/verify-hosted-deployment.md`.
 - **T1.9** 🔴 Concurrency integration tests `[T1.5, T1.6]`
   Parallel ensure-funded, lock expiry/crash recovery, idempotency replay,
   pending-tx dedupe. Extends the 31 integration tests already on `main`.
@@ -356,29 +358,21 @@ response or a routine rotation dependent on hand-written SQL.
   Reserve accounting, nonce probing, and alert entity ids all key off the resolved
   row, so verify each still describes the intended treasury afterward.
 
-### Prerequisite refactor for multi-type alerting
+### Prerequisite refactor for multi-type alerting (complete)
 
-- **TX.6** 🟢 Filter alert lookups by alert type `[none]` — **do before T1.8**
-  `AlertRepository.findOpenByEntity(entityType, entityId)` matches on entity and
+- **TX.6** ✅ 🟢 Filter alert lookups by alert type `[none]` — DONE (PR #15)
+  `AlertRepository.findOpenByEntity` previously matched on entity and
   `state='open'` only, ignoring `alert_type`. T3.3's balance alerts occupy
-  entityType `'treasury'` with the treasury id, so the moment a second alert type
-  lands on that entity the lookup returns whichever open row triggered most
-  recently — and the treasury monitor could escalate or resolve a reserve alert
-  believing it holds the balance alert. That silently breaks the exactly-once
-  email semantics guaranteed by P3-US2 and a Phase 3 exit criterion.
-  `alert_type` is already a first-class column and PRD §7.9 anticipates several
-  alert types per entity, so this is a latent defect rather than a design change.
-  Deliver: add an explicit alert type to the lookup, update the single `src/`
-  call site, keep T3.3's alert tests passing **unchanged** as the evidence that
-  balance-alert behavior did not move.
-  **Sequencing matters.** Only one alert type exists today
-  (`treasury_balance`), so every stored row shares it and adding the filter is
-  provably a no-op on current data. Once T1.8 introduces a second type the filter
-  becomes load-bearing and that proof is no longer available. Doing this after
-  T1.8 would instead mean migrating the entity key on live alert rows — a data
-  migration in place of a code change. T4.3 (reconciliation-failure alerts) hits
-  the identical wall and inherits the fix for free.
-  No migration required: `alerts.alert_type` is `text`, not a Postgres enum.
+  entityType `'treasury'` with the treasury id, so a second alert type on that
+  entity would have collided with them — the treasury monitor could have
+  escalated or resolved a reserve alert believing it held the balance alert,
+  silently breaking the exactly-once email semantics P3-US2 requires.
+  `findOpenByEntity` now takes an explicit `alertType` (contract C3a); T3.3's
+  alert tests were kept passing unchanged as evidence balance-alert behavior did
+  not move. This was landed deliberately **before** T1.8, since T1.8 is exactly
+  the second alert type the fix anticipated — see T1.8's entry above and
+  `tasks/DECISIONS.md` contract C10. T4.3 (reconciliation-failure alerts)
+  inherits the fix for free when it lands.
 
 ### API gap surfaced by the dashboard
 
@@ -404,9 +398,10 @@ response or a routine rotation dependent on hand-written SQL.
 
 ## Remaining wave order
 
-1. **Wave 4 (now):** T1.8 🟢 is in review — merge after hosted Phase 2. In parallel:
-   T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, TX.5 🔴 treasury row lifecycle,
-   TX.7 🟢 list-environments route.
+1. **Wave 4 (now):** T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, TX.5 🔴
+   treasury row lifecycle, TX.7 🟢 list-environments route — all unblocked and
+   runnable in parallel. T1.8 is already merged, so T2.2 inherits reserve alerting
+   rather than needing it retrofitted.
 2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
 
 Merge-order cautions for Wave 4:
@@ -417,8 +412,6 @@ Merge-order cautions for Wave 4:
   wallets against one treasury. Land TX.5 before T2.2 if both are in flight, or
   expect T2.2 to need a rebase and a re-read of its reserve assertions.
 - TX.7 is independent of everything else and safe to run at any time.
-- T1.8 and T2.2 both add callers that can hit a reserve refusal. Land T1.8 first so
-  T2.2 inherits the alerting rather than needing it retrofitted.
 
 Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
 T4.4, and ideally before T1.9.
