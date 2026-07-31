@@ -369,6 +369,16 @@ previously documented.
 **Resting state:** `FUNDING_ENABLED=true` with `FUNDING_KILL_SWITCH=true` — funding
 armed but stopped, pending TX.5 closing the treasury-rotation gap.
 
+**Independent on-chain verification (2026-08-01):** the transfer was re-verified via
+public Sepolia RPC, independently of the ChainBank API — receipt status `0x1`
+(success), value exactly `0xb1a2bc2ec50000` wei (0.05 ETH), from the treasury
+`0x16cae6aeed87e00bcbcd60062286ab604cfe8b2b` to the disposable wallet
+`0xffa06ef7c43a66bc1203c5f154371ac21b8f969f`, chain id 11155111, gas used 21000
+(plain transfer), block 11391058, mined 2026-07-31T18:09:36Z. The transaction's
+nonce is **0** — the treasury's first outgoing transaction ever — which
+independently corroborates the funding-history claim above: exactly one transfer
+has ever left the treasury, on the chain itself, not just in ChainBank's rows.
+
 Notes for the next run:
 
 - Several steps failed on empty or placeholder shell variables rather than service
@@ -377,3 +387,11 @@ Notes for the next run:
   all four phases traced to this, never to the server.
 - `ensure-funded` wraps its payload in `data`, so extraction needs
   `jq -r '.data.operationId'`, not `.operationId`.
+- **Open cleanup item:** the wrong-key experiment's side effect is still live — the
+  temporary `TREASURY_ADDRESS` inserted a second enabled `treasuries` row that
+  nothing can currently disable. It is inert for funding today (resolution still
+  binds the older row), but it is exactly the ambiguous state TX.5's guard will
+  refuse on, so funding would stay refused after TX.5 deploys until the stray row
+  is disabled. Confirm with `GET /v1/treasuries` (expect two rows), then disable
+  the stray row via TX.5's endpoint as part of its rollout — see the deployment
+  note on the TX.5 entry in `tasks/worker-plan.md`.

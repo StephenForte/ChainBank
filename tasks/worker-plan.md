@@ -80,8 +80,8 @@ treasury-rotation gap.
 T1.8 is merged and hosted Phase 2 confirmed it against real alert traffic. In
 parallel now: **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴 concurrency tests, **TX.5** 🔴
 treasury row lifecycle, **TX.7** 🟢 list-environments route (not yet started —
-see the correction above). Hosted Phase 4 can run independently of this wave
-whenever convenient.
+see the correction above). Hosted verification is complete; TX.5 is the only item
+between this wave and releasing the kill switch.
 
 ## Commit and merge contract
 
@@ -365,14 +365,31 @@ response or a routine rotation dependent on hand-written SQL.
     `INVALID_CONFIGURATION`, because the new key then mismatches the still-resolved
     old row.
     The silent case is the more dangerous of the two and should drive the design.
-    Decide and implement one of: (a) an operator-only way to disable a treasury row,
-    or (b) make resolution prefer the row whose address matches the signer, or (c)
-    make the rotation path explicit so an address change retires the previous row.
-    Option (b) is the smallest change but silently reinterprets which treasury is
-    authoritative — treat that as a money-path decision, publish it in
-    `tasks/DECISIONS.md`, and cover it with tests for the two-enabled-rows case.
-    Reserve accounting, nonce probing, and alert entity ids all key off the resolved
-    row, so verify each still describes the intended treasury afterward.
+  **Direction decided (2026-08-01, planner):** option (a) — an operator-only
+  `PATCH /v1/treasuries/:id { enabled }` — **plus a fail-closed ambiguity guard**
+  in `resolveTreasuryForWallet`: more than one enabled treasury row for the
+  wallet's chain refuses with `INVALID_CONFIGURATION` before any signer call.
+  Option (b) (prefer the signer-matching row) is rejected: it silently
+  reinterprets which treasury is authoritative. The guard turns the silent no-op
+  into a loud refusal, and rotation becomes: change config → funding refuses →
+  disable the retired row via the endpoint → funding resumes on the new row.
+  Reserve accounting, nonce probing, and alert entity ids all key off the resolved
+  row, so verify each still describes the intended treasury afterward.
+  **Acceptance criteria (added 2026-08-01 after the live run):**
+  - The hosted Phase 4 wrong-key scenario must become fail-closed in its
+    address-only form: with two enabled rows for one chain — the state the live
+    run actually created — `ensure-funded` refuses with `INVALID_CONFIGURATION`
+    and no signer call is made, regardless of which row the signer matches.
+  - An integration test walks the real rotation path end to end: bootstrap upsert
+    of a second row → refusal → disable the retired row via the new endpoint →
+    funding resolves the remaining row.
+  - `docs/runbooks/verify-hosted-deployment.md` (wrong-key step) and
+    `rotate-treasury-key.md` are updated to match the new behavior.
+  **Deployment note:** the Phase 4 wrong-key experiment left a second enabled
+  `treasuries` row (the temporary address) in the hosted database. Deploying
+  TX.5's guard will therefore refuse funding until it is cleaned up — harmless
+  while the kill switch is on. Rollout order: deploy TX.5 → disable the stray row
+  via the new endpoint → release the kill switch.
 
 ### Prerequisite refactor for multi-type alerting (complete)
 
@@ -452,8 +469,10 @@ T4.4, and ideally before T1.9.
   stop is flipping an existing value rather than creating one under pressure.
 - **TX.5 remains open.** There is still no supported way to complete a treasury key
   rotation — changing `TREASURY_ADDRESS` inserts a second `treasuries` row and
-  funding keeps resolving to the old one until it is disabled by hand. Fails closed,
-  but leaves a routine rotation dependent on SQL.
+  funding keeps resolving to the old one until it is disabled by hand. The
+  address-only change is a **silent no-op**, not a fail-closed error (proven in
+  hosted Phase 4); only a simultaneous key rotation fails closed. Routine rotation
+  stays dependent on SQL until TX.5 lands.
 - ✅ **Hosted verification complete** (2026-08-01). All four phases passed against
   the live Render deployment, including a real 0.05 ETH Sepolia transfer, idempotent
   replay, and the kill switch refusing under live conditions. See
