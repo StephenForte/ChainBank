@@ -9,30 +9,36 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-07-29)
+## Status (updated 2026-07-31)
 
-**Waves 1–3 are all merged to `main`.** No open PRs, no stale branches. `main` is at
-262 unit tests across 35 files plus 40 integration tests, with CI (format, lint,
+`main` is at 302 unit tests plus 43 integration tests, with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
-| Task                                                                | Status      | Landed in          |
-| ------------------------------------------------------------------- | ----------- | ------------------ |
-| T1.1 schema + migration `0001`                                      | ✅ done     | PR #2              |
-| T1.2 funding math domain                                            | ✅ done     | PR #2              |
-| T1.3 wallet registration + policy APIs                              | ✅ done     | PR #7              |
-| T1.4 signer infrastructure                                          | ✅ done     | PR #2              |
-| T1.5 funding dispatch engine                                        | ✅ done     | PR #8              |
-| T1.6 `ensure-funded` endpoint                                       | ✅ done     | PR #13             |
-| T1.7 funding history API + dashboard                                | ✅ done     | PR #11             |
-| T2.1 projects/environments + scoped authz (migration `0002`)        | ✅ done     | PR #7              |
-| T2.3 operation status + confirmation resume                         | ✅ done     | PR #10             |
-| T3.1 alert state machine                                            | ✅ done     | PR #5              |
-| T3.2 email templates                                                | ✅ done     | PR #6              |
-| T3.3 alert persistence + cron/manual orchestration                  | ✅ done     | PR #12             |
-| T3.4 operational runbooks (PRD §19)                                 | ✅ done     | PR #14             |
-| TX.1 CI pipeline                                                    | ✅ done     | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                       | ✅ done     | Phase 0 + PR #13   |
-| Remaining: TX.6, T1.8, T1.9, T2.2, T2.4, TX.4, TX.5, all of Phase 4 | not started | —                  |
+| Task                                                         | Status       | Landed in          |
+| ------------------------------------------------------------ | ------------ | ------------------ |
+| T1.1 schema + migration `0001`                               | ✅ done      | PR #2              |
+| T1.2 funding math domain                                     | ✅ done      | PR #2              |
+| T1.3 wallet registration + policy APIs                       | ✅ done      | PR #7              |
+| T1.4 signer infrastructure                                   | ✅ done      | PR #2              |
+| T1.5 funding dispatch engine                                 | ✅ done      | PR #8              |
+| T1.6 `ensure-funded` endpoint                                | ✅ done      | PR #13             |
+| T1.7 funding history API + dashboard                         | ✅ done      | PR #11             |
+| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done      | PR #7              |
+| T2.3 operation status + confirmation resume                  | ✅ done      | PR #10             |
+| T2.4 dashboard project/environment/wallet/policy views       | ✅ done      | PR #20             |
+| T3.1 alert state machine                                     | ✅ done      | PR #5              |
+| T3.2 email templates                                         | ✅ done      | PR #6              |
+| T3.3 alert persistence + cron/manual orchestration           | ✅ done      | PR #12             |
+| T3.4 operational runbooks (PRD §19)                          | ✅ done      | PR #14             |
+| TX.1 CI pipeline                                             | ✅ done      | PR #4, fixed in #9 |
+| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done      | Phase 0 + PR #13   |
+| TX.4 credential list / disable / revoke / enable             | ✅ done      | PR #16, #17        |
+| TX.6 alert lookup filtered by alert type                     | ✅ done      | PR #15             |
+| T1.8 reserve-exhaustion email                                | 🔄 in review | PR #21             |
+| Remaining: T1.9, T2.2, TX.5, TX.7, all of Phase 4            | not started  | —                  |
+
+Also merged: pagination query-schema fix (#18), hosted-deployment verification
+runbook (#22), and dashboard troubleshooting notes (#19).
 
 **Phase 1 is functionally complete.** Two security reviews ran on the money path and
 both produced fixes that shipped before merge:
@@ -46,20 +52,25 @@ both produced fixes that shipped before merge:
   key is asserted to match the reserve-enforced treasury row; idempotency keys are
   namespaced per wallet.
 
-**Funding is reachable but still disabled.** The PRD §19 runbooks now exist, which
-was the §20 gate. Writing them surfaced two operability gaps — no credential
-revoke tooling and no supported way to complete a treasury key rotation — now
-tracked as **TX.4** and **TX.5**. Both fail closed rather than mis-spending, but each
-leaves an incident response or a routine rotation dependent on hand-written SQL, so
-they belong before `FUNDING_ENABLED=true` in a hosted environment. See the
-"Before arming funding" checklist at the end of this document.
+**Funding is reachable but still disabled.** The PRD §19 runbooks exist, which was
+the §20 gate, and TX.4 removed the SQL-only credential paths. **TX.5** remains: there
+is still no supported way to complete a treasury key rotation. It fails closed rather
+than mis-spending, but leaves a routine rotation dependent on hand-written SQL, so it
+belongs before `FUNDING_ENABLED=true` in a hosted environment. See the "Before arming
+funding" checklist at the end of this document.
 
-### Next wave (all unblocked, run in parallel)
+**Hosted verification is under way.** Phase 1 (read-only) passed on 2026-07-31 against
+commit `6ac616c` — see `docs/runbooks/verify-hosted-deployment.md` for the procedure
+and the recorded results. Phases 2–4 (alerting, brakes, live funding) are outstanding.
 
-**TX.6** 🟢 alert-lookup filter first (it gates T1.8 — see its entry), then
-**T1.8** 🟢 reserve-exhaustion email, **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴
-concurrency tests, **T2.4** 🟢 dashboard views, **TX.4** 🟢 credential revoke
-tooling, **TX.5** 🔴 treasury row lifecycle. Then Phase 4.
+### Next wave
+
+**T1.8** 🟢 is in review (PR #21). Hold it until hosted Phase 2 (alerting) has run:
+Phase 2 tests exactly-once email semantics, and T1.8 adds a second alert type on the
+same treasury entity — merging first would confound the result.
+
+Then, in parallel: **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴 concurrency tests,
+**TX.5** 🔴 treasury row lifecycle, **TX.7** 🟢 list-environments route. Then Phase 4.
 
 ## Commit and merge contract
 
@@ -250,9 +261,12 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   `GET /v1/funding-operations/{id}` resumes tracking, replaced/reverted explicit,
   `submission_unknown` surfaced as pending with `submission-unconfirmed`
   (contract C8).
-- **T2.4** 🟢 Dashboard: projects/environments/wallets/policy views `[T2.1, T1.7]`
-  The dashboard now has treasury status, readiness, and funding history; project,
-  environment, wallet, and policy views remain.
+- **T2.4** ✅ 🟢 Dashboard: projects/environments/wallets/policy views `[T2.1, T1.7]` — DONE (PR #20)
+  Projects, environments, managed wallets, and funding policy editing, with
+  BigInt-only wei handling and per-panel independent loading (the previous
+  `Promise.all` refresh meant one failing endpoint blanked every panel).
+  Surfaced an API gap now tracked as **TX.7**: environments can only be
+  discovered through their wallets, so an environment with none is invisible.
 
 ### Phase 3 — Treasury monitoring and email alerts
 
@@ -360,24 +374,43 @@ response or a routine rotation dependent on hand-written SQL.
   the identical wall and inherits the fix for free.
   No migration required: `alerts.alert_type` is `text`, not a Postgres enum.
 
+### API gap surfaced by the dashboard
+
+- **TX.7** 🟢 List environments for a project `[none]`
+  There is no route to list a project's environments. `POST /v1/projects/:id/environments`
+  creates one and `GET /v1/environments/:id` fetches a known one, but nothing
+  enumerates them. T2.4's dashboard therefore discovers environments by reading
+  `GET /v1/wallets?projectId=`, which means **an environment with zero wallets is
+  invisible** — exactly the state a freshly created environment is in.
+  Deliver `GET /v1/projects/:id/environments`, paginated, mirroring the existing
+  list-projects shape.
+  Two things to get right rather than re-derive:
+  - **Authorization** must match `listProjects` — use `resolveReadableProjectIds`
+    / `assertProjectReadPermission` so a project-service credential sees only its
+    scoped projects and cannot enumerate environments of projects outside its
+    scope. Cover the role matrix in tests.
+  - **Pagination** must use the shared helpers in `src/api/pagination.ts`. Query
+    values are strings because ajv runs with `coerceTypes: false`; declaring
+    `limit` as an integer is what shipped two broken endpoints (PR #18).
+    Then update the dashboard to use it and drop the wallet-derived workaround.
+    Standalone rather than folded into T2.2 so that task's security review stays
+    focused on the money path — but folding it in is reasonable if T2.2 starts first.
+
 ## Remaining wave order
 
-1. **Wave 4 (now):** **TX.6** 🟢 first and alone — it is small and everything
-   alert-shaped waits on it. Then, in parallel: T1.8 🟢 reserve-exhaustion email,
-   T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, T2.4 🟢 dashboard views,
-   TX.4 🟢 credential revoke tooling, TX.5 🔴 treasury row lifecycle.
+1. **Wave 4 (now):** T1.8 🟢 is in review — merge after hosted Phase 2. In parallel:
+   T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, TX.5 🔴 treasury row lifecycle,
+   TX.7 🟢 list-environments route.
 2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
 
 Merge-order cautions for Wave 4:
 
-- **TX.6 before T1.8**, for the reason in its entry: the refactor is only provably
-  behavior-preserving while a single alert type exists.
 - T2.2 (`ensure-ready`) and T1.9 (concurrency tests) both build on the funding
   application layer; land T2.2 first so T1.9 can cover it.
 - TX.5 changes which treasury row funding resolves to, and T2.2 fans out across many
   wallets against one treasury. Land TX.5 before T2.2 if both are in flight, or
   expect T2.2 to need a rebase and a re-read of its reserve assertions.
-- TX.4 is independent of everything else and safe to run at any time.
+- TX.7 is independent of everything else and safe to run at any time.
 - T1.8 and T2.2 both add callers that can hit a reserve refusal. Land T1.8 first so
   T2.2 inherits the alerting rather than needing it retrofitted.
 
