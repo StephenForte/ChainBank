@@ -97,7 +97,7 @@ function createFakeAlerts(): AlertRepository & { readonly rows: Map<string, Stor
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
         pendingEmail: input.pendingEmail,
-        metadata: { ...existing.metadata, pendingEmail: input.pendingEmail },
+        metadata: { ...existing.metadata, ...(input.metadata ?? {}), pendingEmail: input.pendingEmail },
       };
       rows.set(input.id, next);
       return Promise.resolve(next);

@@ -443,6 +443,8 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           balanceReader: container.balanceReader,
           credentialScopes: container.repositories.credentialScopes,
           auditEvents: container.repositories.auditEvents,
+          alerts: container.repositories.alerts,
+          emailSender: container.emailSender,
           operations: container.repositories.fundingOperations,
           transactions: container.repositories.fundingTransactions,
           lock: container.fundingDispatchLock,
@@ -455,6 +457,9 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           isFundingKillSwitchActive: container.config.isFundingKillSwitchActive,
           confirmations: container.config.funding.confirmations,
           confirmationTimeoutMs: container.config.funding.confirmationTimeoutMs,
+          operatorRecipients: container.config.email?.operatorRecipients ?? [],
+          dashboardBaseUrl: container.config.app.publicBaseUrl,
+          environment: container.config.app.environment,
         },
         {
           walletId: id,

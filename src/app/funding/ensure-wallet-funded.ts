@@ -3,12 +3,18 @@ import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { FundingPolicy } from '../../domain/funding/funding-math.js';
 import type { Logger } from '../../observability/logger.js';
+import {
+  notifyTreasuryReserveRefusal,
+  resolveTreasuryReserveAlert,
+} from '../alerts/notify-treasury-reserve-alert.js';
 import { authorizeScope } from '../auth/authorize-scope.js';
 import type {
+  AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
   BalanceReader,
   CredentialScopeRepository,
+  EmailSender,
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransaction,
@@ -21,7 +27,11 @@ import type {
   TreasurySigner,
 } from '../ports.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
-import { dispatchFunding, type DispatchFundingResult } from './dispatch-funding.js';
+import {
+  dispatchFunding,
+  provisionalTopUpAmountWei,
+  type DispatchFundingResult,
+} from './dispatch-funding.js';
 import { trackTransaction } from './track-transaction.js';
 
 export type EnsureFundedStatus = 'no-op' | 'funded' | 'pending' | 'blocked' | 'failed';
@@ -33,6 +43,8 @@ export interface EnsureWalletFundedDependencies {
   readonly balanceReader: BalanceReader;
   readonly credentialScopes: CredentialScopeRepository;
   readonly auditEvents: AuditEventRepository;
+  readonly alerts: AlertRepository;
+  readonly emailSender: EmailSender | undefined;
   readonly operations: FundingOperationRepository;
   readonly transactions: FundingTransactionRepository;
   readonly lock: FundingDispatchLock;
@@ -45,6 +57,9 @@ export interface EnsureWalletFundedDependencies {
   readonly isFundingKillSwitchActive: boolean;
   readonly confirmations: number;
   readonly confirmationTimeoutMs: number;
+  readonly operatorRecipients: readonly string[];
+  readonly dashboardBaseUrl: string;
+  readonly environment: string;
 }
 
 export interface EnsureWalletFundedInput {
@@ -192,6 +207,19 @@ export async function ensureWalletFunded(
       },
     );
 
+    // Reserve alert is best-effort: never mask FUNDING_BLOCKED_RESERVE or
+    // convert a correct refusal into a different caller-visible error (T1.8).
+    await maybeNotifyReserveAlert(dependencies, {
+      dispatchResult,
+      wallet,
+      treasury,
+      treasuryBalanceWei: treasuryReading.balanceWei,
+      policy,
+      walletBalanceWei: walletReading.balanceWei,
+      correlationId: input.correlationId,
+      credentialId: input.credentialId,
+    });
+
     const result = await mapDispatchOutcome(dependencies, {
       dispatchResult,
       wallet,
@@ -269,6 +297,86 @@ function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury)
         // the key this process holds, and the caller has no need for it.
         context: { treasuryId: treasury.id },
       },
+    );
+  }
+}
+
+/**
+ * Side-effect notifications for reserve exhaustion / recovery. Failures are
+ * logged only — the caller's dispatch outcome must remain unchanged.
+ */
+async function maybeNotifyReserveAlert(
+  dependencies: EnsureWalletFundedDependencies,
+  input: {
+    readonly dispatchResult: DispatchFundingResult;
+    readonly wallet: ManagedWallet;
+    readonly treasury: Treasury;
+    readonly treasuryBalanceWei: bigint;
+    readonly policy: FundingPolicy;
+    readonly walletBalanceWei: bigint;
+    readonly correlationId: string;
+    readonly credentialId: string;
+  },
+): Promise<void> {
+  const actor = { type: 'api_credential' as const, id: input.credentialId };
+
+  try {
+    if (input.dispatchResult.kind === 'blocked' && input.dispatchResult.reason === 'reserve') {
+      const requestedAmountWei = provisionalTopUpAmountWei({
+        walletBalanceWei: input.walletBalanceWei,
+        policy: input.policy,
+      });
+
+      await notifyTreasuryReserveRefusal(
+        {
+          alerts: dependencies.alerts,
+          emailSender: dependencies.emailSender,
+          auditEvents: dependencies.auditEvents,
+          clock: dependencies.clock,
+          logger: dependencies.logger,
+        },
+        {
+          treasury: input.treasury,
+          treasuryBalanceWei: input.treasuryBalanceWei,
+          managedWalletAddressDisplay: input.wallet.addressDisplay,
+          managedWalletId: input.wallet.id,
+          requestedAmountWei,
+          operatorRecipients: dependencies.operatorRecipients,
+          dashboardBaseUrl: dependencies.dashboardBaseUrl,
+          environment: dependencies.environment,
+          operationId: input.correlationId,
+          actor,
+        },
+      );
+      return;
+    }
+
+    // A successful submit proves spendable capacity again — resolve any open
+    // reserve alert for this treasury (C10 resolution rule).
+    if (input.dispatchResult.kind === 'submitted') {
+      await resolveTreasuryReserveAlert(
+        {
+          alerts: dependencies.alerts,
+          auditEvents: dependencies.auditEvents,
+          clock: dependencies.clock,
+        },
+        {
+          treasuryId: input.treasury.id,
+          operationId: input.correlationId,
+          actor,
+        },
+      );
+    }
+  } catch (error) {
+    dependencies.logger.error(
+      {
+        event: 'treasury.reserve_alert.notification_failed',
+        treasuryId: input.treasury.id,
+        operationId: input.correlationId,
+        dispatchKind: input.dispatchResult.kind,
+        err: error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      },
+      'Reserve alert notification failed; funding outcome unchanged',
     );
   }
 }

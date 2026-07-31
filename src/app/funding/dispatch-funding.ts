@@ -476,7 +476,15 @@ function isProvablyBeforeBroadcast(errorCode: string): boolean {
   return PRE_BROADCAST_ERROR_CODES.has(errorCode);
 }
 
-function provisionalTopUpAmountWei(input: DispatchFundingInput): bigint {
+/**
+ * Deficit toward target, clamped by maximumTopUp. Used for gas estimation and
+ * for the reserve-exhaustion email's `requestedAmountWei` (P1-US5 / T1.8) when
+ * `calculateTopUp` returns `{ kind: 'blocked' }` without an amount.
+ */
+export function provisionalTopUpAmountWei(input: {
+  readonly walletBalanceWei: bigint;
+  readonly policy: FundingPolicy;
+}): bigint {
   if (input.walletBalanceWei >= input.policy.minimumBalanceWei) {
     return 0n;
   }
