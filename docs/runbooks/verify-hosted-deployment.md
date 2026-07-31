@@ -283,6 +283,54 @@ Notes for the next run:
   rejected `limit`/`offset` (PR #18), and the treasury-check failures traced to an
   unset shell variable rather than the service.
 
-### Phases 2–4
+### 2026-08-01 — Phase 2 (alerting)
 
-Not yet run.
+**Result: passed.**
+
+Exercised via a stacked three-PR series against `render.yaml` rather than moving
+funds — [#24](https://github.com/StephenForte/ChainBank/pull/24) (warning),
+[#25](https://github.com/StephenForte/ChainBank/pull/25) (critical),
+[#26](https://github.com/StephenForte/ChainBank/pull/26) (restore).
+
+- **Warning:** ladder set to warning 3 / critical 1 / recovery 4 / reserve 0.1 with
+  the balance at ~2.9495 ETH. Status transitioned to `warning`; exactly one warning
+  email arrived.
+- **No duplicate:** an immediate repeat check sent no second email — the exactly-once
+  guarantee (P3-US2) held.
+- **Critical:** ladder escalated to warning 3.5 / critical 3 / recovery 4. Status
+  transitioned to `critical`; exactly one critical email arrived, containing chain,
+  treasury address, observed balance, the crossed threshold, a recommended action,
+  and a working dashboard link.
+- **Recovery:** ladder restored to production values (warning 0.75 / critical 0.3 /
+  recovery 1.5 / reserve 0.1 — verified byte-identical to the pre-test `render.yaml`).
+  The alert resolved and exactly one recovery email arrived. The `alerts` row moved
+  open → resolved and was not deleted.
+
+Note for the next run: after each threshold PR, confirm `GET /v1/treasuries` shows
+the new thresholds before running the check — Render's redeploy is not instantaneous,
+and checking too early reads the old configuration and looks like a failed alert
+when it is really a premature check.
+
+### 2026-08-01 — Phase 3 (verify the brakes)
+
+**Result: passed.**
+
+- `TREASURY_PRIVATE_KEY` set on `chainbank-web` only, confirmed absent from
+  `chainbank-treasury-monitor`.
+- First attempt failed startup with `INVALID_CONFIGURATION` — the pasted key was
+  missing its `0x` prefix (MetaMask's private-key export omits it). Corrected by
+  prefixing; documented in
+  [`rotate-treasury-key.md`](./rotate-treasury-key.md). This is exactly the kind of
+  fail-closed startup rejection the config validator exists to produce.
+- `FUNDING_KILL_SWITCH=true`, `FUNDING_ENABLED=false`, redeployed.
+- Monitor cron triggered successfully with the signing key present on web but
+  absent from the monitor — least privilege held.
+- Registered smoke-test scaffolding (project, environment, wallet, tiny policy:
+  0.02 / 0.05 / 0.05 ETH).
+- `ensure-funded` returned `FUNDING_DISABLED` with zero ETH moved — the gate held
+  with a capable signer present but both brakes engaged.
+
+### Phase 4
+
+Not yet run — the one PRD §20 step remaining before funding should be armed and
+left on. Scaffolding from Phase 3 (`$TREASURY_ID`, `$WALLET_ID`) carries forward.
