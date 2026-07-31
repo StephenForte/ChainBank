@@ -184,8 +184,25 @@ Choose values that place the current balance in the band you want, keeping
 The point of this phase is to prove funding refuses _before_ it is capable of
 succeeding.
 
+**Two wallets are involved and they are easy to confuse:**
+
+| Wallet                   | Role                              | What ChainBank needs                                 |
+| ------------------------ | --------------------------------- | ---------------------------------------------------- |
+| **Treasury**             | Holds the ETH and signs transfers | `TREASURY_ADDRESS` **and** `TREASURY_PRIVATE_KEY`    |
+| **Disposable recipient** | Receives the test top-up          | Its **address only**, registered as a managed wallet |
+
+The recipient's private key is never requested or stored (P1-US1). If you find
+yourself pasting it anywhere, stop.
+
+Do **not** switch to a freshly generated treasury wallet at this point unless you
+mean to: changing `TREASURY_ADDRESS` inserts a second `treasuries` row, funding
+keeps resolving to the older one, and `assertSignerMatchesTreasury` then fails
+closed until the old row is disabled by hand. See the Known gaps table in
+[`README.md`](./README.md) and `rotate-treasury-key.md`.
+
 - [ ] Set `TREASURY_PRIVATE_KEY` on the **web service only**. Confirm it is absent
-      from the monitor cron.
+      from the monitor cron. Confirm the key derives to the address already in
+      `TREASURY_ADDRESS` — see `rotate-treasury-key.md` step 2 for how to check.
 - [ ] Set `FUNDING_KILL_SWITCH=true`, keep `FUNDING_ENABLED=false`, redeploy.
 - [ ] The monitor cron still runs cleanly with no signing key.
 - [ ] Register test scaffolding (operator calls): a project, an environment, a wallet
