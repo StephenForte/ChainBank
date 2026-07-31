@@ -9,18 +9,19 @@ Phase 0 deploy checklist (Blueprint, TLS pin, first credential):
 
 ## Index — use this when…
 
-| Runbook                                                                                    | Use this when…                                                                                            |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| [`replenish-treasury.md`](./replenish-treasury.md)                                         | The hot-wallet treasury is low on Sepolia ETH and funding or alerts need a refill.                        |
-| [`rotate-treasury-key.md`](./rotate-treasury-key.md)                                       | The treasury signing key must be replaced (compromise, rotation policy, or new hot wallet).               |
-| [`rotate-service-token.md`](./rotate-service-token.md)                                     | An API bearer token must be replaced as a planned rotation (not an active compromise).                    |
-| [`investigate-failed-funding.md`](./investigate-failed-funding.md)                         | An ensure-funded call or funding row failed / stuck and you have an error code or transaction status.     |
-| [`recover-stuck-pending-nonce.md`](./recover-stuck-pending-nonce.md)                       | A funding row is in-flight (`created` / `submitted` / `submission_unknown`) and blocking further top-ups. |
-| [`disable-compromised-project-credential.md`](./disable-compromised-project-credential.md) | A project-service (or other) credential may be leaked and must stop authenticating immediately.           |
-| [`disable-all-automated-funding.md`](./disable-all-automated-funding.md)                   | Emergency stop — halt every signing path now while keeping read-only monitoring up.                       |
-| [`restore-database.md`](./restore-database.md)                                             | Postgres must be restored from a Render backup after data loss or corruption.                             |
-| [`verify-cron-execution.md`](./verify-cron-execution.md)                                   | You need to confirm the treasury-monitor cron ran (or diagnose a missed / failed run).                    |
-| [`change-thresholds-safely.md`](./change-thresholds-safely.md)                             | Warning / critical / recovery / reserve ETH thresholds must change without editing the database.          |
+| Runbook                                                                                    | Use this when…                                                                                               |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| [`replenish-treasury.md`](./replenish-treasury.md)                                         | The hot-wallet treasury is low on Sepolia ETH and funding or alerts need a refill.                           |
+| [`rotate-treasury-key.md`](./rotate-treasury-key.md)                                       | The treasury signing key must be replaced (compromise, rotation policy, or new hot wallet).                  |
+| [`rotate-service-token.md`](./rotate-service-token.md)                                     | An API bearer token must be replaced as a planned rotation (not an active compromise).                       |
+| [`investigate-failed-funding.md`](./investigate-failed-funding.md)                         | An ensure-funded call or funding row failed / stuck and you have an error code or transaction status.        |
+| [`recover-stuck-pending-nonce.md`](./recover-stuck-pending-nonce.md)                       | A funding row is in-flight (`created` / `submitted` / `submission_unknown`) and blocking further top-ups.    |
+| [`disable-compromised-project-credential.md`](./disable-compromised-project-credential.md) | A project-service (or other) credential may be leaked and must stop authenticating immediately.              |
+| [`disable-all-automated-funding.md`](./disable-all-automated-funding.md)                   | Emergency stop — halt every signing path now while keeping read-only monitoring up.                          |
+| [`restore-database.md`](./restore-database.md)                                             | Postgres must be restored from a Render backup after data loss or corruption.                                |
+| [`verify-cron-execution.md`](./verify-cron-execution.md)                                   | You need to confirm the treasury-monitor cron ran (or diagnose a missed / failed run).                       |
+| [`verify-hosted-deployment.md`](./verify-hosted-deployment.md)                             | You need to confirm a Render deployment actually works — after a deploy, or before arming funding (PRD §20). |
+| [`change-thresholds-safely.md`](./change-thresholds-safely.md)                             | Warning / critical / recovery / reserve ETH thresholds must change without editing the database.             |
 
 ## Known gaps
 
