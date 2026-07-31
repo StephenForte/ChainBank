@@ -127,7 +127,9 @@ describe.skipIf(!integrationEnabled)('treasury reserve alert lifecycle', () => {
     );
     expect(resolved.kind).toBe('resolved');
 
-    expect(await alerts.findOpenByEntity('treasury', seed.treasuryId, TREASURY_RESERVE_ALERT_TYPE)).toBeUndefined();
+    expect(
+      await alerts.findOpenByEntity('treasury', seed.treasuryId, TREASURY_RESERVE_ALERT_TYPE),
+    ).toBeUndefined();
     expect(
       await alerts.findOpenByEntity('treasury', seed.treasuryId, TREASURY_BALANCE_ALERT_TYPE),
     ).toBeDefined();
@@ -185,7 +187,11 @@ describe.skipIf(!integrationEnabled)('treasury reserve alert lifecycle', () => {
     clock.advance(1_000);
     const retried = await notifyTreasuryReserveRefusal(deps, { ...input, operationId: 'op-2' });
     expect(retried).toMatchObject({ kind: 'retried', email: 'sent' });
-    const afterRetry = await alerts.findOpenByEntity('treasury', seed.treasuryId, TREASURY_RESERVE_ALERT_TYPE);
+    const afterRetry = await alerts.findOpenByEntity(
+      'treasury',
+      seed.treasuryId,
+      TREASURY_RESERVE_ALERT_TYPE,
+    );
     expect(afterRetry?.lastSentAt).toBeDefined();
     expect(afterRetry?.pendingEmail).toBeUndefined();
   });

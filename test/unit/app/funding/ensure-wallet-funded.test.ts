@@ -218,7 +218,8 @@ function createFakeAlerts(): AlertRepository & { readonly rows: Map<string, Stor
       rows.set(input.id, {
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
-        metadata: input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
+        metadata:
+          input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
       });
       return Promise.resolve();
     },
@@ -242,7 +243,10 @@ function createSender(behavior: 'sent' | 'fail' = 'sent'): {
             reason: 'simulated outage',
           });
         }
-        return Promise.resolve({ kind: 'sent' as const, providerMessageId: `msg-${String(messages.length)}` });
+        return Promise.resolve({
+          kind: 'sent' as const,
+          providerMessageId: `msg-${String(messages.length)}`,
+        });
       },
     },
   };

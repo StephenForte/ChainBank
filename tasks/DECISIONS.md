@@ -251,10 +251,7 @@ function resolveTreasuryReserveAlert(deps, input): Promise<ResolveTreasuryReserv
 // Result kinds: resolved | none-open
 
 // src/app/funding/dispatch-funding.ts
-function provisionalTopUpAmountWei(input: {
-  walletBalanceWei: bigint;
-  policy: FundingPolicy;
-}): bigint; // deficit toward target, clamped by maximumTopUp
+function provisionalTopUpAmountWei(input: { walletBalanceWei: bigint; policy: FundingPolicy }): bigint; // deficit toward target, clamped by maximumTopUp
 ```
 
 Local design choices (T1.8, 2026-07-31):

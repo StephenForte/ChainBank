@@ -165,7 +165,8 @@ function createFakeAlerts(): AlertRepository & {
       rows.set(input.id, {
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
-        metadata: input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
+        metadata:
+          input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
       });
       return Promise.resolve();
     },
@@ -353,12 +354,11 @@ describe('notifyTreasuryReserveRefusal', () => {
     expect(resolved).toEqual({ kind: 'resolved', alertId: 'alert-1' });
     expect(alerts.rows.size).toBe(0);
     expect(alerts.resolved).toHaveLength(1);
-    expect(auditEvents.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'treasury.alert.resolved',
-        metadata: expect.objectContaining({ reason: 'funding-submitted' }),
-      }),
-    );
+    const resolveAudit = vi.mocked(auditEvents.record).mock.calls.find((call) => {
+      const payload = call[0];
+      return payload.action === 'treasury.alert.resolved';
+    });
+    expect(resolveAudit?.[0]?.metadata).toMatchObject({ reason: 'funding-submitted' });
 
     const again = await resolveTreasuryReserveAlert(
       { alerts, auditEvents, clock },
@@ -424,7 +424,9 @@ describe('notifyTreasuryReserveRefusal', () => {
       },
     );
     expect(await alerts.findOpenByEntity('treasury', treasury.id, TREASURY_BALANCE_ALERT_TYPE)).toBeDefined();
-    expect(await alerts.findOpenByEntity('treasury', treasury.id, TREASURY_RESERVE_ALERT_TYPE)).toBeUndefined();
+    expect(
+      await alerts.findOpenByEntity('treasury', treasury.id, TREASURY_RESERVE_ALERT_TYPE),
+    ).toBeUndefined();
   });
 
   it('uses the clamped deficit as requestedAmountWei (never a misleading zero)', () => {

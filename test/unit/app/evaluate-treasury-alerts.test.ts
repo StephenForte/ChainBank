@@ -155,7 +155,8 @@ function createFakeAlerts(): AlertRepository & { readonly rows: Map<string, Stor
       rows.set(input.id, {
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
-        metadata: input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
+        metadata:
+          input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
       });
       return Promise.resolve();
     },

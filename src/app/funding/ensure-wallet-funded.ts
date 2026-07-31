@@ -374,7 +374,8 @@ async function maybeNotifyReserveAlert(
         treasuryId: input.treasury.id,
         operationId: input.correlationId,
         dispatchKind: input.dispatchResult.kind,
-        err: error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+        err:
+          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
       },
       'Reserve alert notification failed; funding outcome unchanged',
     );

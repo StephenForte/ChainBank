@@ -61,8 +61,7 @@ export interface ResolveTreasuryReserveAlertInput {
 }
 
 export type ResolveTreasuryReserveAlertResult =
-  | { readonly kind: 'resolved'; readonly alertId: string }
-  | { readonly kind: 'none-open' };
+  { readonly kind: 'resolved'; readonly alertId: string } | { readonly kind: 'none-open' };
 
 /**
  * Records a treasury-scoped critical alert when funding is refused for reserve
@@ -192,9 +191,7 @@ export async function resolveTreasuryReserveAlert(
   return { kind: 'resolved', alertId: existing.id };
 }
 
-function refusalMetadata(
-  input: NotifyTreasuryReserveRefusalInput,
-): Readonly<Record<string, unknown>> {
+function refusalMetadata(input: NotifyTreasuryReserveRefusalInput): Readonly<Record<string, unknown>> {
   return {
     requestedAmountWei: input.requestedAmountWei.toString(),
     treasuryBalanceWei: input.treasuryBalanceWei.toString(),
