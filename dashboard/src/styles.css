@@ -74,8 +74,21 @@ h1 {
 }
 
 .panel h2 {
-  margin: 0 0 0.85rem;
+  margin: 0;
   font-size: 1.05rem;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.panel-head .secondary {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
 }
 
 .panel h3 {
@@ -291,4 +304,53 @@ code {
 .toast.bad {
   border-color: rgba(161, 38, 34, 0.35);
   color: var(--bad);
+}
+
+.row-selected td {
+  background: rgba(15, 107, 76, 0.06);
+}
+
+button.linkish {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.env-list {
+  margin-bottom: 1rem;
+}
+
+.policy-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.policy-form {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.wei-preview {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.tiny {
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
 }
