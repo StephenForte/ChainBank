@@ -7,9 +7,12 @@ import { FUNDING_OPERATION_STATUSES, FUNDING_TRANSACTION_STATUSES } from '../../
 import type { FundingTransactionStatus } from '../../domain/funding/statuses.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeFundingTransaction } from '../serializers/funding-transaction.js';
-
-const DEFAULT_PAGE_LIMIT = 50;
-const MAX_PAGE_LIMIT = 100;
+import {
+  paginationQuerySchema,
+  paginationResponseSchema,
+  parsePageLimit,
+  parsePageOffset,
+} from '../pagination.js';
 
 const weiDecimalString = {
   type: 'string',
@@ -128,8 +131,7 @@ export function registerFundingTransactionRoutes(app: AppInstance, container: Co
             status: { type: 'string', enum: [...FUNDING_TRANSACTION_STATUSES] },
             createdFrom: { type: 'string', format: 'date-time' },
             createdTo: { type: 'string', format: 'date-time' },
-            limit: { type: 'string', pattern: '^[0-9]+$' },
-            offset: { type: 'string', pattern: '^[0-9]+$' },
+            ...paginationQuerySchema,
           },
         },
         response: {
@@ -142,16 +144,7 @@ export function registerFundingTransactionRoutes(app: AppInstance, container: Co
                 type: 'array',
                 items: fundingTransactionResponseSchema,
               },
-              pagination: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['limit', 'offset', 'total'],
-                properties: {
-                  limit: { type: 'integer' },
-                  offset: { type: 'integer' },
-                  total: { type: 'integer' },
-                },
-              },
+              pagination: paginationResponseSchema,
             },
           },
         },
@@ -195,34 +188,6 @@ export function registerFundingTransactionRoutes(app: AppInstance, container: Co
       };
     },
   );
-}
-
-function parsePageLimit(raw: string | undefined): number {
-  if (raw === undefined) {
-    return DEFAULT_PAGE_LIMIT;
-  }
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value < 1 || value > MAX_PAGE_LIMIT) {
-    throw new ChainBankError(
-      'INVALID_REQUEST',
-      `limit must be an integer between 1 and ${String(MAX_PAGE_LIMIT)}`,
-      { publicMessage: `limit must be between 1 and ${String(MAX_PAGE_LIMIT)}.` },
-    );
-  }
-  return value;
-}
-
-function parsePageOffset(raw: string | undefined): number {
-  if (raw === undefined) {
-    return 0;
-  }
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value < 0) {
-    throw new ChainBankError('INVALID_REQUEST', 'offset must be a non-negative integer', {
-      publicMessage: 'offset must be a non-negative integer.',
-    });
-  }
-  return value;
 }
 
 function parseOptionalDate(raw: string | undefined, fieldName: string): Date | undefined {

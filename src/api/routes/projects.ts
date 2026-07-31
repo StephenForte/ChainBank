@@ -9,9 +9,13 @@ import { setProjectEnabled } from '../../app/projects/set-project-enabled.js';
 import type { Container } from '../../container.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeEnvironment, serializeProject } from '../serializers/project.js';
-
-const DEFAULT_PAGE_LIMIT = 50;
-const MAX_PAGE_LIMIT = 100;
+import {
+  paginationQuerySchema,
+  paginationResponseSchema,
+  parsePageLimit,
+  parsePageOffset,
+  type PaginationQuery,
+} from '../pagination.js';
 
 const projectIdParams = {
   type: 'object',
@@ -84,8 +88,7 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
           type: 'object',
           additionalProperties: false,
           properties: {
-            limit: { type: 'integer', minimum: 1, maximum: MAX_PAGE_LIMIT },
-            offset: { type: 'integer', minimum: 0 },
+            ...paginationQuerySchema,
           },
         },
         response: {
@@ -95,16 +98,7 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
             required: ['data', 'pagination'],
             properties: {
               data: { type: 'array', items: projectResponseSchema },
-              pagination: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['limit', 'offset', 'total'],
-                properties: {
-                  limit: { type: 'integer' },
-                  offset: { type: 'integer' },
-                  total: { type: 'integer' },
-                },
-              },
+              pagination: paginationResponseSchema,
             },
           },
         },
@@ -112,9 +106,9 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
     },
     async (request) => {
       const actor = requireActor(request);
-      const query = request.query as { limit?: number; offset?: number };
-      const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
-      const offset = query.offset ?? 0;
+      const query = request.query as PaginationQuery;
+      const limit = parsePageLimit(query.limit);
+      const offset = parsePageOffset(query.offset);
 
       const page = await listProjects(projectDeps, {
         role: actor.role,

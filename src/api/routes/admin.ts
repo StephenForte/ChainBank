@@ -6,9 +6,13 @@ import type { Container } from '../../container.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeCredentialSummary } from '../serializers/credential.js';
-
-const DEFAULT_PAGE_LIMIT = 50;
-const MAX_PAGE_LIMIT = 100;
+import {
+  paginationQuerySchema,
+  paginationResponseSchema,
+  parsePageLimit,
+  parsePageOffset,
+  type PaginationQuery,
+} from '../pagination.js';
 
 const credentialResponseSchema = {
   type: 'object',
@@ -42,8 +46,7 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
           type: 'object',
           additionalProperties: false,
           properties: {
-            limit: { type: 'integer', minimum: 1, maximum: MAX_PAGE_LIMIT },
-            offset: { type: 'integer', minimum: 0 },
+            ...paginationQuerySchema,
           },
         },
         response: {
@@ -53,16 +56,7 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
             required: ['data', 'pagination'],
             properties: {
               data: { type: 'array', items: credentialResponseSchema },
-              pagination: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['limit', 'offset', 'total'],
-                properties: {
-                  limit: { type: 'integer' },
-                  offset: { type: 'integer' },
-                  total: { type: 'integer' },
-                },
-              },
+              pagination: paginationResponseSchema,
             },
           },
         },
@@ -70,9 +64,9 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
     },
     async (request) => {
       const actor = requireActor(request);
-      const query = request.query as { limit?: number; offset?: number };
-      const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
-      const offset = query.offset ?? 0;
+      const query = request.query as PaginationQuery;
+      const limit = parsePageLimit(query.limit);
+      const offset = parsePageOffset(query.offset);
 
       const page = await listCredentials(credentialDeps, {
         role: actor.role,
