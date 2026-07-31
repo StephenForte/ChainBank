@@ -94,11 +94,16 @@ export function createAlertRepository(db: Database): AlertRepository {
           );
         }
 
+        const baseMetadata = {
+          ...asMetadataRecord(existing.metadataJson),
+          ...(input.metadata ?? {}),
+        };
+
         const [row] = await db
           .update(alerts)
           .set({
             lastEvaluatedAt: input.lastEvaluatedAt,
-            metadataJson: withPendingEmail(asMetadataRecord(existing.metadataJson), input.pendingEmail),
+            metadataJson: withPendingEmail(baseMetadata, input.pendingEmail),
           })
           .where(and(eq(alerts.id, input.id), eq(alerts.state, 'open')))
           .returning();
@@ -196,9 +201,32 @@ export function createAlertRepository(db: Database): AlertRepository {
 
     async touchLastEvaluated(input): Promise<void> {
       await withDatabaseErrors('alerts.touchLastEvaluated', async () => {
+        if (input.metadata === undefined) {
+          await db
+            .update(alerts)
+            .set({ lastEvaluatedAt: input.lastEvaluatedAt })
+            .where(and(eq(alerts.id, input.id), eq(alerts.state, 'open')));
+          return;
+        }
+
+        const existing = await db.query.alerts.findFirst({
+          where: and(eq(alerts.id, input.id), eq(alerts.state, 'open')),
+        });
+        if (existing === undefined) {
+          return;
+        }
+
+        const pendingEmail = readPendingEmail(asMetadataRecord(existing.metadataJson));
+        const merged = { ...asMetadataRecord(existing.metadataJson), ...input.metadata };
+        const metadataJson =
+          pendingEmail === undefined ? clearPendingEmail(merged) : withPendingEmail(merged, pendingEmail);
+
         await db
           .update(alerts)
-          .set({ lastEvaluatedAt: input.lastEvaluatedAt })
+          .set({
+            lastEvaluatedAt: input.lastEvaluatedAt,
+            metadataJson,
+          })
           .where(and(eq(alerts.id, input.id), eq(alerts.state, 'open')));
       });
     },

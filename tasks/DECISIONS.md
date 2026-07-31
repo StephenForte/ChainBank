@@ -237,6 +237,53 @@ Local design choices (TX.4, 2026-07-30):
   stated in the runbook index.
 - Revoke/disable do not delete `api_credential_scopes` rows or audit history.
 
+### C10 — Treasury reserve-exhaustion alert (owner: T1.8)
+
+```ts
+// src/app/alerts/notify-treasury-reserve-alert.ts
+export const TREASURY_RESERVE_ALERT_TYPE = 'treasury_reserve'; // next to TREASURY_BALANCE_ALERT_TYPE
+
+function notifyTreasuryReserveRefusal(deps, input): Promise<NotifyTreasuryReserveRefusalResult>;
+// deps: AlertRepository, EmailSender | undefined, AuditEventRepository, Clock, Logger
+// Result kinds: opened | deduped | retried | skipped
+
+function resolveTreasuryReserveAlert(deps, input): Promise<ResolveTreasuryReserveAlertResult>;
+// Result kinds: resolved | none-open
+
+// src/app/funding/dispatch-funding.ts
+function provisionalTopUpAmountWei(input: { walletBalanceWei: bigint; policy: FundingPolicy }): bigint; // deficit toward target, clamped by maximumTopUp
+```
+
+Local design choices (T1.8, 2026-07-31):
+
+- **Identity:** entityType `'treasury'`, entityId = treasury.id, alert type
+  `treasury_reserve`, severity `critical` (P1-US5). Shares the treasury entity
+  with T3.3 balance alerts; depends on C3a `findOpenByEntity(..., alertType)`.
+- **Dedupe:** one open reserve alert per treasury. First refusal persist-then-sends
+  (`metadata_json.pendingEmail = 'critical'`, `last_sent_at` advances only after
+  provider `sent`). Later refusals update `last_evaluated_at` + metadata only.
+  **No reminder interval** in T1.8 — re-notification waits until resolve then a
+  new refusal.
+- **Resolution rule:** resolve when a later funding operation for that treasury
+  successfully **submits** a transfer (`dispatchFunding` → `kind: 'submitted'`).
+  That is direct evidence demand can be served again. Resolving on a balance
+  threshold alone could clear while demand still exceeds spendable. No recovery
+  email (no template; P1-US5 requires only the critical refusal signal). Row is
+  never deleted (AGENTS.md §9).
+- **Requested amount:** `TopUpDecision` blocked variant carries no amount; callers
+  pass `provisionalTopUpAmountWei` (clamped deficit). Non-positive amounts skip
+  the alert rather than email a misleading zero.
+- **Call site:** application-layer `ensureWalletFunded` (and the exported notify /
+  resolve helpers for T2.2 ensure-ready and T4.1 reconciler). Not the route
+  handler. A burst of N wallet refusals against one treasury produces **one**
+  email.
+- **Failure isolation:** alert-store / email failures are logged and must not
+  change the caller's `FUNDING_BLOCKED_RESERVE` outcome.
+- **Audit:** `treasury.alert.email.sent` / `treasury.alert.email.failed` on send
+  attempts (same actions as T3.3); `treasury.alert.resolved` on resolve.
+- **AlertRepository:** `markPendingEmail` and `touchLastEvaluated` accept optional
+  `metadata` merges (additive; pendingEmail key preserved).
+
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
@@ -529,3 +576,4 @@ stranded one.
 - 2026-07-30 — TX.4 published credential admin contract C9: operator-only `GET/PATCH /v1/admin/credentials`, `credential:read`/`credential:write` permissions, disable vs revoke semantics, self-mutation guard, audited mutations (AGENTS.md §7.7 / PRD §14).
 - 2026-07-30 — TX.4 follow-ups closed: added `enable` to the credential admin API (C9) so a mistaken **disable** is reversible in-product, while **revoke** stays terminal (`CREDENTIAL_REVOKED`, 409) because the endpoint that removes a leaked token must not restore it. The self-mutation guard now covers all three actions, which makes a second operator credential a prerequisite rather than a nicety — issued at deploy time (runbook step 4) and stated in the runbook index. Removes the last SQL-only rollback from the credential runbooks.
 - 2026-07-31 — T2.4 extended the operator dashboard with projects, environments, managed wallets, and funding-policy views (PRD §12.2 / P2-US1). Panels load independently (no cross-panel `Promise.all`); pagination query values are stringified via `URLSearchParams`; wei display/edit uses BigInt only. Environments for a selected project are discovered from `GET /v1/wallets?projectId=` because no list-by-project environments route exists; detail still uses `GET /v1/environments/:id`.
+- 2026-07-31 — T1.8 published C10: treasury-scoped `treasury_reserve` critical alert on `FUNDING_BLOCKED_RESERVE`, persist-then-send dedupe, resolve when a later transfer for that treasury submits successfully. Closes the operator-signal gap between the warning email and reserve refusals (P1-US5 / D3 detail).

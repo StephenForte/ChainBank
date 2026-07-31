@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
+import { TREASURY_RESERVE_ALERT_TYPE } from '../../../../src/app/alerts/notify-treasury-reserve-alert.js';
 import { ensureWalletFunded } from '../../../../src/app/funding/ensure-wallet-funded.js';
 import type {
+  AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
   BalanceReader,
   CredentialScope,
   CredentialScopeRepository,
+  EmailMessage,
+  EmailSender,
   ManagedWallet,
   ManagedWalletRepository,
+  StoredOpenAlert,
   Treasury,
   TreasuryRepository,
 } from '../../../../src/app/ports.js';
@@ -86,11 +91,12 @@ function buildTreasury(): Treasury {
     },
     address: '0x1111111111111111111111111111111111111111',
     addressDisplay: '0x1111111111111111111111111111111111111111',
+    // Compliant ladder: reserve < critical (D3 / assertValidTreasuryThresholds).
     thresholds: {
-      warningBalanceWei: ONE_ETH,
-      criticalBalanceWei: ONE_ETH / 4n,
-      recoveryBalanceWei: 2n * ONE_ETH,
-      minimumReserveWei: ONE_ETH / 2n,
+      warningBalanceWei: (ONE_ETH * 75n) / 100n,
+      criticalBalanceWei: (ONE_ETH * 3n) / 10n,
+      recoveryBalanceWei: (ONE_ETH * 15n) / 10n,
+      minimumReserveWei: ONE_ETH / 10n,
     },
     status: 'healthy',
     lastObservedBalanceWei: 20n * ONE_ETH,
@@ -98,6 +104,151 @@ function buildTreasury(): Treasury {
     lastCheckedAt: now,
     lastCheckErrorCode: undefined,
     enabled: true,
+  };
+}
+
+function createFakeAlerts(): AlertRepository & { readonly rows: Map<string, StoredOpenAlert> } {
+  const rows = new Map<string, StoredOpenAlert>();
+  let seq = 0;
+  return {
+    rows,
+    async findOpenByEntity(entityType, entityId, alertType) {
+      return Promise.resolve(
+        [...rows.values()].find(
+          (row) => row.entityType === entityType && row.entityId === entityId && row.alertType === alertType,
+        ),
+      );
+    },
+    async insertOpen(input) {
+      const id = `alert-${String(++seq)}`;
+      const row: StoredOpenAlert = {
+        id,
+        alertType: input.alertType,
+        severity: input.severity,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        firstTriggeredAt: input.firstTriggeredAt,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        lastSentAt: undefined,
+        pendingEmail: input.pendingEmail,
+        metadata: { ...input.metadata, pendingEmail: input.pendingEmail },
+      };
+      rows.set(id, row);
+      return Promise.resolve(row);
+    },
+    async markEscalated(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        throw new Error('missing');
+      }
+      const next: StoredOpenAlert = {
+        ...existing,
+        severity: 'critical',
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: input.pendingEmail,
+        metadata: { ...existing.metadata, pendingEmail: input.pendingEmail },
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    async markPendingEmail(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        throw new Error('missing');
+      }
+      const next: StoredOpenAlert = {
+        ...existing,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: input.pendingEmail,
+        metadata: { ...existing.metadata, ...(input.metadata ?? {}), pendingEmail: input.pendingEmail },
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    async clearPendingEmail(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        throw new Error('missing');
+      }
+      const metadata = { ...existing.metadata };
+      delete metadata.pendingEmail;
+      const next: StoredOpenAlert = {
+        ...existing,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: undefined,
+        metadata,
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    async acknowledgeSend(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        throw new Error('missing');
+      }
+      const metadata = { ...existing.metadata };
+      delete metadata.pendingEmail;
+      const next: StoredOpenAlert = {
+        ...existing,
+        lastSentAt: input.lastSentAt,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: undefined,
+        metadata,
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    async resolve(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        throw new Error('missing');
+      }
+      rows.delete(input.id);
+      return Promise.resolve({
+        ...existing,
+        pendingEmail: undefined,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+      });
+    },
+    async touchLastEvaluated(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        return Promise.resolve();
+      }
+      rows.set(input.id, {
+        ...existing,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        metadata:
+          input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
+      });
+      return Promise.resolve();
+    },
+  };
+}
+
+function createSender(behavior: 'sent' | 'fail' = 'sent'): {
+  readonly sender: EmailSender;
+  readonly messages: EmailMessage[];
+} {
+  const messages: EmailMessage[] = [];
+  return {
+    messages,
+    sender: {
+      send(message) {
+        messages.push(message);
+        if (behavior === 'fail') {
+          return Promise.resolve({
+            kind: 'failed' as const,
+            errorCode: 'EMAIL_PROVIDER_UNAVAILABLE' as const,
+            reason: 'simulated outage',
+          });
+        }
+        return Promise.resolve({
+          kind: 'sent' as const,
+          providerMessageId: `msg-${String(messages.length)}`,
+        });
+      },
+    },
   };
 }
 
@@ -149,10 +300,13 @@ function buildDeps(options?: {
   readonly signer?: ReturnType<typeof createFakeSigner>;
   readonly receiptOutcome?: 'confirmed' | 'pending';
   readonly estimatedCostWei?: bigint;
+  readonly emailBehavior?: 'sent' | 'fail';
 }) {
   const wallet = options && 'wallet' in options ? options.wallet : buildWallet();
   const treasury = buildTreasury();
   const stores = createInMemoryFundingStores();
+  const alerts = createFakeAlerts();
+  const { sender, messages } = createSender(options?.emailBehavior ?? 'sent');
   const signer =
     options?.signer ??
     createFakeSigner({
@@ -198,6 +352,8 @@ function buildDeps(options?: {
     balanceReader,
     credentialScopes: createScopeRepo(options?.scopes ?? []),
     auditEvents,
+    alerts,
+    emailSender: sender,
     operations: stores.operations,
     transactions: stores.transactions,
     lock: stores.lock,
@@ -212,12 +368,17 @@ function buildDeps(options?: {
     isFundingKillSwitchActive: options?.isFundingKillSwitchActive ?? false,
     confirmations: 1,
     confirmationTimeoutMs: 1_000,
+    operatorRecipients: ['operator@example.com'] as const,
+    dashboardBaseUrl: 'http://localhost:3000',
+    environment: 'test',
   };
 
   return {
     dependencies,
     signer,
     stores,
+    alerts,
+    messages,
     auditEvents,
     balanceObservations,
     balanceReader,
@@ -267,14 +428,33 @@ describe('ensureWalletFunded', () => {
   });
 
   it('returns blocked with FUNDING_BLOCKED_RESERVE when reserve would be breached', async () => {
-    const { dependencies, input, signer } = buildDeps({
-      treasuryBalanceWei: ONE_ETH,
-      estimatedCostWei: ONE_ETH,
+    // Low treasury balance (not a raised reserve) — spendable is zero after reserve + gas.
+    const { dependencies, input, signer, alerts, messages } = buildDeps({
+      treasuryBalanceWei: ONE_ETH / 10n,
+      estimatedCostWei: ONE_ETH / 100n,
     });
     const result = await ensureWalletFunded(dependencies, input);
     expect(result.status).toBe('blocked');
     expect(result.reasonCode).toBe('FUNDING_BLOCKED_RESERVE');
     expect(signer.sendCalls).toBe(0);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.subject).toMatch(/RESERVE/);
+    expect([...alerts.rows.values()][0]?.alertType).toBe(TREASURY_RESERVE_ALERT_TYPE);
+  });
+
+  it('keeps FUNDING_BLOCKED_RESERVE when reserve-alert email send fails', async () => {
+    const { dependencies, input, messages, alerts } = buildDeps({
+      treasuryBalanceWei: ONE_ETH / 10n,
+      estimatedCostWei: ONE_ETH / 100n,
+      emailBehavior: 'fail',
+    });
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('blocked');
+    expect(result.reasonCode).toBe('FUNDING_BLOCKED_RESERVE');
+    expect(messages).toHaveLength(1);
+    const open = [...alerts.rows.values()][0];
+    expect(open?.pendingEmail).toBe('critical');
+    expect(open?.lastSentAt).toBeUndefined();
   });
 
   it('refuses FUNDING_ENABLED=false without calling the signer', async () => {

@@ -285,6 +285,8 @@ export interface AlertRepository {
     readonly id: string;
     readonly lastEvaluatedAt: Date;
     readonly pendingEmail: PendingAlertEmail;
+    /** Merged into metadata_json; pendingEmail key is applied after the merge. */
+    readonly metadata?: Readonly<Record<string, unknown>>;
   }): Promise<StoredOpenAlert>;
   /** Clears a stale pendingEmail without advancing last_sent_at. */
   clearPendingEmail(input: { readonly id: string; readonly lastEvaluatedAt: Date }): Promise<StoredOpenAlert>;
@@ -300,7 +302,12 @@ export interface AlertRepository {
     readonly resolvedAt: Date;
     readonly lastEvaluatedAt: Date;
   }): Promise<StoredOpenAlert>;
-  touchLastEvaluated(input: { readonly id: string; readonly lastEvaluatedAt: Date }): Promise<void>;
+  touchLastEvaluated(input: {
+    readonly id: string;
+    readonly lastEvaluatedAt: Date;
+    /** When set, merged into metadata_json (pendingEmail key preserved). */
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  }): Promise<void>;
 }
 
 /** Project summary used when registering or listing managed wallets. */
