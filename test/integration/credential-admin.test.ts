@@ -163,6 +163,27 @@ describe.skipIf(!integrationEnabled)('admin credential lifecycle (integration)',
       tokenPrefix: expect.stringMatching(/^cb_/) as unknown,
     });
 
+    // Regression: pagination params must survive schema validation. The app
+    // runs ajv with coerceTypes:false, so a `type: 'integer'` query schema
+    // rejected every request that supplied limit/offset. The list call above
+    // passes no query string, which is why the defect shipped.
+    const paginatedResponse = await app.inject({
+      method: 'GET',
+      url: '/v1/admin/credentials?limit=50&offset=0',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(paginatedResponse.statusCode).toBe(200);
+    expect(
+      paginatedResponse.json<{ pagination: { limit: number; offset: number } }>().pagination,
+    ).toMatchObject({ limit: 50, offset: 0 });
+
+    const rejectedPagination = await app.inject({
+      method: 'GET',
+      url: '/v1/admin/credentials?limit=abc',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(rejectedPagination.statusCode).toBe(400);
+
     const disableResponse = await app.inject({
       method: 'PATCH',
       url: `/v1/admin/credentials/${targetCredentialId}`,
