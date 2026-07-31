@@ -9,36 +9,42 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-07-31)
+## Status (updated 2026-08-01)
 
-`main` is at 302 unit tests plus 43 integration tests, with CI (format, lint,
+`main` is at 310 unit tests plus 45 integration tests, with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
+No open PRs, no stale branches.
 
-| Task                                                         | Status       | Landed in          |
-| ------------------------------------------------------------ | ------------ | ------------------ |
-| T1.1 schema + migration `0001`                               | ✅ done      | PR #2              |
-| T1.2 funding math domain                                     | ✅ done      | PR #2              |
-| T1.3 wallet registration + policy APIs                       | ✅ done      | PR #7              |
-| T1.4 signer infrastructure                                   | ✅ done      | PR #2              |
-| T1.5 funding dispatch engine                                 | ✅ done      | PR #8              |
-| T1.6 `ensure-funded` endpoint                                | ✅ done      | PR #13             |
-| T1.7 funding history API + dashboard                         | ✅ done      | PR #11             |
-| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done      | PR #7              |
-| T2.3 operation status + confirmation resume                  | ✅ done      | PR #10             |
-| T2.4 dashboard project/environment/wallet/policy views       | ✅ done      | PR #20             |
-| T3.1 alert state machine                                     | ✅ done      | PR #5              |
-| T3.2 email templates                                         | ✅ done      | PR #6              |
-| T3.3 alert persistence + cron/manual orchestration           | ✅ done      | PR #12             |
-| T3.4 operational runbooks (PRD §19)                          | ✅ done      | PR #14             |
-| TX.1 CI pipeline                                             | ✅ done      | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done      | Phase 0 + PR #13   |
-| TX.4 credential list / disable / revoke / enable             | ✅ done      | PR #16, #17        |
-| TX.6 alert lookup filtered by alert type                     | ✅ done      | PR #15             |
-| T1.8 reserve-exhaustion email                                | 🔄 in review | PR #21             |
-| Remaining: T1.9, T2.2, TX.5, TX.7, all of Phase 4            | not started  | —                  |
+| Task                                                         | Status      | Landed in          |
+| ------------------------------------------------------------ | ----------- | ------------------ |
+| T1.1 schema + migration `0001`                               | ✅ done     | PR #2              |
+| T1.2 funding math domain                                     | ✅ done     | PR #2              |
+| T1.3 wallet registration + policy APIs                       | ✅ done     | PR #7              |
+| T1.4 signer infrastructure                                   | ✅ done     | PR #2              |
+| T1.5 funding dispatch engine                                 | ✅ done     | PR #8              |
+| T1.6 `ensure-funded` endpoint                                | ✅ done     | PR #13             |
+| T1.7 funding history API + dashboard                         | ✅ done     | PR #11             |
+| T1.8 reserve-exhaustion email                                | ✅ done     | PR #21             |
+| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done     | PR #7              |
+| T2.3 operation status + confirmation resume                  | ✅ done     | PR #10             |
+| T2.4 dashboard project/environment/wallet/policy views       | ✅ done     | PR #20             |
+| T3.1 alert state machine                                     | ✅ done     | PR #5              |
+| T3.2 email templates                                         | ✅ done     | PR #6              |
+| T3.3 alert persistence + cron/manual orchestration           | ✅ done     | PR #12             |
+| T3.4 operational runbooks (PRD §19)                          | ✅ done     | PR #14             |
+| TX.1 CI pipeline                                             | ✅ done     | PR #4, fixed in #9 |
+| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13   |
+| TX.4 credential list / disable / revoke / enable             | ✅ done     | PR #16, #17        |
+| TX.6 alert lookup filtered by alert type                     | ✅ done     | PR #15             |
+| Remaining: T1.9, T2.2, TX.5, TX.7, all of Phase 4            | not started | —                  |
+
+**Correction:** PR #23 only _tracked_ TX.7 (the missing `GET /v1/projects/:id/environments`
+route) as a plan entry — it did not implement it. Confirmed by grep: only `POST` exists
+on that path. TX.7 remains not started; do not treat it as done.
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
-runbook (#22), and dashboard troubleshooting notes (#19).
+runbook (#22), dashboard troubleshooting notes (#19), and treasury key
+generation / wallet-role documentation (#27).
 
 **Phase 1 is functionally complete.** Two security reviews ran on the money path and
 both produced fixes that shipped before merge:
@@ -59,18 +65,18 @@ than mis-spending, but leaves a routine rotation dependent on hand-written SQL, 
 belongs before `FUNDING_ENABLED=true` in a hosted environment. See the "Before arming
 funding" checklist at the end of this document.
 
-**Hosted verification is under way.** Phase 1 (read-only) passed on 2026-07-31 against
-commit `6ac616c` — see `docs/runbooks/verify-hosted-deployment.md` for the procedure
-and the recorded results. Phases 2–4 (alerting, brakes, live funding) are outstanding.
+**Hosted verification is well under way.** Phases 1–3 (read-only, alerting, verify
+the brakes) have all passed — see `docs/runbooks/verify-hosted-deployment.md` for
+the procedure and recorded results. **Phase 4 (live funding on Sepolia) is the one
+step remaining** before funding should be armed and left on in production.
 
 ### Next wave
 
-**T1.8** 🟢 is in review (PR #21). Hold it until hosted Phase 2 (alerting) has run:
-Phase 2 tests exactly-once email semantics, and T1.8 adds a second alert type on the
-same treasury entity — merging first would confound the result.
-
-Then, in parallel: **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴 concurrency tests,
-**TX.5** 🔴 treasury row lifecycle, **TX.7** 🟢 list-environments route. Then Phase 4.
+T1.8 is merged and hosted Phase 2 confirmed it against real alert traffic. In
+parallel now: **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴 concurrency tests, **TX.5** 🔴
+treasury row lifecycle, **TX.7** 🟢 list-environments route (not yet started —
+see the correction above). Hosted Phase 4 can run independently of this wave
+whenever convenient.
 
 ## Commit and merge contract
 
@@ -417,29 +423,30 @@ Merge-order cautions for Wave 4:
 Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
 T4.4, and ideally before T1.9.
 
-**Before arming funding in a hosted environment:**
+**Before arming funding in a hosted environment (updated 2026-08-01):**
 
 - ✅ T3.4 runbooks (PR #14).
-- ✅ D3 thresholds — warning 1 / critical 0.25 / recovery 2 / reserve 0.5 ETH, set in
-  the Render environment. See the D3 detail note in `tasks/DECISIONS.md`: the reserve
-  sits between critical and warning, so funding halts while status still reads
-  `warning` and the critical email is **not** the funding-stopped signal.
-- **T1.8** — now higher priority than its 🟢 sizing suggests. With these thresholds
-  the only notification between "warning at 1 ETH" and "requests failing with
-  `FUNDING_BLOCKED_RESERVE` at 0.5" is the reserve-exhaustion email that T1.8 builds
-  (PRD P1-US5). Without it, funding can be silently refusing requests with no new
-  operator signal.
-- **TX.4 and TX.5** — so credential revocation and treasury key rotation do not
-  require hand-written SQL mid-incident.
-- **`render.yaml` gap:** `FUNDING_KILL_SWITCH` is not declared in the Blueprint, so
-  the emergency-stop runbook currently instructs the operator to _create_ the
-  variable under pressure. Pre-declare it as `false` (and `TRUSTED_PROXY_HOPS: 1`,
-  which is security-relevant and currently relying on its default) so the emergency
-  action is flipping an existing value. Small, do it with T1.8 or TX.4.
-- **Hosted verification** — PRD §20 requires it and nothing has done it. Render is
-  the host and the Blueprint provisions web + monitor cron + Postgres, but no one has
-  smoke-tested the Phase 1–3 paths against a deployed instance: alert transitions and
-  a real email, `ensure-funded` end to end on Sepolia with a disposable wallet, the
-  kill switch taking effect after restart, and `verify-cron-execution.md`. The
-  existing `deploy-render-phase0.md` checklist only covers read-only Phase 0.
-  Consider this a task if you want it tracked rather than done by hand.
+- ✅ D3 thresholds — final values warning 0.75 / critical 0.3 / recovery 1.5 /
+  reserve 0.1 ETH, declared as literal `value:` entries in `render.yaml` (not
+  dashboard-set), reserve strictly below critical so the critical alert cannot be
+  stranded. CI validates the ladder before it can reach a service
+  (`test/unit/config/render-blueprint-thresholds.test.ts`), and the runtime
+  validator enforces `reserve < critical` everywhere, not just the declared config.
+  See the D3 detail note in `tasks/DECISIONS.md`.
+- ✅ T1.8 — reserve-exhaustion critical email (PR #21). Closes the gap between the
+  warning email and a funding request silently failing with
+  `FUNDING_BLOCKED_RESERVE`.
+- ✅ TX.4 — credential list / disable / revoke / enable (PR #16, #17, #27), so
+  incident response no longer needs SQL.
+- ✅ `render.yaml` gap fixed — `FUNDING_KILL_SWITCH` (default `false`) and
+  `TRUSTED_PROXY_HOPS` (`1`) are now declared in the Blueprint, so the emergency
+  stop is flipping an existing value rather than creating one under pressure.
+- **TX.5 remains open.** There is still no supported way to complete a treasury key
+  rotation — changing `TREASURY_ADDRESS` inserts a second `treasuries` row and
+  funding keeps resolving to the old one until it is disabled by hand. Fails closed,
+  but leaves a routine rotation dependent on SQL.
+- **Hosted verification — in progress, not complete.** See
+  `docs/runbooks/verify-hosted-deployment.md` for the procedure and the recorded
+  results. Phases 1–3 have passed (read-only, alerting, and verifying the brakes).
+  **Phase 4 (live funding on Sepolia) has not yet run** — that is the one PRD §20
+  step still outstanding before funding should be armed and left on.
