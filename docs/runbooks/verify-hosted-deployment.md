@@ -219,10 +219,16 @@ The first irreversible phase. Supervised only: make the calls, watch the results
 and turn funding off afterwards unless you have decided to leave it armed.
 
 - [ ] Set `FUNDING_ENABLED=true`, `FUNDING_KILL_SWITCH=false`, redeploy.
-- [ ] **Wrong-key check first.** Temporarily point `TREASURY_ADDRESS` at a different
-      address and redeploy. Expect `INVALID_CONFIGURATION` — the signer/treasury
-      binding refusing to spend from an account that is not the reserve-enforced
-      treasury. Restore the correct address afterwards.
+- [ ] **Wrong-key check first.** Temporarily replace `TREASURY_PRIVATE_KEY` with a
+      **different** valid key — leaving `TREASURY_ADDRESS` unchanged — and redeploy.
+      Expect `INVALID_CONFIGURATION`: the signer/treasury binding refusing to spend
+      from an account that is not the reserve-enforced treasury. Restore the real key
+      afterwards.
+      **Change the key, not the address.** Changing `TREASURY_ADDRESS` instead does
+      _not_ trigger this check: it inserts a second `treasuries` row while funding
+      keeps resolving to the older one, which still matches the unchanged key, so the
+      transfer succeeds normally. That was the original wording here and live testing
+      on 2026-08-01 disproved it — see the TX.5 entry in `tasks/worker-plan.md`.
 - [ ] `ensure-funded` with a fresh idempotency key → `funded` or `pending`, with a
       real `transactionHash` and the expected `transferredWei`.
 - [ ] Verify on Etherscan: correct destination, correct amount.
@@ -330,7 +336,44 @@ when it is really a premature check.
 - `ensure-funded` returned `FUNDING_DISABLED` with zero ETH moved — the gate held
   with a capable signer present but both brakes engaged.
 
-### Phase 4
+### 2026-08-01 — Phase 4 (live funding on Sepolia)
 
-Not yet run — the one PRD §20 step remaining before funding should be armed and
-left on. Scaffolding from Phase 3 (`$TREASURY_ID`, `$WALLET_ID`) carries forward.
+**Result: passed.** All four hosted verification phases are now complete, satisfying
+the PRD §20 requirement for a verified Render deployment.
+
+- **Live transfer:** `ensure-funded` moved **0.05 ETH** from the treasury to the
+  disposable managed wallet — the full target, since the wallet started at zero.
+  Transaction `0x9a95f50e642acabade6ba3f2062638caf202d0c0486da5b5686ad31a64b83e89`,
+  confirmed on Sepolia.
+- **Idempotency:** replaying the same key returned the identical `operationId`
+  (`88bf0a76-…`) with no second transfer on chain.
+- **Operation status:** `GET /v1/funding-operations/{id}` resolved to `confirmed`.
+- **Funding history:** exactly **one** row across all the `ensure-funded` calls made
+  during the phase — the idempotency guarantee holding on real infrastructure.
+- **Kill switch under live conditions:** with `FUNDING_KILL_SWITCH=true` deployed,
+  `ensure-funded` refused with `FUNDING_DISABLED` and the public message
+  `Funding is temporarily disabled.` — the wording confirms the _kill switch_ fired
+  specifically, since `FUNDING_ENABLED=false` produces `Funding is disabled.`
+  instead. Nothing was sent.
+
+**The wrong-key check did not work as originally written, and that is the most
+valuable finding of the phase.** The step said to change `TREASURY_ADDRESS` and
+expect `INVALID_CONFIGURATION`. Instead the transfer succeeded. Cause:
+`resolveTreasuryForWallet` selects the oldest enabled treasury row for the chain, so
+a changed address inserts a _second_ row while funding continues resolving to the
+original — which still matches the unchanged signing key. The step has been rewritten
+to change the **key** instead, and the TX.5 entry in `tasks/worker-plan.md` corrected:
+changing the address alone is a **silent no-op**, not a fail-closed error as
+previously documented.
+
+**Resting state:** `FUNDING_ENABLED=true` with `FUNDING_KILL_SWITCH=true` — funding
+armed but stopped, pending TX.5 closing the treasury-rotation gap.
+
+Notes for the next run:
+
+- Several steps failed on empty or placeholder shell variables rather than service
+  faults (`INVALID_REQUEST` from a malformed URL). Prefer hardcoding real UUIDs into
+  commands, or `echo "[$VAR]"` before each call. Every `INVALID_REQUEST` seen across
+  all four phases traced to this, never to the server.
+- `ensure-funded` wraps its payload in `data`, so extraction needs
+  `jq -r '.data.operationId'`, not `.operationId`.

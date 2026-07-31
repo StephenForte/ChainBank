@@ -65,10 +65,15 @@ than mis-spending, but leaves a routine rotation dependent on hand-written SQL, 
 belongs before `FUNDING_ENABLED=true` in a hosted environment. See the "Before arming
 funding" checklist at the end of this document.
 
-**Hosted verification is well under way.** Phases 1–3 (read-only, alerting, verify
-the brakes) have all passed — see `docs/runbooks/verify-hosted-deployment.md` for
-the procedure and recorded results. **Phase 4 (live funding on Sepolia) is the one
-step remaining** before funding should be armed and left on in production.
+**Hosted verification is complete.** All four phases passed — read-only, alerting,
+verifying the brakes, and live funding on Sepolia — satisfying the PRD §20
+requirement for a verified Render deployment. See
+`docs/runbooks/verify-hosted-deployment.md` for the procedure and recorded results,
+including the two documentation errors the live run disproved.
+
+**Current hosted state:** `FUNDING_ENABLED=true` with `FUNDING_KILL_SWITCH=true` —
+funding armed but stopped. The kill switch should stay on until TX.5 closes the
+treasury-rotation gap.
 
 ### Next wave
 
@@ -346,17 +351,28 @@ response or a routine rotation dependent on hand-written SQL.
   upsert conflict target is `(chain_id, address)`, so a new address inserts a new
   `treasuries` row; `listEnabled()` orders by `created_at ASC` and
   `resolveTreasuryForWallet` takes the first chain match, so funding keeps binding
-  to the **old** row. Since PR #13 added `assertSignerMatchesTreasury`, the rotated
-  key then mismatches the resolved row and funding fails closed with
-  `INVALID_CONFIGURATION` until the old row is disabled by hand.
-  Decide and implement one of: (a) an operator-only way to disable a treasury row,
-  or (b) make resolution prefer the row whose address matches the signer, or (c)
-  make the rotation path explicit so an address change retires the previous row.
-  Option (b) is the smallest change but silently reinterprets which treasury is
-  authoritative — treat that as a money-path decision, publish it in
-  `tasks/DECISIONS.md`, and cover it with tests for the two-enabled-rows case.
-  Reserve accounting, nonce probing, and alert entity ids all key off the resolved
-  row, so verify each still describes the intended treasury afterward.
+  to the **old** row.
+  **Two distinct failure modes — corrected 2026-08-01 after live testing proved
+  the first one:**
+  - **Changing `TREASURY_ADDRESS` alone is a silent no-op.** The old row still
+    matches the unchanged signing key, so `assertSignerMatchesTreasury` passes and
+    funding proceeds normally against the **old** treasury. No error, no warning —
+    the operator believes the treasury moved and it did not. This was previously
+    documented here as failing closed; it does not. Confirmed during hosted
+    Phase 4 verification, where a deliberately mismatched `TREASURY_ADDRESS`
+    still produced a successful 0.05 ETH transfer from the original treasury.
+  - **Changing both address and key** does fail closed with
+    `INVALID_CONFIGURATION`, because the new key then mismatches the still-resolved
+    old row.
+    The silent case is the more dangerous of the two and should drive the design.
+    Decide and implement one of: (a) an operator-only way to disable a treasury row,
+    or (b) make resolution prefer the row whose address matches the signer, or (c)
+    make the rotation path explicit so an address change retires the previous row.
+    Option (b) is the smallest change but silently reinterprets which treasury is
+    authoritative — treat that as a money-path decision, publish it in
+    `tasks/DECISIONS.md`, and cover it with tests for the two-enabled-rows case.
+    Reserve accounting, nonce probing, and alert entity ids all key off the resolved
+    row, so verify each still describes the intended treasury afterward.
 
 ### Prerequisite refactor for multi-type alerting (complete)
 
@@ -438,8 +454,11 @@ T4.4, and ideally before T1.9.
   rotation — changing `TREASURY_ADDRESS` inserts a second `treasuries` row and
   funding keeps resolving to the old one until it is disabled by hand. Fails closed,
   but leaves a routine rotation dependent on SQL.
-- **Hosted verification — in progress, not complete.** See
-  `docs/runbooks/verify-hosted-deployment.md` for the procedure and the recorded
-  results. Phases 1–3 have passed (read-only, alerting, and verifying the brakes).
-  **Phase 4 (live funding on Sepolia) has not yet run** — that is the one PRD §20
-  step still outstanding before funding should be armed and left on.
+- ✅ **Hosted verification complete** (2026-08-01). All four phases passed against
+  the live Render deployment, including a real 0.05 ETH Sepolia transfer, idempotent
+  replay, and the kill switch refusing under live conditions. See
+  `docs/runbooks/verify-hosted-deployment.md`.
+- **TX.5 is now the only blocker to releasing the kill switch.** Live testing
+  sharpened why: changing `TREASURY_ADDRESS` is a **silent no-op**, not a
+  fail-closed error — an operator can believe they rotated the treasury while
+  funding continues spending from the old one.
