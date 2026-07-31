@@ -365,17 +365,17 @@ response or a routine rotation dependent on hand-written SQL.
     `INVALID_CONFIGURATION`, because the new key then mismatches the still-resolved
     old row.
     The silent case is the more dangerous of the two and should drive the design.
-  **Direction decided (2026-08-01, planner):** option (a) — an operator-only
-  `PATCH /v1/treasuries/:id { enabled }` — **plus a fail-closed ambiguity guard**
-  in `resolveTreasuryForWallet`: more than one enabled treasury row for the
-  wallet's chain refuses with `INVALID_CONFIGURATION` before any signer call.
-  Option (b) (prefer the signer-matching row) is rejected: it silently
-  reinterprets which treasury is authoritative. The guard turns the silent no-op
-  into a loud refusal, and rotation becomes: change config → funding refuses →
-  disable the retired row via the endpoint → funding resumes on the new row.
-  Reserve accounting, nonce probing, and alert entity ids all key off the resolved
-  row, so verify each still describes the intended treasury afterward.
-  **Acceptance criteria (added 2026-08-01 after the live run):**
+    **Direction decided (2026-08-01, planner):** option (a) — an operator-only
+    `PATCH /v1/treasuries/:id { enabled }` — **plus a fail-closed ambiguity guard**
+    in `resolveTreasuryForWallet`: more than one enabled treasury row for the
+    wallet's chain refuses with `INVALID_CONFIGURATION` before any signer call.
+    Option (b) (prefer the signer-matching row) is rejected: it silently
+    reinterprets which treasury is authoritative. The guard turns the silent no-op
+    into a loud refusal, and rotation becomes: change config → funding refuses →
+    disable the retired row via the endpoint → funding resumes on the new row.
+    Reserve accounting, nonce probing, and alert entity ids all key off the resolved
+    row, so verify each still describes the intended treasury afterward.
+    **Acceptance criteria (added 2026-08-01 after the live run):**
   - The hosted Phase 4 wrong-key scenario must become fail-closed in its
     address-only form: with two enabled rows for one chain — the state the live
     run actually created — `ensure-funded` refuses with `INVALID_CONFIGURATION`
@@ -385,11 +385,11 @@ response or a routine rotation dependent on hand-written SQL.
     funding resolves the remaining row.
   - `docs/runbooks/verify-hosted-deployment.md` (wrong-key step) and
     `rotate-treasury-key.md` are updated to match the new behavior.
-  **Deployment note:** the Phase 4 wrong-key experiment left a second enabled
-  `treasuries` row (the temporary address) in the hosted database. Deploying
-  TX.5's guard will therefore refuse funding until it is cleaned up — harmless
-  while the kill switch is on. Rollout order: deploy TX.5 → disable the stray row
-  via the new endpoint → release the kill switch.
+    **Deployment note:** the Phase 4 wrong-key experiment left a second enabled
+    `treasuries` row (the temporary address) in the hosted database. Deploying
+    TX.5's guard will therefore refuse funding until it is cleaned up — harmless
+    while the kill switch is on. Rollout order: deploy TX.5 → disable the stray row
+    via the new endpoint → release the kill switch.
 
 ### Prerequisite refactor for multi-type alerting (complete)
 
