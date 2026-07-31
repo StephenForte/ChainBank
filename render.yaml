@@ -75,11 +75,11 @@ services:
       # Keep both services identical. To change them, see
       # docs/runbooks/change-thresholds-safely.md
       - key: TREASURY_WARNING_BALANCE_ETH
-        value: '0.75'
+        value: '3'
       - key: TREASURY_CRITICAL_BALANCE_ETH
-        value: '0.3'
+        value: '1'
       - key: TREASURY_RECOVERY_BALANCE_ETH
-        value: '1.5'
+        value: '4'
       - key: TREASURY_MINIMUM_RESERVE_ETH
         value: '0.1'
       - key: RESEND_API_KEY
@@ -135,11 +135,11 @@ services:
       # treasury row on every run, so a mismatch would flip thresholds back and
       # forth between the two processes.
       - key: TREASURY_WARNING_BALANCE_ETH
-        value: '0.75'
+        value: '3'
       - key: TREASURY_CRITICAL_BALANCE_ETH
-        value: '0.3'
+        value: '1'
       - key: TREASURY_RECOVERY_BALANCE_ETH
-        value: '1.5'
+        value: '4'
       - key: TREASURY_MINIMUM_RESERVE_ETH
         value: '0.1'
       - key: RESEND_API_KEY
