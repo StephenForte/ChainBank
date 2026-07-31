@@ -56,6 +56,25 @@ warning/critical/recovery/reserve numbers — use
 2. Generate or import the new disposable Sepolia hot-wallet key **offline**.
    Derive its address. Never commit the key; never paste it into tickets.
 
+   To generate one locally using viem (already a dependency — nothing is
+   installed and nothing leaves the machine):
+
+```bash
+node -e "const {generatePrivateKey,privateKeyToAccount}=require('viem/accounts');const k=generatePrivateKey();console.log('address:',privateKeyToAccount(k).address);console.log('private key:',k)"
+```
+
+To use a key that already exists, export it from the wallet that holds it —
+in MetaMask, account menu → **Account details** → **Show private key**. A
+hardware wallet cannot export, by design; use a separate hot wallet instead.
+
+Either way, **verify the derived address matches the `TREASURY_ADDRESS` you
+intend to set** before going further. `assertSignerMatchesTreasury` refuses to
+sign on a mismatch, so an error here fails closed — but it costs a deploy
+cycle to discover.
+
+Copy the key straight into the Render environment field. Do not route it
+through a scratch file, a shared note, or a shell history.
+
 3. Fund the **new** address with Sepolia ETH (see
    [`replenish-treasury.md`](./replenish-treasury.md) pattern) before cutover if
    you expect immediate funding after re-enable.
