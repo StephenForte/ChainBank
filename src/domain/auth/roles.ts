@@ -31,6 +31,8 @@ export const PERMISSIONS = [
   'project:write',
   'credential:read',
   'credential:write',
+  /** Cron reconciler only — no HTTP trigger in MVP (C14). */
+  'reconciliation:run',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -54,7 +56,8 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
   'cron-treasury-monitor': ['treasury:read', 'treasury:check'],
   // No Phase 0/1 wallet-admin capabilities. Deny by default until scoping lands.
   'project-service': [],
-  'cron-reconciler': [],
+  // Scheduled reconciliation only (C14). API roles cannot trigger the sweep.
+  'cron-reconciler': ['reconciliation:run'],
 };
 
 export function isRole(value: unknown): value is Role {

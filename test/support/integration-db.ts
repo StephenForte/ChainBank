@@ -82,6 +82,7 @@ export async function truncatePhase1Tables(pool: pg.Pool): Promise<void> {
   await pool.query(`
     TRUNCATE TABLE
       alerts,
+      reconciliation_runs,
       funding_transactions,
       funding_operations,
       funding_policies,
@@ -207,6 +208,8 @@ export interface SeedManagedWalletInput {
   readonly chainId: string;
   readonly address: string;
   readonly role?: 'signer' | 'relayer' | 'other';
+  readonly enabled?: boolean;
+  readonly reconciliationEnabled?: boolean;
   readonly policy?: {
     readonly minimumBalanceWei: string;
     readonly targetBalanceWei: string;
@@ -226,6 +229,8 @@ export async function seedManagedWallet(
       chainId: input.chainId,
       role: input.role ?? 'relayer',
       address: input.address.toLowerCase(),
+      enabled: input.enabled ?? true,
+      reconciliationEnabled: input.reconciliationEnabled ?? false,
     })
     .returning({ id: managedWallets.id, address: managedWallets.address });
 

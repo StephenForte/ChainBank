@@ -660,18 +660,86 @@ Local design choices (TX.7, 2026-08-01):
 - Dashboard replaces wallet-derived environment discovery with this route so
   zero-wallet environments are visible immediately after creation.
 
+### C14 — Reconciliation use case (owner: T4.1)
+
+```ts
+// Permission (src/domain/auth/roles.ts)
+'reconciliation:run'; // cron-reconciler only; API roles denied
+// No HTTP endpoint in T4.1 — T4.2 cron entry calls the use case directly.
+
+// src/app/reconciliation/reconcile-wallets.ts
+function reconcileWallets(deps, input): Promise<ReconcileWalletsResult>;
+// input: { role, credentialId, correlationId, runId? }
+// Idempotency key per wallet: `reconcile:<runId>:<walletId>`
+// operationType: 'reconcile'; requestedBy: credentialId (cron)
+
+// Ports (src/app/ports.ts)
+interface TreasuryOutgoingScanner {
+  getConfirmedTransactionCount(address): Promise<ConfirmedNonceResult>;
+  findOutgoingByNonce({ fromAddress, nonce, lookbackBlocks }): Promise<FindByNonceResult>;
+  listRecentOutgoingTransfers({ fromAddress, lookbackBlocks }): Promise<OutgoingScanResult>;
+}
+interface ReconciliationRunRepository {
+  insertStarted / markFinished / findById;
+}
+interface ReconciliationFundingQuery {
+  listSubmissionUnknownByTreasury(treasuryId);
+  listRecordedTransactionHashesByTreasury(treasuryId);
+}
+```
+
+Local design choices (T4.1, 2026-08-01):
+
+- **Compose C7 only:** every submit goes through `dispatchFunding`; never a parallel
+  signing path. Serial wallet loop; advisory lock serializes against API funding
+  (P4-US2).
+- **Eligibility:** enabled wallet + `reconciliationEnabled` + enabled project +
+  enabled environment. Paginate `managedWallets.list({ enabled: true })` to
+  completion; filter the rest in-app (never silently cap).
+- **Top-up rule (P4-US1 / C2):** fund only when fresh balance is **below** minimum;
+  at-or-above minimum is a no-op even when below target.
+- **Reserve stop-and-continue:** first `blocked/reserve` (or post-stop assessment)
+  records the wallet and continues the sweep; later below-minimum wallets are
+  assessed as blocked without submitting. C10 `notifyTreasuryReserveRefusal` /
+  `resolveTreasuryReserveAlert` reuse the ensure-funded pattern (actor
+  `{ type: 'cron', id: credentialId }`) — one alert per treasury per burst.
+- **Run summary storage:** new table `reconciliation_runs` (migration `0004`), not
+  a typed `funding_operations` row — run-level counters and findings are not a
+  per-wallet funding operation. Columns: assessed/funded/noop/blocked/failed,
+  wei transferred, submission_unknown resolved/left-pending, unexplained transfer
+  count, outgoing scan status, findings JSON, started/finished timestamps.
+- **`submission_unknown` settlement (C4):** confirmed account nonce ≤ recorded
+  nonce → leave pending. When nonce has advanced, scan for the treasury transfer
+  at that nonce within the lookback. Match on destination + amount →
+  `markSubmitted` then `trackTransaction`. Different transfer → `markReplaced`.
+  RPC incomplete or no evidence within lookback → leave pending and report —
+  never guess a terminal state.
+- **Crash-orphan detection (T1.9 follow-up):** scan treasury outgoing native
+  transfers (`value > 0`) over the lookback; compare hashes to recorded
+  `funding_transactions.transaction_hash` rows. Unexplained transfers are
+  **critical** findings in the run summary and are **never** silently inserted
+  into history (possible crash-orphan or key compromise). RPC scan failure ⇒
+  finding `outgoing_scan_incomplete`, status `incomplete` — not a clean report.
+- **Lookback bound:** default `20_000` blocks (~2.8 days at Sepolia ~12s). Passed
+  as `ReconcileWalletsDependencies.outgoingLookbackBlocks`; env
+  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` registered for T4.2 to wire into config.
+- **Authz:** `assertPermission(role, 'reconciliation:run')`. Operator /
+  project-service / read-only lack the permission. No route registration in this
+  task.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
-| Var                                 | Service roles                  | Required                    | Default                                          | Owner task                  |
-| ----------------------------------- | ------------------------------ | --------------------------- | ------------------------------------------------ | --------------------------- |
-| `TREASURY_PRIVATE_KEY`              | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                        |
-| `FUNDING_ENABLED`                   | all                            | no                          | `false`                                          | exists (gate flips in T1.4) |
-| `FUNDING_KILL_SWITCH`               | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                        |
-| `TREASURY_MINIMUM_RESERVE_ETH`      | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)   |
-| `FUNDING_CONFIRMATIONS`             | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)    |
-| `FUNDING_CONFIRMATION_TIMEOUT_MS`   | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
-| `ALERT_REMINDER_INTERVAL_HOURS`     | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
-| `RECONCILE_FAILURE_ALERT_THRESHOLD` | reconciler                     | no                          | `3`                                              | T4.3                        |
+| Var                                  | Service roles                  | Required                    | Default                                          | Owner task                  |
+| ------------------------------------ | ------------------------------ | --------------------------- | ------------------------------------------------ | --------------------------- |
+| `TREASURY_PRIVATE_KEY`               | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                        |
+| `FUNDING_ENABLED`                    | all                            | no                          | `false`                                          | exists (gate flips in T1.4) |
+| `FUNDING_KILL_SWITCH`                | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                        |
+| `TREASURY_MINIMUM_RESERVE_ETH`       | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)   |
+| `FUNDING_CONFIRMATIONS`              | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)    |
+| `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
+| `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
+| `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                        |
+| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000`                                          | T4.1 (wired in T4.2)        |
 
 ## 4. Decision log (append-only)
 
@@ -705,3 +773,4 @@ Local design choices (TX.7, 2026-08-01):
 - 2026-08-01 — T2.2 published C11: `POST /v1/environments/{id}/ensure-ready` composes `ensureWalletFunded` per enabled wallet with overall ready/degraded/pending/blocked precedence and env-level idempotency key namespaced per wallet.
 - 2026-08-01 — T1.9 added concurrency/crash-recovery integration coverage for `ensureWalletFunded` and the ensure-funded route (parallel distinct keys, route idempotency namespacing, C4 in-flight pending-tx gate, advisory-lock abort behavior, reserve in-flight accounting under parallelism). No new interface contract. Confirmed two follow-ups for the operator: the confirm-outside-lock race (stale balance read + fast confirmation can double-fund a wallet across distinct keys) and the crash-after-broadcast gap (terminated backend rolls back the in-lock rows, so a broadcast transfer can leave no DB trace for reconciliation).
 - 2026-08-01 — TX.8 amended C7: `dispatchFunding` re-reads wallet and treasury balances inside the advisory lock and recomputes top-up / reserve from those fresh values, so a confirm-outside-lock race cannot sign a second transfer from a stale pre-lock observation (AGENTS.md §7.3).
+- 2026-08-01 — T4.1 published C14: `reconcileWallets` use case (below-minimum sweep via `dispatchFunding`, reserve stop-and-continue, `submission_unknown` evidence-based settlement, crash-orphan outgoing scan, `reconciliation_runs` migration `0004`, permission `reconciliation:run` for cron-reconciler only).

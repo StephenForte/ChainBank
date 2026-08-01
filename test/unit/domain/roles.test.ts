@@ -39,8 +39,7 @@ describe('role permissions', () => {
     expect(roleHasPermission('cron-treasury-monitor', 'wallet:write')).toBe(false);
   });
 
-  it('denies by default for roles with no granted permissions', () => {
-    const deferred: readonly Role[] = ['project-service', 'cron-reconciler'];
+  it('denies by default for project-service until scoping grants capabilities', () => {
     const permissions: readonly Permission[] = [
       'treasury:read',
       'treasury:check',
@@ -52,11 +51,36 @@ describe('role permissions', () => {
       'project:write',
       'credential:read',
       'credential:write',
+      'reconciliation:run',
     ];
-    for (const role of deferred) {
-      for (const permission of permissions) {
-        expect(roleHasPermission(role, permission)).toBe(false);
-      }
+    for (const permission of permissions) {
+      expect(roleHasPermission('project-service', permission)).toBe(false);
+    }
+  });
+
+  it('grants cron-reconciler only reconciliation:run (C14)', () => {
+    expect(roleHasPermission('cron-reconciler', 'reconciliation:run')).toBe(true);
+    const denied: readonly Permission[] = [
+      'treasury:read',
+      'treasury:check',
+      'treasury:write',
+      'email:test',
+      'wallet:read',
+      'wallet:write',
+      'project:read',
+      'project:write',
+      'credential:read',
+      'credential:write',
+    ];
+    for (const permission of denied) {
+      expect(roleHasPermission('cron-reconciler', permission)).toBe(false);
+    }
+  });
+
+  it('denies reconciliation:run for API roles', () => {
+    const apiRoles: readonly Role[] = ['operator', 'project-service', 'read-only'];
+    for (const role of apiRoles) {
+      expect(roleHasPermission(role, 'reconciliation:run')).toBe(false);
     }
   });
 

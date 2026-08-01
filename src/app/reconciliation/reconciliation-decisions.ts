@@ -1,0 +1,140 @@
+import type { ManagedWallet, TreasuryOutgoingTransfer } from '../ports.js';
+
+/**
+ * Pure sweep / scan decision helpers for reconciliation (C14).
+ * No I/O — unit-tested independently of dispatch and RPC.
+ */
+
+export type SweepWalletOutcome =
+  | { readonly kind: 'no-op'; readonly reason: 'at-or-above-minimum' }
+  | { readonly kind: 'needs-funding' }
+  | { readonly kind: 'blocked'; readonly reason: 'reserve-stop' | 'missing-policy' }
+  | {
+      readonly kind: 'excluded';
+      readonly reason:
+        'disabled-wallet' | 'disabled-project' | 'disabled-environment' | 'reconciliation-disabled';
+    };
+
+/**
+ * P4-US1 eligibility: enabled wallet with reconciliationEnabled, under an
+ * enabled project and environment.
+ */
+export function isEligibleForReconciliation(wallet: ManagedWallet): boolean {
+  return (
+    wallet.enabled && wallet.reconciliationEnabled && wallet.project.enabled && wallet.environment.enabled
+  );
+}
+
+/**
+ * Pre-dispatch assessment for one wallet.
+ *
+ * When `reserveStopped` is true, wallets that would need funding are recorded
+ * as blocked without submitting (C14 stop-and-continue).
+ */
+export function assessWalletForSweep(input: {
+  readonly wallet: ManagedWallet;
+  readonly balanceWei: bigint;
+  readonly reserveStopped: boolean;
+}): SweepWalletOutcome {
+  if (!input.wallet.enabled) {
+    return { kind: 'excluded', reason: 'disabled-wallet' };
+  }
+  if (!input.wallet.reconciliationEnabled) {
+    return { kind: 'excluded', reason: 'reconciliation-disabled' };
+  }
+  if (!input.wallet.project.enabled) {
+    return { kind: 'excluded', reason: 'disabled-project' };
+  }
+  if (!input.wallet.environment.enabled) {
+    return { kind: 'excluded', reason: 'disabled-environment' };
+  }
+  if (input.wallet.policy === undefined) {
+    return { kind: 'blocked', reason: 'missing-policy' };
+  }
+
+  // At-or-above minimum is a no-op even when below target (P4-US1 / C2).
+  if (input.balanceWei >= input.wallet.policy.minimumBalanceWei) {
+    return { kind: 'no-op', reason: 'at-or-above-minimum' };
+  }
+
+  if (input.reserveStopped) {
+    return { kind: 'blocked', reason: 'reserve-stop' };
+  }
+
+  return { kind: 'needs-funding' };
+}
+
+export type OutgoingClassification = { readonly kind: 'explained' } | { readonly kind: 'unexplained' };
+
+/**
+ * An on-chain treasury transfer with no matching funding_transactions hash is
+ * a critical finding — never silently adopted into history (C14 / T1.9).
+ */
+export function classifyOutgoingAgainstRecords(
+  transfer: TreasuryOutgoingTransfer,
+  recordedHashesLowercase: ReadonlySet<string>,
+): OutgoingClassification {
+  const hash = transfer.transactionHash.toLowerCase();
+  if (recordedHashesLowercase.has(hash)) {
+    return { kind: 'explained' };
+  }
+  return { kind: 'unexplained' };
+}
+
+/**
+ * Positive-evidence match: the mined transfer at the recorded nonce is ours
+ * only when destination and amount both match the submission_unknown row.
+ */
+export function isMatchingSubmissionTransfer(input: {
+  readonly transfer: TreasuryOutgoingTransfer;
+  readonly walletAddress: string;
+  readonly amountWei: bigint;
+}): boolean {
+  if (input.transfer.toAddress === undefined) {
+    return false;
+  }
+  if (input.transfer.toAddress.toLowerCase() !== input.walletAddress.toLowerCase()) {
+    return false;
+  }
+  return input.transfer.valueWei === input.amountWei;
+}
+
+export interface SweepCounters {
+  readonly assessed: number;
+  readonly funded: number;
+  readonly noop: number;
+  readonly blocked: number;
+  readonly failed: number;
+  readonly weiTransferred: bigint;
+}
+
+export function emptySweepCounters(): SweepCounters {
+  return {
+    assessed: 0,
+    funded: 0,
+    noop: 0,
+    blocked: 0,
+    failed: 0,
+    weiTransferred: 0n,
+  };
+}
+
+export function addSweepOutcome(
+  counters: SweepCounters,
+  outcome: 'funded' | 'noop' | 'blocked' | 'failed',
+  transferredWei: bigint = 0n,
+): SweepCounters {
+  return {
+    assessed: counters.assessed + 1,
+    funded: counters.funded + (outcome === 'funded' ? 1 : 0),
+    noop: counters.noop + (outcome === 'noop' ? 1 : 0),
+    blocked: counters.blocked + (outcome === 'blocked' ? 1 : 0),
+    failed: counters.failed + (outcome === 'failed' ? 1 : 0),
+    weiTransferred: counters.weiTransferred + transferredWei,
+  };
+}
+
+/** Deterministic per-run, per-wallet idempotency key (C14). */
+export function reconciliationIdempotencyKey(runId: string, walletId: string): string {
+  return `reconcile:${runId}:${walletId}`;
+}

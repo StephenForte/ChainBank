@@ -1,0 +1,20 @@
+CREATE TABLE "reconciliation_runs" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"run_id" text NOT NULL,
+	"requested_by" text NOT NULL,
+	"started_at" timestamp with time zone NOT NULL,
+	"finished_at" timestamp with time zone,
+	"wallets_assessed" integer DEFAULT 0 NOT NULL,
+	"wallets_funded" integer DEFAULT 0 NOT NULL,
+	"wallets_noop" integer DEFAULT 0 NOT NULL,
+	"wallets_blocked" integer DEFAULT 0 NOT NULL,
+	"wallets_failed" integer DEFAULT 0 NOT NULL,
+	"wei_transferred" numeric(78, 0) DEFAULT '0' NOT NULL,
+	"submission_unknown_resolved" integer DEFAULT 0 NOT NULL,
+	"submission_unknown_left_pending" integer DEFAULT 0 NOT NULL,
+	"unexplained_transfer_count" integer DEFAULT 0 NOT NULL,
+	"outgoing_scan_status" text DEFAULT 'complete' NOT NULL,
+	"findings_json" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"error_code" text,
+	"error_summary" text
+);
