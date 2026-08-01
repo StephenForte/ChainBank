@@ -1,5 +1,7 @@
 import type {
   BalanceReader,
+  ConfirmedNonceResult,
+  FindByNonceResult,
   FundingDispatchLock,
   FundingDispatchUnitOfWork,
   FundingOperation,
@@ -9,8 +11,14 @@ import type {
   FundingTransactionRepository,
   InsertFundingOperationInput,
   InsertFundingTransactionInput,
+  OutgoingScanResult,
+  ReconciliationFundingQuery,
+  ReconciliationRun,
+  ReconciliationRunRepository,
   TransactionReceiptTracker,
   TransactionTrackingOutcome,
+  TreasuryOutgoingScanner,
+  TreasuryOutgoingTransfer,
   TreasurySigner,
 } from '../../src/app/ports.js';
 import type { BalanceReading } from '../../src/domain/balance-reading.js';
@@ -456,3 +464,147 @@ export function createControllableSigner(options: {
 }
 
 export { isUniqueViolation };
+
+/** In-memory reconciliation run store for unit / integration fakes. */
+export function createInMemoryReconciliationRunRepository(): ReconciliationRunRepository & {
+  readonly runsById: Map<string, ReconciliationRun>;
+} {
+  const runsById = new Map<string, ReconciliationRun>();
+  return {
+    runsById,
+    insertStarted(input) {
+      const run: ReconciliationRun = {
+        id: input.id,
+        runId: input.runId,
+        requestedBy: input.requestedBy,
+        startedAt: input.startedAt,
+        finishedAt: undefined,
+        walletsAssessed: 0,
+        walletsFunded: 0,
+        walletsNoop: 0,
+        walletsBlocked: 0,
+        walletsFailed: 0,
+        weiTransferred: 0n,
+        submissionUnknownResolved: 0,
+        submissionUnknownLeftPending: 0,
+        unexplainedTransferCount: 0,
+        outgoingScanStatus: 'complete',
+        findings: [],
+        errorCode: undefined,
+        errorSummary: undefined,
+      };
+      runsById.set(run.id, run);
+      return Promise.resolve(run);
+    },
+    markFinished(input) {
+      const existing = runsById.get(input.id);
+      if (existing === undefined) {
+        return Promise.reject(new ChainBankError('DATABASE_UNAVAILABLE', `missing run ${input.id}`));
+      }
+      const next: ReconciliationRun = {
+        ...existing,
+        finishedAt: input.finishedAt,
+        walletsAssessed: input.walletsAssessed,
+        walletsFunded: input.walletsFunded,
+        walletsNoop: input.walletsNoop,
+        walletsBlocked: input.walletsBlocked,
+        walletsFailed: input.walletsFailed,
+        weiTransferred: input.weiTransferred,
+        submissionUnknownResolved: input.submissionUnknownResolved,
+        submissionUnknownLeftPending: input.submissionUnknownLeftPending,
+        unexplainedTransferCount: input.unexplainedTransferCount,
+        outgoingScanStatus: input.outgoingScanStatus,
+        findings: input.findings,
+        errorCode: input.errorCode,
+        errorSummary: input.errorSummary,
+      };
+      runsById.set(next.id, next);
+      return Promise.resolve(next);
+    },
+    findById(id) {
+      return Promise.resolve(runsById.get(id));
+    },
+  };
+}
+
+/** Controllable outgoing scanner for reconciliation unit/integration tests. */
+export function createFakeOutgoingScanner(options?: {
+  readonly confirmedNonce?: number | (() => number);
+  readonly transfers?: readonly TreasuryOutgoingTransfer[];
+  readonly findByNonce?: (nonce: number) => FindByNonceResult;
+  readonly listResult?: OutgoingScanResult;
+  readonly nonceResult?: ConfirmedNonceResult;
+}): TreasuryOutgoingScanner & {
+  setConfirmedNonce(nonce: number): void;
+  setTransfers(transfers: readonly TreasuryOutgoingTransfer[]): void;
+  setListIncomplete(errorCode: string, reason: string): void;
+} {
+  let confirmedNonce =
+    typeof options?.confirmedNonce === 'function' ? options.confirmedNonce() : (options?.confirmedNonce ?? 0);
+  let transfers = [...(options?.transfers ?? [])];
+  let listOverride: OutgoingScanResult | undefined = options?.listResult;
+  let nonceOverride: ConfirmedNonceResult | undefined = options?.nonceResult;
+
+  return {
+    setConfirmedNonce(nonce) {
+      confirmedNonce = nonce;
+      nonceOverride = undefined;
+    },
+    setTransfers(next) {
+      transfers = [...next];
+      listOverride = undefined;
+    },
+    setListIncomplete(errorCode, reason) {
+      listOverride = { kind: 'incomplete', errorCode, reason };
+    },
+    getConfirmedTransactionCount() {
+      if (nonceOverride !== undefined) {
+        return Promise.resolve(nonceOverride);
+      }
+      return Promise.resolve({ kind: 'ok' as const, confirmedNonce });
+    },
+    findOutgoingByNonce(input) {
+      if (options?.findByNonce !== undefined) {
+        return Promise.resolve(options.findByNonce(input.nonce));
+      }
+      if (listOverride?.kind === 'incomplete') {
+        return Promise.resolve(listOverride);
+      }
+      const match = transfers.find((transfer) => transfer.nonce === input.nonce);
+      if (match === undefined) {
+        return Promise.resolve({ kind: 'not_found' as const });
+      }
+      return Promise.resolve({ kind: 'found' as const, transfer: match });
+    },
+    listRecentOutgoingTransfers() {
+      if (listOverride !== undefined) {
+        return Promise.resolve(listOverride);
+      }
+      return Promise.resolve({ kind: 'ok' as const, transfers });
+    },
+  };
+}
+
+/** Builds a ReconciliationFundingQuery over in-memory funding transaction rows. */
+export function createInMemoryReconciliationFundingQuery(
+  txsById: Map<string, FundingTransaction>,
+): ReconciliationFundingQuery {
+  return {
+    listSubmissionUnknownByTreasury(treasuryId) {
+      return Promise.resolve(
+        [...txsById.values()].filter(
+          (tx) => tx.treasuryId === treasuryId && tx.status === 'submission_unknown',
+        ),
+      );
+    },
+    listRecordedTransactionHashesByTreasury(treasuryId) {
+      const hashes: string[] = [];
+      for (const tx of txsById.values()) {
+        if (tx.treasuryId === treasuryId && tx.transactionHash !== undefined) {
+          hashes.push(tx.transactionHash.toLowerCase());
+        }
+      }
+      return Promise.resolve(hashes);
+    },
+  };
+}

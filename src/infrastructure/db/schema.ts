@@ -349,6 +349,33 @@ export const alerts = pgTable('alerts', {
   metadataJson: jsonb('metadata_json').notNull().default({}),
 });
 
+/**
+ * Run-level summary for scheduled reconciliation (C14 / P4-US1).
+ * Append-oriented: rows are never deleted to hide an error.
+ */
+export const reconciliationRuns = pgTable('reconciliation_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Correlation / run id shared with per-wallet idempotency keys. */
+  runId: text('run_id').notNull(),
+  requestedBy: text('requested_by').notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  walletsAssessed: integer('wallets_assessed').notNull().default(0),
+  walletsFunded: integer('wallets_funded').notNull().default(0),
+  walletsNoop: integer('wallets_noop').notNull().default(0),
+  walletsBlocked: integer('wallets_blocked').notNull().default(0),
+  walletsFailed: integer('wallets_failed').notNull().default(0),
+  weiTransferred: weiColumn('wei_transferred').notNull().default('0'),
+  submissionUnknownResolved: integer('submission_unknown_resolved').notNull().default(0),
+  submissionUnknownLeftPending: integer('submission_unknown_left_pending').notNull().default(0),
+  unexplainedTransferCount: integer('unexplained_transfer_count').notNull().default(0),
+  /** complete | incomplete — incomplete when an RPC scan could not finish. */
+  outgoingScanStatus: text('outgoing_scan_status').notNull().default('complete'),
+  findingsJson: jsonb('findings_json').notNull().default([]),
+  errorCode: text('error_code'),
+  errorSummary: text('error_summary'),
+});
+
 export const chainsRelations = relations(chains, ({ many }) => ({
   treasuries: many(treasuries),
   balanceObservations: many(balanceObservations),
@@ -359,6 +386,8 @@ export const treasuriesRelations = relations(treasuries, ({ one, many }) => ({
   chain: one(chains, { fields: [treasuries.chainId], references: [chains.id] }),
   fundingTransactions: many(fundingTransactions),
 }));
+
+export const reconciliationRunsRelations = relations(reconciliationRuns, () => ({}));
 
 export const balanceObservationsRelations = relations(balanceObservations, ({ one }) => ({
   chain: one(chains, { fields: [balanceObservations.chainId], references: [chains.id] }),
@@ -446,3 +475,4 @@ export type FundingPolicyRow = typeof fundingPolicies.$inferSelect;
 export type FundingOperationRow = typeof fundingOperations.$inferSelect;
 export type FundingTransactionRow = typeof fundingTransactions.$inferSelect;
 export type AlertRow = typeof alerts.$inferSelect;
+export type ReconciliationRunRow = typeof reconciliationRuns.$inferSelect;

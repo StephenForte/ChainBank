@@ -692,3 +692,145 @@ export interface TransactionReceiptTracker {
     readonly nonce: number;
   }): Promise<TransactionTrackingOutcome>;
 }
+
+// ---------------------------------------------------------------------------
+// Reconciliation ports (C14)
+// ---------------------------------------------------------------------------
+
+/** Native transfer observed on-chain from the treasury during an outgoing scan. */
+export interface TreasuryOutgoingTransfer {
+  readonly transactionHash: string;
+  readonly fromAddress: string;
+  readonly toAddress: string | undefined;
+  readonly valueWei: bigint;
+  readonly nonce: number;
+  readonly blockNumber: bigint;
+}
+
+export type OutgoingScanResult =
+  | { readonly kind: 'ok'; readonly transfers: readonly TreasuryOutgoingTransfer[] }
+  | { readonly kind: 'incomplete'; readonly errorCode: string; readonly reason: string };
+
+export type FindByNonceResult =
+  | { readonly kind: 'found'; readonly transfer: TreasuryOutgoingTransfer }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'incomplete'; readonly errorCode: string; readonly reason: string };
+
+export type ConfirmedNonceResult =
+  | { readonly kind: 'ok'; readonly confirmedNonce: number }
+  | { readonly kind: 'unavailable'; readonly errorCode: string; readonly reason: string };
+
+/**
+ * Public-client scan of treasury outgoing native transfers (C14).
+ * Fail closed: RPC failure yields incomplete / unavailable, never an empty
+ * "clean" report that could hide crash-orphans or key compromise.
+ */
+export interface TreasuryOutgoingScanner {
+  getConfirmedTransactionCount(address: string): Promise<ConfirmedNonceResult>;
+  findOutgoingByNonce(input: {
+    readonly fromAddress: string;
+    readonly nonce: number;
+    readonly lookbackBlocks: bigint;
+  }): Promise<FindByNonceResult>;
+  listRecentOutgoingTransfers(input: {
+    readonly fromAddress: string;
+    readonly lookbackBlocks: bigint;
+  }): Promise<OutgoingScanResult>;
+}
+
+/** Persisted reconciliation run summary (P4-US1). */
+export interface ReconciliationRun {
+  readonly id: string;
+  readonly runId: string;
+  readonly requestedBy: string;
+  readonly startedAt: Date;
+  readonly finishedAt: Date | undefined;
+  readonly walletsAssessed: number;
+  readonly walletsFunded: number;
+  readonly walletsNoop: number;
+  readonly walletsBlocked: number;
+  readonly walletsFailed: number;
+  readonly weiTransferred: bigint;
+  readonly submissionUnknownResolved: number;
+  readonly submissionUnknownLeftPending: number;
+  readonly unexplainedTransferCount: number;
+  readonly outgoingScanStatus: 'complete' | 'incomplete';
+  readonly findings: readonly ReconciliationFinding[];
+  readonly errorCode: string | undefined;
+  readonly errorSummary: string | undefined;
+}
+
+export type ReconciliationFinding =
+  | {
+      readonly kind: 'unexplained_outgoing_transfer';
+      readonly severity: 'critical';
+      readonly treasuryId: string;
+      readonly transactionHash: string;
+      readonly toAddress: string | undefined;
+      readonly valueWei: string;
+      readonly nonce: number;
+      readonly blockNumber: string;
+    }
+  | {
+      readonly kind: 'outgoing_scan_incomplete';
+      readonly severity: 'critical';
+      readonly treasuryId: string;
+      readonly errorCode: string;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'submission_unknown_unresolved';
+      readonly severity: 'warning';
+      readonly treasuryId: string;
+      readonly transactionId: string;
+      readonly nonce: number | undefined;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'wallet_assessment_failed';
+      readonly severity: 'warning';
+      readonly walletId: string;
+      readonly reason: string;
+    };
+
+export interface InsertReconciliationRunInput {
+  readonly id: string;
+  readonly runId: string;
+  readonly requestedBy: string;
+  readonly startedAt: Date;
+}
+
+export interface FinishReconciliationRunInput {
+  readonly id: string;
+  readonly finishedAt: Date;
+  readonly walletsAssessed: number;
+  readonly walletsFunded: number;
+  readonly walletsNoop: number;
+  readonly walletsBlocked: number;
+  readonly walletsFailed: number;
+  readonly weiTransferred: bigint;
+  readonly submissionUnknownResolved: number;
+  readonly submissionUnknownLeftPending: number;
+  readonly unexplainedTransferCount: number;
+  readonly outgoingScanStatus: 'complete' | 'incomplete';
+  readonly findings: readonly ReconciliationFinding[];
+  readonly errorCode: string | undefined;
+  readonly errorSummary: string | undefined;
+}
+
+export interface ReconciliationRunRepository {
+  insertStarted(input: InsertReconciliationRunInput): Promise<ReconciliationRun>;
+  markFinished(input: FinishReconciliationRunInput): Promise<ReconciliationRun>;
+  findById(id: string): Promise<ReconciliationRun | undefined>;
+}
+
+/**
+ * Read-side queries over funding_transactions that reconciliation needs.
+ * Kept separate from FundingTransactionRepository so T4.1 does not edit the
+ * dispatch-owned repository adapter (TX.8 / file-scope rules).
+ */
+export interface ReconciliationFundingQuery {
+  listSubmissionUnknownByTreasury(treasuryId: string): Promise<readonly FundingTransaction[]>;
+  /** Lowercase hashes recorded for this treasury (any status with a hash). */
+  listRecordedTransactionHashesByTreasury(treasuryId: string): Promise<readonly string[]>;
+}
