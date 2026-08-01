@@ -9,9 +9,9 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-01)
+## Status (updated 2026-08-01, Wave 4 complete)
 
-`main` is at 310 unit tests plus 45 integration tests, with CI (format, lint,
+`main` is at 361 unit tests plus 63 integration tests, with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 No open PRs, no stale branches.
 
@@ -36,11 +36,11 @@ No open PRs, no stale branches.
 | TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13   |
 | TX.4 credential list / disable / revoke / enable             | ✅ done     | PR #16, #17        |
 | TX.6 alert lookup filtered by alert type                     | ✅ done     | PR #15             |
-| Remaining: T1.9, T2.2, TX.5, TX.7, all of Phase 4            | not started | —                  |
-
-**Correction:** PR #23 only _tracked_ TX.7 (the missing `GET /v1/projects/:id/environments`
-route) as a plan entry — it did not implement it. Confirmed by grep: only `POST` exists
-on that path. TX.7 remains not started; do not treat it as done.
+| T1.9 concurrency integration tests                           | ✅ done     | PR #35             |
+| T2.2 `ensure-ready` endpoint (contract C11)                  | ✅ done     | PR #33             |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done     | PR #32             |
+| TX.7 list-environments route (C13)                           | ✅ done     | PR #34             |
+| Remaining: T4.1–T4.4, TX.8, TX.3 refresh                     | not started | —                  |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -58,30 +58,42 @@ both produced fixes that shipped before merge:
   key is asserted to match the reserve-enforced treasury row; idempotency keys are
   namespaced per wallet.
 
-**Funding is reachable but still disabled.** The PRD §19 runbooks exist, which was
-the §20 gate, and TX.4 removed the SQL-only credential paths. **TX.5** remains: there
-is still no supported way to complete a treasury key rotation. It fails closed rather
-than mis-spending, but leaves a routine rotation dependent on hand-written SQL, so it
-belongs before `FUNDING_ENABLED=true` in a hosted environment. See the "Before arming
-funding" checklist at the end of this document.
+**Funding is LIVE (armed 2026-08-01).** Every pre-arming item closed: TX.5 shipped
+the treasury lifecycle endpoint and ambiguity guard, the stray Phase 4 treasury row
+was disabled through it, and the kill switch was released. Hosted verification
+passed all four phases (see `docs/runbooks/verify-hosted-deployment.md`, including
+the two documentation errors the live run disproved).
 
-**Hosted verification is complete.** All four phases passed — read-only, alerting,
-verifying the brakes, and live funding on Sepolia — satisfying the PRD §20
-requirement for a verified Render deployment. See
-`docs/runbooks/verify-hosted-deployment.md` for the procedure and recorded results,
-including the two documentation errors the live run disproved.
+**Current hosted state:** `FUNDING_ENABLED=true`, `FUNDING_KILL_SWITCH=false` —
+funding armed and serving. The emergency stop is
+`docs/runbooks/disable-all-automated-funding.md`.
 
-**Current hosted state:** `FUNDING_ENABLED=true` with `FUNDING_KILL_SWITCH=true` —
-funding armed but stopped. The kill switch should stay on until TX.5 closes the
-treasury-rotation gap.
+**Two confirmed defects carried into Wave 5** (found by T1.9, corroborating a T2.2
+caveat; recorded in the `tasks/DECISIONS.md` log, 2026-08-01):
+
+1. **Confirm-outside-lock race (TX.8).** Wallet balances are read outside the
+   advisory lock; with a fast confirmation, a second concurrent `ensure-funded`
+   with a distinct idempotency key can pass the in-flight gate after the winner
+   confirms and submit a second transfer computed from its stale balance read.
+   Bounded overshoot (≤ one extra top-up; reserve still enforced per-transfer) and
+   a narrow window on a real chain — judged safe to leave armed, not safe to leave
+   unfixed.
+2. **Crash-after-broadcast gap (folded into T4.1).** A backend killed mid-send
+   rolls back the in-lock rows: the operation stays `pending`, the wallet is NOT
+   wedged, and a transfer that reached the network leaves no DB trace and no
+   recorded nonce. Row-based reconciliation cannot find it; T4.1 must compare
+   on-chain treasury transactions against expected state, not only resolve stored
+   `submission_unknown` rows.
 
 ### Next wave
 
-T1.8 is merged and hosted Phase 2 confirmed it against real alert traffic. In
-parallel now: **T2.2** 🔴 `ensure-ready`, **T1.9** 🔴 concurrency tests, **TX.5** 🔴
-treasury row lifecycle, **TX.7** 🟢 list-environments route (not yet started —
-see the correction above). Hosted verification is complete; TX.5 is the only item
-between this wave and releasing the kill switch.
+**Wave 5a (now, parallel):** **T4.1** 🔴 reconciliation use case (scope widened —
+see entry), **TX.8** 🔴 confirm-outside-lock race fix, **TX.3** 🟢 docs refresh
+(README + PRD §25 appendix to merged state).
+**Wave 5b (after T4.1):** T4.2 🟢 reconciler cron entry, T4.3 🟢 reconciliation
+failure alerting.
+**Wave 5c (after T4.2 + TX.8):** T4.4 🔴 cron-vs-API concurrency e2e — reconfirm
+D6 (Anvil, provisional) before starting.
 
 ## Commit and merge contract
 
@@ -124,9 +136,14 @@ Specific collision rules:
   entry at the very end of their sections. Expect a conflict on rebase and resolve
   it by **keeping both sides** — these are append-only logs, never either/or.
   (Every single rebase this project has done conflicted here.)
-- **Interface contract numbers:** before claiming `C<n>`, grep the file for the
-  highest existing number and take the next one. (Two workers both published a
-  "C5" and one had to be renumbered during a rebase.)
+- **Interface contract numbers:** if your prompt pre-assigns a number, **that
+  assignment overrides everything else** — use it even if the file's highest
+  number suggests otherwise; the planner reserves numbers across in-flight tasks.
+  Only when no number was pre-assigned: grep the file for the highest existing
+  number and take the next one. (Two workers both published a "C5" and one had to
+  be renumbered during a rebase; in Wave 4 a worker grepped its way to "C11"
+  despite a pre-assigned C12, colliding with another in-flight task's
+  pre-assignment.)
 - **Migrations:** run `npm run db:generate` only after rebasing onto latest `main`,
   so your migration number does not collide with one merged while you worked.
 - **Never weaken a security check or an existing test to make your change pass**
@@ -256,19 +273,25 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   persist-then-send dedupe, resolves on the next successful transfer for that
   treasury (contract C10). Hosted Phase 2 confirmed the alert lifecycle against
   real traffic — see `docs/runbooks/verify-hosted-deployment.md`.
-- **T1.9** 🔴 Concurrency integration tests `[T1.5, T1.6]`
-  Parallel ensure-funded, lock expiry/crash recovery, idempotency replay,
-  pending-tx dedupe. Extends the 31 integration tests already on `main`.
+- **T1.9** ✅ 🔴 Concurrency integration tests `[T1.5, T1.6]` — DONE (PR #35)
+  Parallel ensure-funded, crash recovery via `pg_terminate_backend`, idempotency
+  replay + cross-wallet namespacing, pending-tx dedupe across all three C4
+  in-flight states, reserve in-flight accounting under parallelism — all with
+  deterministic gating and signer-call-count assertions. Confirmed two defects
+  now carried into Wave 5: the confirm-outside-lock race (**TX.8**) and the
+  crash-after-broadcast reconciliation gap (folded into **T4.1**).
 
 ### Phase 2 — Projects, environments, readiness
 
 - **T2.1** ✅ 🟢 Projects/environments APIs + scoped authz `[T1.1]` — DONE (PR #7)
   CRUD per P2-US1, `api_credential_scopes` (migration `0002`, D10),
   `authorizeScope` (contract C6), deny-by-default, disable-without-delete.
-- **T2.2** 🔴 `POST /v1/environments/{id}/ensure-ready` `[T1.6, T2.1]`
-  Orchestrates all startup wallets: parallel reads, serialized dispatch, per-wallet
-  no-op/funded/pending/warning/blocked, overall ready/degraded/pending/blocked,
-  idempotency key, concurrent-request safety.
+- **T2.2** ✅ 🔴 `POST /v1/environments/{id}/ensure-ready` `[T1.6, T2.1]` — DONE (PR #33)
+  Composes `ensureWalletFunded` per enabled wallet (contract C11): per-wallet
+  no-op/funded/pending/warning/blocked mapped by `criticalAtStartup`, overall
+  blocked > degraded > pending > ready, env-level idempotency key namespaced per
+  wallet, concurrency and reserve-burst covered by integration tests asserting
+  signer call counts.
 - **T2.3** ✅ 🔴 Confirmation wait + status resume `[T1.5]` — DONE (PR #10)
   Configurable confirmations/timeout (D4), timeout ⇒ `pending`,
   `GET /v1/funding-operations/{id}` resumes tracking, replaced/reverted explicit,
@@ -297,21 +320,48 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
 ### Phase 4 — Managed-wallet reconciliation
 
-- **T4.1** 🔴 Reconciliation use case `[T1.5, T1.6]`
+- **T4.1** 🔴 Reconciliation use case `[T1.5, T1.6]` — contract **C14** (pre-assigned)
   Load enabled+eligible wallets, fresh reads, top-up below-minimum only, stop at
   reserve, run-level summary row. **Also owns:** resolving `submission_unknown` rows
-  by searching the treasury's transactions at the recorded nonce (T1.5 review follow-up).
+  by searching the treasury's transactions at the recorded nonce (T1.5 review
+  follow-up), **and** — scope widened 2026-08-01 after T1.9's crash-recovery
+  findings — detecting broadcast transfers with **no DB trace at all**: a backend
+  killed mid-send rolls back the in-lock rows, so reconciliation must compare the
+  treasury's on-chain outgoing transactions against expected state (recorded
+  hashes + nonce continuity), not only resolve stored rows. An on-chain transfer
+  from the treasury that no `funding_transactions` row explains is a critical
+  finding (possible key compromise or a crash-orphaned send) and must be surfaced,
+  never silently adopted.
 - **T4.2** 🟢 Reconciler cron entry + Render blueprint `[T4.1]`
   `src/jobs/wallet-reconciler.ts`, every-6h cron in `render.yaml`, separate signing
   secret group, pool closed on exit.
 - **T4.3** 🟢 Reconciliation failure alerting `[T4.1, T3.1, T3.2]`
   Consecutive-failure threshold, affected wallets + error categories, recovery
   recorded after success. Template already exists.
-- **T4.4** 🔴 Cron-vs-API concurrency e2e `[T4.2, T2.2]`
+- **T4.4** 🔴 Cron-vs-API concurrency e2e `[T4.2, T2.2, TX.8]`
   Reconciler and ensure-ready racing the same treasury: no duplicate transfers,
-  no nonce conflicts.
+  no nonce conflicts. Depends on TX.8 so the e2e locks in the fixed
+  read-inside-lock behavior rather than encoding the race. Reconfirm D6 (Anvil,
+  provisional) before starting.
 
 ### Cross-cutting
+
+- **TX.8** 🔴 Close the confirm-outside-lock funding race `[T1.5, T1.6]` — amends
+  contract **C7** (no new number)
+  Proven by T1.9 (corroborating a T2.2 caveat): wallet and treasury balances are
+  read in `ensureWalletFunded` **outside** the advisory lock; with a fast
+  confirmation, a second concurrent request with a distinct idempotency key passes
+  the in-flight gate after the winner confirms and submits a second transfer
+  computed from its stale balance read. Bounded overshoot (≤ one extra top-up),
+  but AGENTS.md §7.3 requires policy re-checks "immediately before signing" — the
+  balance underpinning the top-up calculation must be as fresh as the reserve
+  check already is. Deliver: re-read the destination wallet balance **inside**
+  `dispatchFunding`'s advisory lock (alongside the existing in-lock wallet row
+  re-resolution) and recompute/no-op the top-up from that fresh read; T1.9's
+  suite gains the previously-impossible test — parallel distinct keys with an
+  instant-confirm tracker → exactly one transfer. Touches the dispatch engine:
+  every existing funding test must pass unchanged except where a test explicitly
+  encoded the stale-read behavior (call any such change out in the handoff).
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
@@ -321,9 +371,12 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   are registered in `src/api/app.ts`. D8 was a false blocker — the dependency
   predated the plan. The T1.6 review found the rate limiter's credential key was
   dead code and proxy trust was unbounded; both are fixed.
-- **TX.3** ✅ 🟢 Docs/README per phase `[rolling]` — current as of 2026-07-29
-  README, PRD implementation appendix (§25), and this plan reflect merged state.
-  Refresh again when T2.2 or Phase 4 lands.
+- **TX.3** 🟢 Docs/README per phase `[rolling]` — **refresh due (Wave 5a)**
+  Last refreshed 2026-07-29; T2.2, TX.5, TX.7, and T1.9 have landed since and
+  funding is armed in production. Bring README and the PRD implementation
+  appendix (§25) to merged state: `ensure-ready` (C11), treasury lifecycle (C12),
+  list-environments (C13), the armed hosted state, and the two known defects
+  carried into Wave 5. This plan itself is planner-maintained — do not edit it.
 
 ### Operability gaps surfaced by the T3.4 runbooks
 
@@ -431,23 +484,27 @@ response or a routine rotation dependent on hand-written SQL.
 
 ## Remaining wave order
 
-1. **Wave 4 (now):** T2.2 🔴 `ensure-ready`, T1.9 🔴 concurrency tests, TX.5 🔴
-   treasury row lifecycle, TX.7 🟢 list-environments route — all unblocked and
-   runnable in parallel. T1.8 is already merged, so T2.2 inherits reserve alerting
-   rather than needing it retrofitted.
-2. **Wave 5:** T4.1 → T4.2 / T4.3 → T4.4.
+1. ✅ **Wave 4 (complete 2026-08-01):** TX.7 (#34) → TX.5 (#32) → T2.2 (#33) →
+   T1.9 (#35). Funding armed in production at wave close.
+2. **Wave 5a (now, parallel):** T4.1 🔴 reconciliation use case, TX.8 🔴
+   confirm-outside-lock race fix, TX.3 🟢 docs refresh.
+3. **Wave 5b (after T4.1):** T4.2 🟢 cron entry + Render blueprint, T4.3 🟢
+   failure alerting.
+4. **Wave 5c (after T4.2 + TX.8):** T4.4 🔴 cron-vs-API e2e.
 
-Merge-order cautions for Wave 4:
+Merge-order cautions for Wave 5:
 
-- T2.2 (`ensure-ready`) and T1.9 (concurrency tests) both build on the funding
-  application layer; land T2.2 first so T1.9 can cover it.
-- TX.5 changes which treasury row funding resolves to, and T2.2 fans out across many
-  wallets against one treasury. Land TX.5 before T2.2 if both are in flight, or
-  expect T2.2 to need a rebase and a re-read of its reserve assertions.
-- TX.7 is independent of everything else and safe to run at any time.
-
-Decision D6 (local chain versus mocked JSON-RPC for e2e) must be resolved before
-T4.4, and ideally before T1.9.
+- **TX.8 before T4.1 if both are ready to merge**: TX.8 changes `dispatchFunding`'s
+  contract (in-lock balance re-read), and T4.1's reconciliation composes it. They
+  can be _written_ in parallel — T4.1 composes without editing the engine — but
+  whichever merges second must rebase and re-run the full gate; expect the
+  interface-extension typecheck breakage pattern from Wave 4 (three occurrences).
+- T4.2 and T4.3 are parallel after T4.1 publishes C14; they share the reconciler
+  use case but own disjoint files (cron entry + blueprint vs. alert wiring).
+- T4.4 waits for TX.8 so the e2e asserts the fixed behavior, and needs D6
+  reconfirmed (Anvil, provisional since 2026-07-29).
+- TX.3 is docs-only and safe at any time; merge it last in 5a so it can record
+  whatever 5a lands.
 
 **Before arming funding in a hosted environment (updated 2026-08-01):**
 
@@ -467,17 +524,19 @@ T4.4, and ideally before T1.9.
 - ✅ `render.yaml` gap fixed — `FUNDING_KILL_SWITCH` (default `false`) and
   `TRUSTED_PROXY_HOPS` (`1`) are now declared in the Blueprint, so the emergency
   stop is flipping an existing value rather than creating one under pressure.
-- **TX.5 remains open.** There is still no supported way to complete a treasury key
-  rotation — changing `TREASURY_ADDRESS` inserts a second `treasuries` row and
-  funding keeps resolving to the old one until it is disabled by hand. The
-  address-only change is a **silent no-op**, not a fail-closed error (proven in
-  hosted Phase 4); only a simultaneous key rotation fails closed. Routine rotation
-  stays dependent on SQL until TX.5 lands.
+- ✅ TX.5 — treasury row lifecycle (PR #32). `PATCH /v1/treasuries/:id { enabled }`
+  plus the fail-closed ambiguity guard: an address-only `TREASURY_ADDRESS` change
+  (the silent no-op proven in hosted Phase 4) now refuses with
+  `INVALID_CONFIGURATION` until the retired row is disabled through the API.
+  Rotation no longer needs SQL — see `docs/runbooks/rotate-treasury-key.md`.
 - ✅ **Hosted verification complete** (2026-08-01). All four phases passed against
-  the live Render deployment, including a real 0.05 ETH Sepolia transfer, idempotent
-  replay, and the kill switch refusing under live conditions. See
-  `docs/runbooks/verify-hosted-deployment.md`.
-- **TX.5 is now the only blocker to releasing the kill switch.** Live testing
-  sharpened why: changing `TREASURY_ADDRESS` is a **silent no-op**, not a
-  fail-closed error — an operator can believe they rotated the treasury while
-  funding continues spending from the old one.
+  the live Render deployment, including a real 0.05 ETH Sepolia transfer
+  (independently verified on-chain), idempotent replay, and the kill switch
+  refusing under live conditions. See `docs/runbooks/verify-hosted-deployment.md`.
+
+**Checklist closed — funding armed 2026-08-01.** The stray Phase 4 treasury row
+was disabled via the TX.5 endpoint and `FUNDING_KILL_SWITCH` set to `false`. The
+list above is retained as the record of what arming required. Known accepted risk
+at arming time: the confirm-outside-lock race (TX.8, bounded overshoot, narrow
+real-chain window) — fix scheduled in Wave 5a, tracked in the defect list at the
+top of this document.
