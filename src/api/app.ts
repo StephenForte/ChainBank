@@ -12,6 +12,7 @@ import { hashApiToken } from '../shared/api-token.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerEnvironmentRoutes } from './routes/environments.js';
 import { registerFundingOperationRoutes } from './routes/funding-operations.js';
 import { registerFundingTransactionRoutes } from './routes/funding-transactions.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -101,6 +102,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   registerHealthRoutes(app, container);
   registerTreasuryRoutes(app, container);
   registerProjectRoutes(app, container);
+  registerEnvironmentRoutes(app, container);
   registerWalletRoutes(app, container);
   registerFundingOperationRoutes(app, container);
   registerFundingTransactionRoutes(app, container);
