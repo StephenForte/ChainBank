@@ -141,6 +141,8 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
         fundingOperations: createFundingOperationRepository(handle.db),
         fundingTransactions: createFundingTransactionRepository(handle.db),
         alerts: createAlertRepository(handle.db),
+        reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
+        reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
       },
       balanceReader,
       treasurySigner: signer,
@@ -149,6 +151,7 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
         kind: 'confirmed',
         confirmedAt: new Date('2026-08-01T12:00:01.000Z'),
       }),
+      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

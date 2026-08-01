@@ -50,9 +50,9 @@ interface TreasurySigner {
 
 Local design choices (T1.4, 2026-07-28):
 
-- Signing-capable role today: `web` only (`isSigningCapableRole`). Future reconciler
-  joins that helper; `treasury-monitor` always strips `TREASURY_PRIVATE_KEY` before
-  parse and never constructs a signer.
+- Signing-capable roles: `web` and `cron-reconciler` (`isSigningCapableRole`).
+  `treasury-monitor` always strips `TREASURY_PRIVATE_KEY` before parse and never
+  constructs a signer.
 - `FUNDING_KILL_SWITCH` gates `sendNativeTransfer` only (`FUNDING_DISABLED`);
   `verifyChainId` / `getTransactionCount` / `estimateTransferCostWei` remain available.
 - Gas estimation failure throws `GAS_ESTIMATION_FAILED` (no fallback constant).
@@ -727,6 +727,20 @@ Local design choices (T4.1, 2026-08-01):
   project-service / read-only lack the permission. No route registration in this
   task.
 
+T4.2 amendment (2026-08-01) — cron wiring / exit semantics (no new contract number):
+
+- Service role `cron-reconciler` is signing-capable (`isSigningCapableRole`); loads
+  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` (default `20000`), funding/signer settings,
+  thresholds, and email (for T4.3 alerting in-process). Heartbeat key is
+  `wallet-reconciler` (listed by `/health/ready` beside `web` and `treasury-monitor`).
+- Exit: run-level malfunction (`error_code` other than unset/`FUNDING_DISABLED`) →
+  process exit **non-zero**. `FUNDING_DISABLED` / kill switch is **policy** → record
+  the run, log clearly, exit **zero** (a week-long kill switch must not page every
+  six hours). Startup logs any `reconciliation_runs` with `finished_at IS NULL`
+  (aborted; never treat default `outgoing_scan_status='complete'` as clean).
+- Render: `chainbank-wallet-reconciler` cron every 6h; `TREASURY_PRIVATE_KEY` on web
+  - reconciler only — never on `chainbank-treasury-monitor`.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -739,7 +753,7 @@ Local design choices (T4.1, 2026-08-01):
 | `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
 | `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
 | `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                        |
-| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000`                                          | T4.1 (wired in T4.2)        |
+| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000`                                          | T4.2 (registered in T4.1)   |
 
 ## 4. Decision log (append-only)
 
@@ -775,3 +789,4 @@ Local design choices (T4.1, 2026-08-01):
 - 2026-08-01 — TX.8 amended C7: `dispatchFunding` re-reads wallet and treasury balances inside the advisory lock and recomputes top-up / reserve from those fresh values, so a confirm-outside-lock race cannot sign a second transfer from a stale pre-lock observation (AGENTS.md §7.3).
 - 2026-08-01 — T4.1 published C14: `reconcileWallets` use case (below-minimum sweep via `dispatchFunding`, reserve stop-and-continue, `submission_unknown` evidence-based settlement, crash-orphan outgoing scan, `reconciliation_runs` migration `0004`, permission `reconciliation:run` for cron-reconciler only).
 - 2026-08-01 — TX.3 (Wave 4 close refresh): README and PRD §25 appendix updated to merged state — ensure-ready (C11), treasury lifecycle (C12), list-environments (C13), armed hosted funding, TX.8 race closed, T4.1 reconciliation use case landed (C14) with cron wiring pending in T4.2.
+- 2026-08-01 — T4.2 wired `cron-reconciler` job + Render blueprint: signing-capable role, lookback/email config, exit semantics (policy vs malfunction), `wallet-reconciler` heartbeat; C14 amended in place (no new contract number).

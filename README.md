@@ -143,24 +143,35 @@ npm run cron:treasury-monitor
 
 The cron process loads the `treasury-monitor` config role: email settings for alert delivery, bounded DB pool, closes connections before exit. It never receives `TREASURY_PRIVATE_KEY`.
 
+### Wallet reconciler cron (local)
+
+```bash
+npm run build:server
+npm run cron:wallet-reconciler
+```
+
+Loads the `cron-reconciler` config role: DB, chain/RPC, funding/signer settings, thresholds, lookback (`RECONCILE_OUTGOING_LOOKBACK_BLOCKS`), and email (for failure alerting). Signing-capable — set `TREASURY_PRIVATE_KEY` only when `FUNDING_ENABLED=true`. Records a `wallet-reconciler` heartbeat, closes the pool before exit. Funding disabled / kill switch exits **zero** (policy); DB/RPC run-level failures exit **non-zero**.
+
 ## Scripts
 
-| Script                     | Purpose                                      |
-| -------------------------- | -------------------------------------------- |
-| `npm run dev`              | API with reload                              |
-| `npm run dev:dashboard`    | Vite dashboard (proxies `/v1` and `/health`) |
-| `npm run build`            | Compile server + dashboard                   |
-| `npm start`                | Run compiled web service                     |
-| `npm run db:migrate`       | Apply Drizzle migrations                     |
-| `npm run db:generate`      | Generate a migration from schema changes     |
-| `npm run credential:issue` | Create a hashed API credential               |
-| `npm test`                 | Unit tests (default)                         |
-| `npm run test:coverage`    | Unit tests with coverage report              |
-| `npm run test:integration` | Opt-in Postgres tests                        |
-| `npm run test:e2e`         | Opt-in e2e tests                             |
-| `npm run typecheck`        | `tsc --noEmit`                               |
-| `npm run lint`             | ESLint                                       |
-| `npm run format:check`     | Prettier check                               |
+| Script                           | Purpose                                      |
+| -------------------------------- | -------------------------------------------- |
+| `npm run dev`                    | API with reload                              |
+| `npm run dev:dashboard`          | Vite dashboard (proxies `/v1` and `/health`) |
+| `npm run build`                  | Compile server + dashboard                   |
+| `npm start`                      | Run compiled web service                     |
+| `npm run cron:treasury-monitor`  | Daily treasury check (local)                 |
+| `npm run cron:wallet-reconciler` | Six-hourly reconciliation (local)            |
+| `npm run db:migrate`             | Apply Drizzle migrations                     |
+| `npm run db:generate`            | Generate a migration from schema changes     |
+| `npm run credential:issue`       | Create a hashed API credential               |
+| `npm test`                       | Unit tests (default)                         |
+| `npm run test:coverage`          | Unit tests with coverage report              |
+| `npm run test:integration`       | Opt-in Postgres tests                        |
+| `npm run test:e2e`               | Opt-in e2e tests                             |
+| `npm run typecheck`              | `tsc --noEmit`                               |
+| `npm run lint`                   | ESLint                                       |
+| `npm run format:check`           | Prettier check                               |
 
 ### Operator dashboard
 
@@ -238,8 +249,9 @@ test (T4.4) is its first real workload and needs decision D6 resolved first.
 Deploy from `main` only after CI is green (see the status badge above).
 
 The Blueprint in [`render.yaml`](./render.yaml) provisions a web service, the daily
-treasury-monitor cron, and shared Postgres. **No signing key on any service** — the
-reconciler cron that needs one arrives with Phase 4 (T4.2).
+treasury-monitor cron, the six-hourly wallet-reconciler cron, and shared Postgres.
+`TREASURY_PRIVATE_KEY` is declared only on signing-capable services (web +
+wallet-reconciler) — never on the treasury-monitor.
 
 Follow the operator checklist: [`docs/runbooks/deploy-render-phase0.md`](./docs/runbooks/deploy-render-phase0.md).
 Operational incident runbooks (PRD §19): [`docs/runbooks/README.md`](./docs/runbooks/README.md).
