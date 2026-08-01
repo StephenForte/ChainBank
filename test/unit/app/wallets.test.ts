@@ -140,6 +140,7 @@ function createDeps(options?: { readonly insertError?: Error; readonly existingW
     environments: {
       insert: vi.fn(),
       findById: vi.fn((id: string) => Promise.resolve(id === environment.id ? environment : undefined)),
+      listByProject: vi.fn(),
       setEnabled: vi.fn(),
     },
     chains: {

@@ -347,6 +347,26 @@ export async function listProjects(
   return body as PaginatedListResponse<ProjectResource>;
 }
 
+export async function listProjectEnvironments(
+  token: string,
+  projectId: string,
+  query: {
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<PaginatedListResponse<EnvironmentResource>> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(token, `/v1/projects/${projectId}/environments${suffix}`);
+  return body as PaginatedListResponse<EnvironmentResource>;
+}
+
 export async function setProjectEnabled(
   token: string,
   projectId: string,

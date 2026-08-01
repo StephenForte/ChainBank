@@ -5,6 +5,7 @@ import {
   fetchReadiness,
   getEnvironment,
   listFundingTransactions,
+  listProjectEnvironments,
   listProjects,
   listTreasuries,
   listWallets,
@@ -140,29 +141,6 @@ function parseEtherInputToWei(value: string): { ok: true; wei: string } | { ok: 
   return { ok: true, wei: wei.toString() };
 }
 
-function uniqueEnvironmentsFromWallets(wallets: readonly ManagedWalletResource[]): readonly {
-  readonly id: string;
-  readonly slug: string;
-  readonly name: string;
-  readonly enabled: boolean;
-}[] {
-  const byId = new Map<
-    string,
-    { readonly id: string; readonly slug: string; readonly name: string; readonly enabled: boolean }
-  >();
-  for (const wallet of wallets) {
-    if (!byId.has(wallet.environment.id)) {
-      byId.set(wallet.environment.id, {
-        id: wallet.environment.id,
-        slug: wallet.environment.slug,
-        name: wallet.environment.name,
-        enabled: wallet.environment.enabled,
-      });
-    }
-  }
-  return [...byId.values()].sort((a, b) => a.slug.localeCompare(b.slug));
-}
-
 export function App() {
   const [tokenInput, setTokenInput] = useState(loadStoredToken);
   const [token, setToken] = useState(loadStoredToken);
@@ -194,16 +172,9 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState('');
 
   const [envLookupId, setEnvLookupId] = useState('');
-  const [discoveredEnvironments, setDiscoveredEnvironments] = useState<
-    readonly {
-      readonly id: string;
-      readonly slug: string;
-      readonly name: string;
-      readonly enabled: boolean;
-    }[]
-  >([]);
-  const [envDiscoveryState, setEnvDiscoveryState] = useState<LoadState>('idle');
-  const [envDiscoveryError, setEnvDiscoveryError] = useState<string | undefined>();
+  const [projectEnvironments, setProjectEnvironments] = useState<readonly EnvironmentResource[]>([]);
+  const [envListState, setEnvListState] = useState<LoadState>('idle');
+  const [envListError, setEnvListError] = useState<string | undefined>();
   const [environmentDetail, setEnvironmentDetail] = useState<EnvironmentResource | undefined>();
   const [environmentState, setEnvironmentState] = useState<LoadState>('idle');
   const [environmentError, setEnvironmentError] = useState<string | undefined>();
@@ -316,29 +287,26 @@ export function App() {
     }
   }
 
-  async function loadEnvironmentDiscovery(activeToken: string, projectId: string): Promise<void> {
+  async function loadProjectEnvironments(activeToken: string, projectId: string): Promise<void> {
     if (activeToken.trim() === '' || projectId.trim() === '') {
-      setDiscoveredEnvironments([]);
-      setEnvDiscoveryState('idle');
-      setEnvDiscoveryError(undefined);
+      setProjectEnvironments([]);
+      setEnvListState('idle');
+      setEnvListError(undefined);
       return;
     }
-    setEnvDiscoveryState('loading');
-    setEnvDiscoveryError(undefined);
+    setEnvListState('loading');
+    setEnvListError(undefined);
     try {
-      // No list-environments-by-project route exists; discover from wallets for the project.
-      const page = await listWallets(activeToken.trim(), {
-        projectId: projectId.trim(),
+      const page = await listProjectEnvironments(activeToken.trim(), projectId.trim(), {
         limit: 100,
         offset: 0,
       });
-      const next = uniqueEnvironmentsFromWallets(page.data);
-      setDiscoveredEnvironments(next);
-      setEnvDiscoveryState(next.length === 0 ? 'empty' : 'ready');
+      setProjectEnvironments(page.data);
+      setEnvListState(page.data.length === 0 ? 'empty' : 'ready');
     } catch (caught) {
-      setDiscoveredEnvironments([]);
-      setEnvDiscoveryError(formatError(caught));
-      setEnvDiscoveryState('error');
+      setProjectEnvironments([]);
+      setEnvListError(formatError(caught));
+      setEnvListState('error');
     }
   }
 
@@ -435,7 +403,7 @@ export function App() {
     void loadWalletsPanel(activeToken);
     void loadPolicyPanel(activeToken);
     if (selectedProjectId.trim() !== '') {
-      void loadEnvironmentDiscovery(activeToken, selectedProjectId);
+      void loadProjectEnvironments(activeToken, selectedProjectId);
     }
     if (envLookupId.trim() !== '') {
       void loadEnvironmentDetail(activeToken, envLookupId);
@@ -464,7 +432,7 @@ export function App() {
   }, [token, selectedProjectId]);
 
   useEffect(() => {
-    void loadEnvironmentDiscovery(token, selectedProjectId);
+    void loadProjectEnvironments(token, selectedProjectId);
   }, [token, selectedProjectId]);
 
   function onSaveToken(event: FormEvent): void {
@@ -541,12 +509,8 @@ export function App() {
     try {
       const updated = await setEnvironmentEnabled(token, environment.id, nextEnabled);
       setEnvironmentDetail(updated);
-      setDiscoveredEnvironments((current) =>
-        current.map((item) =>
-          item.id === updated.id
-            ? { id: updated.id, slug: updated.slug, name: updated.name, enabled: updated.enabled }
-            : item,
-        ),
+      setProjectEnvironments((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
       );
       setMessage(`Environment ${updated.slug} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
     } catch (caught) {
@@ -905,7 +869,7 @@ export function App() {
             type="button"
             className="secondary"
             onClick={() => {
-              void loadEnvironmentDiscovery(token, selectedProjectId);
+              void loadProjectEnvironments(token, selectedProjectId);
               if (envLookupId.trim() !== '') {
                 void loadEnvironmentDetail(token, envLookupId);
               }
@@ -916,22 +880,19 @@ export function App() {
         </div>
         {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
         {token !== '' && selectedProjectId === '' ? (
-          <p className="muted">Select a project above to discover its environments.</p>
+          <p className="muted">Select a project above to list its environments.</p>
         ) : null}
         {token !== '' && selectedProjectId !== '' ? (
           <>
-            <p className="hint">
-              There is no list-by-project environments endpoint. Environments below are discovered from
-              managed wallets for the selected project; load any environment by UUID for full detail.
-            </p>
-            {envDiscoveryState === 'loading' ? <p className="muted">Discovering environments…</p> : null}
-            {envDiscoveryState === 'error' ? <p className="error-inline">{envDiscoveryError}</p> : null}
-            {envDiscoveryState === 'empty' ? (
-              <p className="muted">No environments discovered via wallets for this project yet.</p>
+            <p className="hint">Load any environment by UUID below for full detail and enable/disable.</p>
+            {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
+            {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
+            {envListState === 'empty' ? (
+              <p className="muted">No environments registered for this project yet.</p>
             ) : null}
-            {envDiscoveryState === 'ready' ? (
+            {envListState === 'ready' ? (
               <ul className="plain env-list">
-                {discoveredEnvironments.map((environment) => (
+                {projectEnvironments.map((environment) => (
                   <li key={environment.id}>
                     <button
                       type="button"

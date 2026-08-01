@@ -69,6 +69,7 @@ describe('disable without delete', () => {
     const environments: EnvironmentRepository = {
       insert: vi.fn(),
       findById: vi.fn(() => Promise.resolve(environment)),
+      listByProject: vi.fn(),
       setEnabled: vi.fn((_id: string, enabled: boolean) =>
         Promise.resolve({
           ...environment,
