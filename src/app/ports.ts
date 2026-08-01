@@ -355,6 +355,11 @@ export interface ProjectListPage {
   readonly total: number;
 }
 
+export interface EnvironmentListPage {
+  readonly items: readonly Environment[];
+  readonly total: number;
+}
+
 /** One row from api_credential_scopes. Null environmentId = all environments in the project. */
 export interface CredentialScope {
   readonly id: string;
@@ -382,6 +387,10 @@ export interface ProjectRepository {
 export interface EnvironmentRepository {
   insert(input: EnvironmentInsert): Promise<Environment>;
   findById(id: string): Promise<Environment | undefined>;
+  listByProject(
+    projectId: string,
+    pagination: { readonly limit: number; readonly offset: number },
+  ): Promise<EnvironmentListPage>;
   setEnabled(id: string, enabled: boolean): Promise<Environment>;
 }
 

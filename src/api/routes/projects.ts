@@ -3,6 +3,7 @@ import { createEnvironment } from '../../app/projects/create-environment.js';
 import { createProject } from '../../app/projects/create-project.js';
 import { getEnvironment } from '../../app/projects/get-environment.js';
 import { getProject } from '../../app/projects/get-project.js';
+import { listEnvironments } from '../../app/projects/list-environments.js';
 import { listProjects } from '../../app/projects/list-projects.js';
 import { setEnvironmentEnabled } from '../../app/projects/set-environment-enabled.js';
 import { setProjectEnabled } from '../../app/projects/set-project-enabled.js';
@@ -234,6 +235,54 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
       });
 
       return { data: serializeProject(project) };
+    },
+  );
+
+  app.get(
+    '/v1/projects/:id/environments',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: projectIdParams,
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            ...paginationQuerySchema,
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data', 'pagination'],
+            properties: {
+              data: { type: 'array', items: environmentResponseSchema },
+              pagination: paginationResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+      const query = request.query as PaginationQuery;
+      const limit = parsePageLimit(query.limit);
+      const offset = parsePageOffset(query.offset);
+
+      const page = await listEnvironments(projectDeps, {
+        role: actor.role,
+        credentialId: actor.credentialId,
+        projectId: id,
+        limit,
+        offset,
+      });
+
+      return {
+        data: page.items.map(serializeEnvironment),
+        pagination: { limit, offset, total: page.total },
+      };
     },
   );
 

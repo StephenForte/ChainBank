@@ -118,6 +118,7 @@ function buildDeps(input: {
       environments: {
         findById: vi.fn(() => Promise.resolve(input.environment)),
         insert: vi.fn(),
+        listByProject: vi.fn(),
         setEnabled: vi.fn(),
       },
       managedWallets: {

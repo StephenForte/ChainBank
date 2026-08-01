@@ -537,6 +537,32 @@ conservative one that can. Every test fixture was updated to a compliant ladder,
 which also means fixtures now model a sane production shape rather than the
 stranded one.
 
+### C13 — List environments for a project (owner: TX.7)
+
+```ts
+// HTTP (operator, read-only, scoped project-service reads)
+// GET /v1/projects/:id/environments?limit&offset
+
+// Application ports (src/app/ports.ts) — EnvironmentRepository extension
+listByProject(
+  projectId: string,
+  pagination: { readonly limit: number; readonly offset: number },
+): Promise<EnvironmentListPage>; // ordered by createdAt ASC
+
+// Application use case (src/app/projects/list-environments.ts)
+function listEnvironments(deps, input): Promise<ListEnvironmentsResult>;
+// assertProjectReadPermission → PROJECT_NOT_FOUND if missing → authorizeScope read at project level
+```
+
+Local design choices (TX.7, 2026-08-01):
+
+- Mirrors `getProject` authorization order: existence check before scope, so
+  out-of-scope callers get `SCOPE_DENIED` only for projects that exist.
+- Env-specific scope rows still satisfy project-level read via C6 `hasProjectScope`.
+- Pagination uses shared string query schema + `parsePageLimit` / `parsePageOffset`.
+- Dashboard replaces wallet-derived environment discovery with this route so
+  zero-wallet environments are visible immediately after creation.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                 | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -577,3 +603,4 @@ stranded one.
 - 2026-07-30 — TX.4 follow-ups closed: added `enable` to the credential admin API (C9) so a mistaken **disable** is reversible in-product, while **revoke** stays terminal (`CREDENTIAL_REVOKED`, 409) because the endpoint that removes a leaked token must not restore it. The self-mutation guard now covers all three actions, which makes a second operator credential a prerequisite rather than a nicety — issued at deploy time (runbook step 4) and stated in the runbook index. Removes the last SQL-only rollback from the credential runbooks.
 - 2026-07-31 — T2.4 extended the operator dashboard with projects, environments, managed wallets, and funding-policy views (PRD §12.2 / P2-US1). Panels load independently (no cross-panel `Promise.all`); pagination query values are stringified via `URLSearchParams`; wei display/edit uses BigInt only. Environments for a selected project are discovered from `GET /v1/wallets?projectId=` because no list-by-project environments route exists; detail still uses `GET /v1/environments/:id`.
 - 2026-07-31 — T1.8 published C10: treasury-scoped `treasury_reserve` critical alert on `FUNDING_BLOCKED_RESERVE`, persist-then-send dedupe, resolve when a later transfer for that treasury submits successfully. Closes the operator-signal gap between the warning email and reserve refusals (P1-US5 / D3 detail).
+- 2026-08-01 — TX.7 published C13: `GET /v1/projects/:id/environments` with `EnvironmentRepository.listByProject`, `getProject`-style scoped reads, and shared string pagination; dashboard no longer discovers environments via wallets.

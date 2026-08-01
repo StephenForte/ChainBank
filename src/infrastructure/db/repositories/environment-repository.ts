@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { asc, count, eq } from 'drizzle-orm';
 import type { Environment, EnvironmentInsert, EnvironmentRepository } from '../../../app/ports.js';
 import { ChainBankError } from '../../../domain/errors.js';
 import { isUniqueViolation, withDatabaseErrors, type Database } from '../client.js';
@@ -46,6 +46,26 @@ export function createEnvironmentRepository(db: Database): EnvironmentRepository
       return withDatabaseErrors('environments.findById', async () => {
         const row = await db.query.environments.findFirst({ where: eq(environments.id, id) });
         return row === undefined ? undefined : toEnvironment(row);
+      });
+    },
+
+    async listByProject(
+      projectId: string,
+      pagination: { readonly limit: number; readonly offset: number },
+    ): Promise<{ readonly items: readonly Environment[]; readonly total: number }> {
+      return withDatabaseErrors('environments.listByProject', async () => {
+        const where = eq(environments.projectId, projectId);
+        const [totalRow] = await db.select({ value: count() }).from(environments).where(where);
+        const rows = await db.query.environments.findMany({
+          where,
+          orderBy: [asc(environments.createdAt)],
+          limit: pagination.limit,
+          offset: pagination.offset,
+        });
+        return {
+          items: rows.map(toEnvironment),
+          total: Number(totalRow?.value ?? 0),
+        };
       });
     },
 
