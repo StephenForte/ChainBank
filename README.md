@@ -6,7 +6,9 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) not started.**
+**Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) in
+progress — the reconciliation use case is merged (C14), the cron that runs it is
+not yet wired (T4.2).**
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -207,8 +209,8 @@ npm run test:integration
 
 | Suite             | Count                              |
 | ----------------- | ---------------------------------- |
-| Unit tests        | 365 passing across 43 files        |
-| Integration tests | 64 passing (opt-in, real Postgres) |
+| Unit tests        | 381 passing across 45 files        |
+| Integration tests | 69 passing (opt-in, real Postgres) |
 
 Unit-suite line coverage is ~49% overall, concentrated where correctness is
 load-bearing: the funding math, alert state machine, status state machines,
@@ -261,11 +263,11 @@ Short version:
 
 ## Phase roadmap (short)
 
-| Phase | Focus                                                                      | Status                                                                                                      |
-| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                 |
-| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                          |
-| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13) |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)            |
-| 4     | Scheduled wallet reconciliation                                            | not started (T4.1–T4.4)                                                                                     |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                |
+| Phase | Focus                                                                      | Status                                                                                                            |
+| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                       |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                |
+| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)       |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                  |
+| 4     | Scheduled wallet reconciliation                                            | in progress — use case merged (T4.1, C14, migration `0004`); cron entry, failure alerting, e2e remain (T4.2–T4.4) |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                      |
