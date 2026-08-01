@@ -625,8 +625,7 @@ describe('ensureWalletFunded', () => {
     expect(error).toBeInstanceOf(ChainBankError);
     expect(error).toMatchObject({
       code: 'INVALID_CONFIGURATION',
-      publicMessage:
-        'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+      publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
     });
     expect((error as ChainBankError).message).toContain(retired.id);
     expect((error as ChainBankError).message).toContain(replacement.id);

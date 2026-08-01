@@ -96,9 +96,7 @@ describe('setTreasuryEnabled authorization', () => {
     const disabled = { ...treasury, enabled: false };
     const treasuries = buildRepository({
       findById: vi.fn(() => Promise.resolve(disabled)),
-      setEnabled: vi.fn((_id: string, enabled: boolean) =>
-        Promise.resolve({ ...disabled, enabled }),
-      ),
+      setEnabled: vi.fn((_id: string, enabled: boolean) => Promise.resolve({ ...disabled, enabled })),
     });
     const auditEvents = buildAuditEvents();
 
@@ -173,15 +171,12 @@ describe('setTreasuryEnabled audit and errors', () => {
       },
     );
 
-    expect(auditEvents.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'treasury.enabled',
-        metadata: expect.objectContaining({
-          previous: { enabled: false },
-          next: { enabled: true },
-        }),
-      }),
-    );
+    const auditCall = vi.mocked(auditEvents.record).mock.calls[0]?.[0];
+    expect(auditCall?.action).toBe('treasury.enabled');
+    expect(auditCall?.metadata).toMatchObject({
+      previous: { enabled: false },
+      next: { enabled: true },
+    });
   });
 
   it('returns TREASURY_NOT_FOUND for an unknown id without mutating', async () => {

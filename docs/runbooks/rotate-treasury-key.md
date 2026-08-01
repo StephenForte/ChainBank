@@ -36,7 +36,7 @@ warning/critical/recovery/reserve numbers — use
    any signer call. That turns an address-only config change into a loud refusal
    instead of a silent spend from the old row.
 3. **`assertSignerMatchesTreasury`** additionally refuses to sign unless the
-   signer address (derived from `TREASURY_PRIVATE_KEY`) matches the *resolved*
+   signer address (derived from `TREASURY_PRIVATE_KEY`) matches the _resolved_
    treasury row. After the retired row is disabled, funding resolves the remaining
    row and the signer must match that address.
 4. **Disable the retired row via the API** — never SQL in the happy path:

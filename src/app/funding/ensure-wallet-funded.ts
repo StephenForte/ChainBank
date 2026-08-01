@@ -401,8 +401,7 @@ async function resolveTreasuryForWallet(
       'INVALID_CONFIGURATION',
       `Ambiguous treasury configuration for chain ${String(wallet.chain.chainId)}: ${String(matches.length)} enabled rows (${ids}; addresses ${addresses}). Disable the retired row before funding.`,
       {
-        publicMessage:
-          'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+        publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
         context: {
           chainId: wallet.chain.chainId,
           managedWalletId: wallet.id,

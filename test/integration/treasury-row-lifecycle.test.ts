@@ -25,7 +25,12 @@ import { createManagedWalletRepository } from '../../src/infrastructure/db/repos
 import { createProjectRepository } from '../../src/infrastructure/db/repositories/project-repository.js';
 import { createServiceHeartbeatRepository } from '../../src/infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from '../../src/infrastructure/db/repositories/treasury-repository.js';
-import { apiCredentials, auditEvents, fundingPolicies, treasuries } from '../../src/infrastructure/db/schema.js';
+import {
+  apiCredentials,
+  auditEvents,
+  fundingPolicies,
+  treasuries,
+} from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
@@ -233,8 +238,7 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
       ),
     ).rejects.toMatchObject({
       code: 'INVALID_CONFIGURATION',
-      publicMessage:
-        'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+      publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
     });
     expect(signer.sendCalls).toBe(0);
 
