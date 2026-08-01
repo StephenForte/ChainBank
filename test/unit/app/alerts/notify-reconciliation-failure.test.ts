@@ -511,12 +511,11 @@ describe('maybeNotifyReconciliationFailure', () => {
     expect(alerts.rows.size).toBe(0);
     expect(alerts.resolved).toHaveLength(1);
     expect(messages).toHaveLength(1);
-    expect(auditEvents.record).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'treasury.alert.resolved',
-        metadata: expect.objectContaining({ reason: 'reconciliation-recovered' }),
-      }),
-    );
+    const resolveAudit = vi.mocked(auditEvents.record).mock.calls.find((call) => {
+      const payload = call[0];
+      return payload.action === 'treasury.alert.resolved';
+    });
+    expect(resolveAudit?.[0]?.metadata).toMatchObject({ reason: 'reconciliation-recovered' });
   });
 
   it('leaves pendingEmail set when email fails and does not throw', async () => {
