@@ -10,11 +10,14 @@ import { findSupportedChainById, supportedChainIds, type SupportedChain } from '
  * mandatory, so a read-only monitor is never handed credentials it must not
  * hold and never fails to start over a section it does not use.
  */
-export type ServiceRole = 'web' | 'treasury-monitor';
+export type ServiceRole = 'web' | 'treasury-monitor' | 'cron-reconciler';
 
-/** Roles that may construct a TreasurySigner and receive the signing secret. */
+/**
+ * Roles that may construct a TreasurySigner and receive the signing secret.
+ * `treasury-monitor` is intentionally excluded and always strips the key.
+ */
 export function isSigningCapableRole(serviceRole: ServiceRole): boolean {
-  return serviceRole === 'web';
+  return serviceRole === 'web' || serviceRole === 'cron-reconciler';
 }
 
 export interface AppConfig {
@@ -90,16 +93,26 @@ export interface AlertsConfig {
   readonly reminderIntervalMs: number;
 }
 
+export interface ReconciliationConfig {
+  /** Lookback bound for outgoing scans (C14). Passed to reconcileWallets as bigint. */
+  readonly outgoingLookbackBlocks: number;
+}
+
 export interface ChainBankConfig {
   readonly app: AppConfig;
   readonly database: DatabaseConfig;
   readonly chain: ChainConfig;
   readonly treasury: TreasuryConfig;
-  /** Present for web and treasury-monitor; absent for roles that never send mail. */
+  /**
+   * Present for web, treasury-monitor, and cron-reconciler; absent for roles
+   * that never send mail.
+   */
   readonly email: EmailConfig | undefined;
   /** Absent for non-API roles. */
   readonly apiSecurity: ApiSecurityConfig | undefined;
   readonly alerts: AlertsConfig;
+  /** Present for cron-reconciler; absent for roles that do not reconcile. */
+  readonly reconciliation: ReconciliationConfig | undefined;
   readonly isFundingEnabled: boolean;
   readonly isFundingKillSwitchActive: boolean;
   /**
@@ -113,6 +126,7 @@ export interface ChainBankConfig {
 const DEFAULT_POOL_MAX: Readonly<Record<ServiceRole, number>> = {
   web: 10,
   'treasury-monitor': 2,
+  'cron-reconciler': 2,
 };
 
 export interface LoadConfigOptions {
@@ -166,6 +180,10 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     alerts: {
       reminderIntervalMs: env.ALERT_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000,
     },
+    reconciliation:
+      options.serviceRole === 'cron-reconciler'
+        ? { outgoingLookbackBlocks: env.RECONCILE_OUTGOING_LOOKBACK_BLOCKS }
+        : undefined,
     isFundingEnabled: funding.enabled,
     isFundingKillSwitchActive: funding.killSwitch,
     funding,
@@ -173,7 +191,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
 }
 
 function requiresEmailConfig(serviceRole: ServiceRole): boolean {
-  return serviceRole === 'web' || serviceRole === 'treasury-monitor';
+  return serviceRole === 'web' || serviceRole === 'treasury-monitor' || serviceRole === 'cron-reconciler';
 }
 
 /**

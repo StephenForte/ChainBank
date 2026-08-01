@@ -17,6 +17,7 @@
     "dev": "tsx watch src/api/server.ts",
     "dev:dashboard": "vite",
     "cron:treasury-monitor": "node dist/src/jobs/treasury-monitor.js",
+    "cron:wallet-reconciler": "node dist/src/jobs/wallet-reconciler.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/infrastructure/db/migrate.ts",
     "db:migrate:built": "node dist/src/infrastructure/db/migrate.js",

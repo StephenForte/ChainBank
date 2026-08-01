@@ -45,47 +45,49 @@ function declaredValue(block: string, key: ThresholdKey): string | undefined {
   return pattern.exec(block)?.[1]?.trim();
 }
 
+/** Services that upsert the shared treasury row and must declare the D3 ladder. */
+const THRESHOLD_SERVICES = [
+  'chainbank-web',
+  'chainbank-treasury-monitor',
+  'chainbank-wallet-reconciler',
+] as const;
+
 describe('render.yaml treasury thresholds', () => {
   const services = serviceBlocks();
 
-  it('declares both the web service and the treasury-monitor cron', () => {
-    expect([...services.keys()]).toEqual(
-      expect.arrayContaining(['chainbank-web', 'chainbank-treasury-monitor']),
-    );
+  it('declares the web service and both cron jobs', () => {
+    expect([...services.keys()]).toEqual(expect.arrayContaining([...THRESHOLD_SERVICES]));
   });
 
-  it.each(['chainbank-web', 'chainbank-treasury-monitor'])(
-    'declares a valid threshold ladder for %s',
-    (serviceName) => {
-      const block = services.get(serviceName);
-      expect(block, `service ${serviceName} not found in render.yaml`).toBeDefined();
+  it.each(THRESHOLD_SERVICES)('declares a valid threshold ladder for %s', (serviceName) => {
+    const block = services.get(serviceName);
+    expect(block, `service ${serviceName} not found in render.yaml`).toBeDefined();
 
-      const values = Object.fromEntries(
-        THRESHOLD_KEYS.map((key) => [key, declaredValue(block ?? '', key)]),
-      ) as Record<ThresholdKey, string | undefined>;
+    const values = Object.fromEntries(
+      THRESHOLD_KEYS.map((key) => [key, declaredValue(block ?? '', key)]),
+    ) as Record<ThresholdKey, string | undefined>;
 
-      for (const key of THRESHOLD_KEYS) {
-        expect(values[key], `${key} must be a literal value in render.yaml, not sync:false`).toBeDefined();
-      }
+    for (const key of THRESHOLD_KEYS) {
+      expect(values[key], `${key} must be a literal value in render.yaml, not sync:false`).toBeDefined();
+    }
 
-      const thresholds = {
-        warningBalanceWei: parseEtherToWei(values.TREASURY_WARNING_BALANCE_ETH ?? '', 'warning'),
-        criticalBalanceWei: parseEtherToWei(values.TREASURY_CRITICAL_BALANCE_ETH ?? '', 'critical'),
-        recoveryBalanceWei: parseEtherToWei(values.TREASURY_RECOVERY_BALANCE_ETH ?? '', 'recovery'),
-        minimumReserveWei: parseEtherToWei(values.TREASURY_MINIMUM_RESERVE_ETH ?? '', 'reserve'),
-      };
+    const thresholds = {
+      warningBalanceWei: parseEtherToWei(values.TREASURY_WARNING_BALANCE_ETH ?? '', 'warning'),
+      criticalBalanceWei: parseEtherToWei(values.TREASURY_CRITICAL_BALANCE_ETH ?? '', 'critical'),
+      recoveryBalanceWei: parseEtherToWei(values.TREASURY_RECOVERY_BALANCE_ETH ?? '', 'recovery'),
+      minimumReserveWei: parseEtherToWei(values.TREASURY_MINIMUM_RESERVE_ETH ?? '', 'reserve'),
+    };
 
-      // The same check the services run at startup.
-      expect(() => assertValidTreasuryThresholds(thresholds)).not.toThrow();
+    // The same check the services run at startup.
+    expect(() => assertValidTreasuryThresholds(thresholds)).not.toThrow();
 
-      // Keeps the critical alert meaningful: it must fire while funding still
-      // has spendable headroom, not after the reserve has already halted it.
-      expect(thresholds.minimumReserveWei).toBeLessThan(thresholds.criticalBalanceWei);
-    },
-  );
+    // Keeps the critical alert meaningful: it must fire while funding still
+    // has spendable headroom, not after the reserve has already halted it.
+    expect(thresholds.minimumReserveWei).toBeLessThan(thresholds.criticalBalanceWei);
+  });
 
   it('declares identical thresholds on every service', () => {
-    // Both processes upsert the same treasury row, so divergent values would
+    // All three processes upsert the same treasury row, so divergent values would
     // flip the row's thresholds back and forth on each boot and cron run.
     for (const key of THRESHOLD_KEYS) {
       const distinct = new Set(
@@ -93,5 +95,22 @@ describe('render.yaml treasury thresholds', () => {
       );
       expect(distinct.size, `${key} differs between services in render.yaml`).toBe(1);
     }
+  });
+
+  it('gives TREASURY_PRIVATE_KEY only to signing-capable services', () => {
+    const hasSigningKey = (name: string): boolean => {
+      const block = services.get(name) ?? '';
+      return /- key:\s*TREASURY_PRIVATE_KEY\b/.test(block);
+    };
+
+    expect(hasSigningKey('chainbank-web')).toBe(true);
+    expect(hasSigningKey('chainbank-wallet-reconciler')).toBe(true);
+    expect(hasSigningKey('chainbank-treasury-monitor')).toBe(false);
+  });
+
+  it('schedules the wallet reconciler every six hours', () => {
+    const block = services.get('chainbank-wallet-reconciler') ?? '';
+    expect(block).toMatch(/schedule:\s*'0 \*\/6 \* \* \*'/);
+    expect(block).toMatch(/startCommand:\s*npm run cron:wallet-reconciler/);
   });
 });

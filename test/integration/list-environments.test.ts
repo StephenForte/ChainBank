@@ -93,6 +93,8 @@ describe.skipIf(!integrationEnabled)('GET /v1/projects/:id/environments (integra
         fundingOperations: createFundingOperationRepository(handle.db),
         fundingTransactions: createFundingTransactionRepository(handle.db),
         alerts: createAlertRepository(handle.db),
+        reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
+        reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
       },
       balanceReader: {
         readBalance: () =>
@@ -107,6 +109,7 @@ describe.skipIf(!integrationEnabled)('GET /v1/projects/:id/environments (integra
       treasurySigner: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
+      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

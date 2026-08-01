@@ -135,6 +135,8 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
         fundingOperations: createFundingOperationRepository(handle.db),
         fundingTransactions: createFundingTransactionRepository(handle.db),
         alerts: createAlertRepository(handle.db),
+        reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
+        reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
       },
       balanceReader,
       treasurySigner: signer,
@@ -143,6 +145,7 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
         kind: 'confirmed',
         confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
       }),
+      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

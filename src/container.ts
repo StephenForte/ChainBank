@@ -14,8 +14,11 @@ import type {
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransactionRepository,
+  ReconciliationFundingQuery,
+  ReconciliationRunRepository,
   ServiceHeartbeatRepository,
   TransactionReceiptTracker,
+  TreasuryOutgoingScanner,
   TreasuryRepository,
   TreasurySigner,
 } from './app/ports.js';
@@ -35,12 +38,15 @@ import { createManagedWalletRepository } from './infrastructure/db/repositories/
 import { createProjectRepository } from './infrastructure/db/repositories/project-repository.js';
 import { createFundingOperationRepository } from './infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingTransactionRepository } from './infrastructure/db/repositories/funding-transaction-repository.js';
+import { createReconciliationFundingQuery } from './infrastructure/db/repositories/reconciliation-query-repository.js';
+import { createReconciliationRunRepository } from './infrastructure/db/repositories/reconciliation-run-repository.js';
 import { createServiceHeartbeatRepository } from './infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from './infrastructure/db/repositories/treasury-repository.js';
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
 import { createResendEmailSender } from './infrastructure/email/resend-email-sender.js';
 import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
 import { createTransactionReceiptTracker } from './infrastructure/evm/transaction-tracker.js';
+import { createTreasuryOutgoingScanner } from './infrastructure/evm/treasury-outgoing-scanner.js';
 import { createTreasurySigner } from './infrastructure/evm/treasury-signer.js';
 import { createLogger, type Logger } from './observability/logger.js';
 import { systemClock, uuidGenerator } from './shared/system-ports.js';
@@ -73,6 +79,8 @@ export interface Container {
     readonly fundingOperations: FundingOperationRepository;
     readonly fundingTransactions: FundingTransactionRepository;
     readonly alerts: AlertRepository;
+    readonly reconciliationRuns: ReconciliationRunRepository;
+    readonly reconciliationFunding: ReconciliationFundingQuery;
   };
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
@@ -81,7 +89,9 @@ export interface Container {
   readonly fundingDispatchLock: FundingDispatchLock;
   /** Public-client receipt waiter; never holds signing credentials. */
   readonly transactionReceiptTracker: TransactionReceiptTracker;
-  /** Present for web and treasury-monitor when email config is loaded. */
+  /** Public-client scanner for reconciler outgoing settlement / crash-orphan detection. */
+  readonly treasuryOutgoingScanner: TreasuryOutgoingScanner;
+  /** Present for web, treasury-monitor, and cron-reconciler when email config is loaded. */
   readonly emailSender: EmailSender | undefined;
   close(): Promise<void>;
 }
@@ -129,6 +139,8 @@ export function buildContainer(options: BuildContainerOptions): Container {
       fundingOperations: createFundingOperationRepository(database.db),
       fundingTransactions: createFundingTransactionRepository(database.db),
       alerts: createAlertRepository(database.db),
+      reconciliationRuns: createReconciliationRunRepository(database.db),
+      reconciliationFunding: createReconciliationFundingQuery(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),
@@ -138,6 +150,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
       clock,
       logger,
     }),
+    treasuryOutgoingScanner: createTreasuryOutgoingScanner({ chain: config.chain, logger }),
     emailSender: buildEmailSender(config, logger),
     close: async () => {
       await database.close();
