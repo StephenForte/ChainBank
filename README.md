@@ -6,20 +6,23 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phases 1 and 3 complete; Phase 2 partially delivered.**
+**Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) not started.**
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
-funding policies, and can fund an approved wallet to its target balance through
-`POST /v1/wallets/:id/ensure-funded`.
+funding policies, funds approved managed wallets through
+`POST /v1/wallets/:id/ensure-funded`, and can sweep an entire environment through
+`POST /v1/environments/:id/ensure-ready` (contract [C11](./tasks/DECISIONS.md#c11--environment-ensure-ready-owner-t22)).
 
-**Funding stays off until you turn it on.** `FUNDING_ENABLED` defaults to `false`,
-and enabling it requires a valid `TREASURY_PRIVATE_KEY` on a signing-capable role.
-The [operator runbooks](./docs/runbooks/README.md) now exist, which was the PRD §20
-gate; before flipping the flag in a hosted environment, also settle the real
-threshold values (decision D3) and read the **Known gaps** table in the runbook
-index — notably that completing a treasury key rotation currently needs manual SQL.
-Task status lives in [`tasks/worker-plan.md`](./tasks/worker-plan.md).
+**Production funding is armed** (2026-08-01): hosted verification passed all four
+phases and the operator released the kill switch. New deployments still default to
+`FUNDING_ENABLED=false` until you deliberately arm them — see
+[`docs/runbooks/verify-hosted-deployment.md`](./docs/runbooks/verify-hosted-deployment.md)
+and [`disable-all-automated-funding.md`](./docs/runbooks/disable-all-automated-funding.md).
+Treasury key rotation is API-driven via `PATCH /v1/treasuries/:id` (contract
+[C12](./tasks/DECISIONS.md#c12--treasury-row-lifecycle-owner-tx5)); the runbook index
+**Known gaps** table is current as of TX.5. Task status lives in
+[`tasks/worker-plan.md`](./tasks/worker-plan.md).
 
 ## Stack
 
@@ -93,31 +96,32 @@ Issue a credential once; the raw token is printed a single time and only the has
 All `/v1` routes require a bearer token. Wei quantities cross the API as decimal
 strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
 
-| Method  | Path                            | Auth                               | Purpose                                                |
-| ------- | ------------------------------- | ---------------------------------- | ------------------------------------------------------ |
-| `GET`   | `/health/live`                  | none                               | Liveness                                               |
-| `GET`   | `/health/ready`                 | none                               | Readiness + shared DB heartbeats                       |
-| `GET`   | `/v1/treasuries`                | bearer                             | List treasuries / last observation                     |
-| `POST`  | `/v1/treasuries/:id/check`      | bearer                             | Fresh on-chain check (read-only, evaluates alerts)     |
-| `GET`   | `/v1/projects`                  | bearer                             | List projects (scoped)                                 |
-| `POST`  | `/v1/projects`                  | operator                           | Create a project                                       |
-| `GET`   | `/v1/projects/:id`              | bearer                             | Project detail                                         |
-| `PATCH` | `/v1/projects/:id`              | operator                           | Enable / disable without deleting history              |
-| `POST`  | `/v1/projects/:id/environments` | operator                           | Create an environment                                  |
-| `GET`   | `/v1/environments/:id`          | bearer                             | Environment detail                                     |
-| `PATCH` | `/v1/environments/:id`          | operator                           | Enable / disable without deleting history              |
-| `GET`   | `/v1/wallets`                   | bearer                             | List managed wallets (filterable)                      |
-| `POST`  | `/v1/wallets`                   | operator                           | Register a managed wallet                              |
-| `PATCH` | `/v1/wallets/:id`               | operator                           | Enable / disable a wallet                              |
-| `PUT`   | `/v1/wallets/:id/policy`        | operator                           | Set minimum / target / maximum top-up                  |
-| `POST`  | `/v1/wallets/:id/ensure-funded` | operator or scoped project-service | **Fund a wallet to target** (idempotency key required) |
-| `GET`   | `/v1/funding-operations/:id`    | bearer                             | Operation status; resumes confirmation tracking        |
-| `GET`   | `/v1/funding-transactions`      | bearer                             | Funding history with filters                           |
-| `GET`   | `/v1/admin/credentials`         | operator                           | List API credentials (paginated; no secrets)           |
-| `PATCH` | `/v1/admin/credentials/:id`     | operator                           | Disable, revoke, or re-enable a credential (`action`)  |
-| `POST`  | `/v1/admin/email/test`          | operator                           | Send test email                                        |
-
-Not yet implemented: `POST /v1/environments/:id/ensure-ready` (Phase 2, task T2.2).
+| Method  | Path                                | Auth                               | Purpose                                                                                                                                          |
+| ------- | ----------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`   | `/health/live`                      | none                               | Liveness                                                                                                                                         |
+| `GET`   | `/health/ready`                     | none                               | Readiness + shared DB heartbeats                                                                                                                 |
+| `GET`   | `/v1/treasuries`                    | bearer                             | List treasuries / last observation                                                                                                               |
+| `PATCH` | `/v1/treasuries/:id`                | operator                           | Enable / disable a treasury row ([C12](./tasks/DECISIONS.md#c12--treasury-row-lifecycle-owner-tx5))                                              |
+| `POST`  | `/v1/treasuries/:id/check`          | bearer                             | Fresh on-chain check (read-only, evaluates alerts)                                                                                               |
+| `GET`   | `/v1/projects`                      | bearer                             | List projects (scoped)                                                                                                                           |
+| `POST`  | `/v1/projects`                      | operator                           | Create a project                                                                                                                                 |
+| `GET`   | `/v1/projects/:id`                  | bearer                             | Project detail                                                                                                                                   |
+| `PATCH` | `/v1/projects/:id`                  | operator                           | Enable / disable without deleting history                                                                                                        |
+| `GET`   | `/v1/projects/:id/environments`     | bearer                             | List environments for a project (paginated; [C13](./tasks/DECISIONS.md#c13--list-environments-for-a-project-owner-tx7))                          |
+| `POST`  | `/v1/projects/:id/environments`     | operator                           | Create an environment                                                                                                                            |
+| `GET`   | `/v1/environments/:id`              | bearer                             | Environment detail                                                                                                                               |
+| `PATCH` | `/v1/environments/:id`              | operator                           | Enable / disable without deleting history                                                                                                        |
+| `POST`  | `/v1/environments/:id/ensure-ready` | operator or scoped project-service | **Ensure all enabled wallets in an environment** (idempotency key required; [C11](./tasks/DECISIONS.md#c11--environment-ensure-ready-owner-t22)) |
+| `GET`   | `/v1/wallets`                       | bearer                             | List managed wallets (filterable)                                                                                                                |
+| `POST`  | `/v1/wallets`                       | operator                           | Register a managed wallet                                                                                                                        |
+| `PATCH` | `/v1/wallets/:id`                   | operator                           | Enable / disable a wallet                                                                                                                        |
+| `PUT`   | `/v1/wallets/:id/policy`            | operator                           | Set minimum / target / maximum top-up                                                                                                            |
+| `POST`  | `/v1/wallets/:id/ensure-funded`     | operator or scoped project-service | **Fund a wallet to target** (idempotency key required)                                                                                           |
+| `GET`   | `/v1/funding-operations/:id`        | bearer                             | Operation status; resumes confirmation tracking                                                                                                  |
+| `GET`   | `/v1/funding-transactions`          | bearer                             | Funding history with filters                                                                                                                     |
+| `GET`   | `/v1/admin/credentials`             | operator                           | List API credentials (paginated; no secrets)                                                                                                     |
+| `PATCH` | `/v1/admin/credentials/:id`         | operator                           | Disable, revoke, or re-enable a credential (`action`)                                                                                            |
+| `POST`  | `/v1/admin/email/test`              | operator                           | Send test email                                                                                                                                  |
 
 Example:
 
@@ -139,12 +143,22 @@ The cron process loads the `treasury-monitor` config role: email settings for al
 
 ## Scripts
 
-| Script                  | Purpose                                      |
-| ----------------------- | -------------------------------------------- |
-| `npm run dev`           | API with reload                              |
-| `npm run dev:dashboard` | Vite dashboard (proxies `/v1` and `/health`) |
-| `npm run build`         | Compile server + dashboard                   |
-| `npm start`             | Run compiled web service                     |
+| Script                     | Purpose                                      |
+| -------------------------- | -------------------------------------------- |
+| `npm run dev`              | API with reload                              |
+| `npm run dev:dashboard`    | Vite dashboard (proxies `/v1` and `/health`) |
+| `npm run build`            | Compile server + dashboard                   |
+| `npm start`                | Run compiled web service                     |
+| `npm run db:migrate`       | Apply Drizzle migrations                     |
+| `npm run db:generate`      | Generate a migration from schema changes     |
+| `npm run credential:issue` | Create a hashed API credential               |
+| `npm test`                 | Unit tests (default)                         |
+| `npm run test:coverage`    | Unit tests with coverage report              |
+| `npm run test:integration` | Opt-in Postgres tests                        |
+| `npm run test:e2e`         | Opt-in e2e tests                             |
+| `npm run typecheck`        | `tsc --noEmit`                               |
+| `npm run lint`             | ESLint                                       |
+| `npm run format:check`     | Prettier check                               |
 
 ### Operator dashboard
 
@@ -156,22 +170,12 @@ MVP views (PRD §12.2 / P2-US1):
 
 - Session (operator bearer token in `sessionStorage` only), service readiness, treasuries, funding history
 - Projects (list + enable/disable)
-- Environments (detail by id + enable/disable; discovery for a selected project via wallet membership — there is no list-by-project environments route)
+- Environments (list for a selected project via `GET /v1/projects/:id/environments`, detail by id, enable/disable)
 - Managed wallets (filters, explorer links, enable/disable)
 - Funding policy (ETH input converted once to decimal wei strings; confirm shows the exact wei body)
 
 Panels load and fail independently. Mutations confirm before firing. The dashboard
 never renders private keys, seed phrases, or raw credential material.
-| `npm run db:migrate` | Apply Drizzle migrations |
-| `npm run db:generate` | Generate a migration from schema changes |
-| `npm run credential:issue` | Create a hashed API credential |
-| `npm test` | Unit tests (default) |
-| `npm run test:coverage` | Unit tests with coverage report |
-| `npm run test:integration` | Opt-in Postgres tests |
-| `npm run test:e2e` | Opt-in e2e tests |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run lint` | ESLint |
-| `npm run format:check` | Prettier check |
 
 ## Testing
 
@@ -203,8 +207,8 @@ npm run test:integration
 
 | Suite             | Count                              |
 | ----------------- | ---------------------------------- |
-| Unit tests        | 262 passing across 35 files        |
-| Integration tests | 40 passing (opt-in, real Postgres) |
+| Unit tests        | 365 passing across 43 files        |
+| Integration tests | 64 passing (opt-in, real Postgres) |
 
 Unit-suite line coverage is ~49% overall, concentrated where correctness is
 load-bearing: the funding math, alert state machine, status state machines,
@@ -257,11 +261,11 @@ Short version:
 
 ## Phase roadmap (short)
 
-| Phase | Focus                                                                      | Status                                                                                                            |
-| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                       |
-| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (reserve-exhaustion email and concurrency tests outstanding)                                          |
-| 2     | Projects / environments / `ensure-ready`                                   | 🔄 projects, environments, scoped auth, operation status, and dashboard views done; `ensure-ready` (T2.2) remains |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ functionally complete — alert lifecycle, emails, and the PRD §19 runbooks; hosted verification outstanding     |
-| 4     | Scheduled wallet reconciliation                                            | not started                                                                                                       |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                      |
+| Phase | Focus                                                                      | Status                                                                                                      |
+| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                 |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                          |
+| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13) |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)            |
+| 4     | Scheduled wallet reconciliation                                            | not started (T4.1–T4.4)                                                                                     |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                |
