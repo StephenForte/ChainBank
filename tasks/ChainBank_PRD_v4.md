@@ -934,9 +934,9 @@ that document, which remains the authority.
 
 One further question arose during delivery and remains open:
 
-| Question                                                               | Status        | Notes                                                                                                                          |
-| ---------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| End-to-end chain: a local node such as Anvil, or mocked JSON-RPC only? | **Open (D6)** | Blocks the Phase 4 cron-versus-API concurrency test (§18 “local development chain”). Needs a decision before that work starts. |
+| Question                                                               | Status                        | Notes                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| End-to-end chain: a local node such as Anvil, or mocked JSON-RPC only? | **Decided, provisional (D6)** | Anvil, spawned only when present on `PATH` (suite skips otherwise); unit/integration stay on mocked JSON-RPC. Decided 2026-07-29; reconfirm when T4.4 (cron-versus-API concurrency e2e) starts. |
 
 ## 23. Render Implementation Notes
 
@@ -950,7 +950,7 @@ Render Cron Jobs can execute commands from the same repository on schedules defi
 - Render projects and environments: https://render.com/docs/projects
 - Render example of a cron job using `fromDatabase`: https://render.com/docs/backup-postgresql-to-s3
 
-## 25. Implementation Status (appendix, updated 2026-07-29)
+## 25. Implementation Status (appendix, updated 2026-08-01)
 
 Sections 1–24 are the requirement of record and are unchanged. This appendix
 records what has been built and, more importantly, **where the implementation
@@ -959,17 +959,22 @@ document a reader would otherwise be misled by.
 
 ### 25.1 Phase status
 
-| Phase                                  | Status                                                                                                                                                                                          |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Bootstrap and read-only monitoring | Complete.                                                                                                                                                                                       |
-| 1 — Treasury MVP and on-demand funding | Complete. Outstanding: the reserve-exhaustion operator email (§12.3) and the dedicated concurrency test suite.                                                                                  |
-| 2 — Projects, environments, readiness  | Partial. Projects, environments, scoped credentials, and operation status with confirmation resume are delivered. `POST /v1/environments/{id}/ensure-ready` and the expanded dashboard are not. |
-| 3 — Daily monitoring and email alerts  | Partial. The alert lifecycle (warning, critical, reminder, recovery) and all templates are delivered and driven by both the cron and the manual check. The §19 runbooks are not written.        |
-| 4 — Managed-wallet reconciliation      | Not started.                                                                                                                                                                                    |
-| 5–8                                    | Out of scope for this effort.                                                                                                                                                                   |
+| Phase                                  | Status                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap and read-only monitoring | Complete.                                                                                                                                                                                                                                                                                                                                                   |
+| 1 — Treasury MVP and on-demand funding | Complete. Reserve-exhaustion operator email (P1-US5 / [C10](./DECISIONS.md#c10--treasury-reserve-exhaustion-alert-owner-t18)) and concurrency integration tests (T1.9) are delivered.                                                                                                                                                                       |
+| 2 — Projects, environments, readiness  | Complete. Projects, environments, scoped credentials, operation status, expanded dashboard, `POST /v1/environments/{id}/ensure-ready` ([C11](./DECISIONS.md#c11--environment-ensure-ready-owner-t22)), and `GET /v1/projects/{id}/environments` ([C13](./DECISIONS.md#c13--list-environments-for-a-project-owner-tx7)) are delivered.                       |
+| 3 — Daily monitoring and email alerts  | Complete. Alert lifecycle, all templates, PRD §19 runbooks, and hosted verification (all four phases, 2026-08-01) are delivered.                                                                                                                                                                                                                            |
+| 4 — Managed-wallet reconciliation      | In progress. The reconciliation use case is merged ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41), migration `0004`): below-minimum sweep through the C7 dispatch engine, evidence-based `submission_unknown` settlement, and crash-orphan outgoing scan. The cron entry (T4.2), failure alerting (T4.3), and cron-vs-API e2e (T4.4) remain. |
+| 5–8                                    | Out of scope for this effort.                                                                                                                                                                                                                                                                                                                               |
 
-**Funding is not enabled.** `FUNDING_ENABLED` defaults to false. Per §20 and §19,
-it must remain false until the operational runbooks exist.
+**Funding is armed in production** (2026-08-01). The hosted deployment passed all
+four verification phases (including a real Sepolia transfer, idempotent replay, and
+kill-switch refusal under live conditions — see
+`docs/runbooks/verify-hosted-deployment.md`). The operator disabled the stray Phase
+4 treasury row via `PATCH /v1/treasuries/:id` ([C12](./DECISIONS.md#c12--treasury-row-lifecycle-owner-tx5))
+and released `FUNDING_KILL_SWITCH`. New environments still default to
+`FUNDING_ENABLED=false` until deliberately armed.
 
 ### 25.2 Data model additions beyond §13
 
@@ -1008,17 +1013,34 @@ would each measure against the same pre-send balance and collectively breach the
 reserve. Spendable balance is therefore computed as
 `balance − reserve − estimated cost − in-flight commitments`.
 
+Since Wave 5a (TX.8, merged PR #37), the money path also **re-reads wallet and
+treasury balances inside the advisory lock** before computing top-up and reserve
+([C7](./DECISIONS.md#c7--funding-dispatch-engine-owner-t15-destination-hardening-t16)
+amendment). Pre-lock observations remain API audit fields only; they are not the
+inputs to signing decisions.
+
 ### 25.5 API surface delta from §12.1
 
-Delivered as specified, except:
+Delivered as specified, plus additions required by later user stories:
 
-- `POST /v1/environments/{id}/ensure-ready` — **not yet implemented** (Phase 2).
+- `POST /v1/environments/{id}/ensure-ready` — **delivered** ([C11](./DECISIONS.md#c11--environment-ensure-ready-owner-t22)).
+  Composes `ensureWalletFunded` per enabled wallet; per-wallet statuses
+  (`no-op` / `funded` / `pending` / `warning` / `blocked`) roll up to overall
+  `ready` / `degraded` / `pending` / `blocked`. The caller's idempotency key is
+  namespaced per wallet inside `ensureWalletFunded` (`${walletId}:${key}`).
+- `GET /v1/projects/{id}/environments` — **added**, paginated ([C13](./DECISIONS.md#c13--list-environments-for-a-project-owner-tx7)).
+  Replaces the dashboard's wallet-derived environment discovery so zero-wallet
+  environments are visible immediately after creation.
+- `PATCH /v1/treasuries/{id}` — **added**, operator-only `{ enabled }`
+  ([C12](./DECISIONS.md#c12--treasury-row-lifecycle-owner-tx5)). Completes
+  treasury key rotation without SQL: change config → ambiguity guard refuses →
+  disable the retired row → funding resumes on the remaining row.
 - `GET /v1/funding-operations/{id}` — **added**, not in §12.1. Required to satisfy
   P2-US3 (“A later status query can resume tracking the same operation”).
 - Administrative routes added for completeness of the §12.2 dashboard views:
   `GET /v1/projects/{id}`, `PATCH /v1/projects/{id}`,
   `POST /v1/projects/{id}/environments`, `PATCH /v1/wallets/{id}`,
-  `PUT /v1/wallets/{id}/policy`.
+  `PUT /v1/wallets/{id}/policy`, `GET/PATCH /v1/admin/credentials`.
 
 ### 25.6 Configuration beyond §21
 
@@ -1027,14 +1049,48 @@ hop lets a client forge its own source address through `X-Forwarded-For`, which
 would defeat rate limiting and corrupt audit provenance. Other additions
 (`FUNDING_KILL_SWITCH`, `FUNDING_CONFIRMATIONS`,
 `FUNDING_CONFIRMATION_TIMEOUT_MS`, `ALERT_REMINDER_INTERVAL_HOURS`) implement
-§18, D4, and P3-US2 respectively. The full registry is in `tasks/DECISIONS.md`.
+§18, D4, and P3-US2 respectively. ForteL2 threshold values (D3: warning 0.75 /
+critical 0.3 / recovery 1.5 / reserve 0.1 ETH) are declared as literal `value:`
+entries in `render.yaml` on both services so CI validates the ladder before deploy.
+The full registry is in `tasks/DECISIONS.md`.
 
 ### 25.7 Definition-of-done gaps against §20
 
 Honest accounting of where the current state falls short of §20:
 
-- **Runbooks (§19) do not exist** beyond the Render deployment checklist. This is
-  the blocking item before scheduled signing may be enabled in a hosted
-  environment.
-- **Render deployment is not verified** for the alerting and funding paths.
-- The **end-to-end suite is empty**; the local-chain question (D6) is unresolved.
+- **Scheduled reconciliation does not yet run in the hosted environment.** The
+  use case is merged (T4.1 / C14), but §20's cron-driven top-up waits on the
+  reconciler cron entry (T4.2) — until it lands, reconciliation exists in code
+  and tests only.
+- The **end-to-end suite is empty**; the local-chain decision (D6: Anvil,
+  decided provisionally 2026-07-29) is to be reconfirmed when T4.4 starts.
+
+Closed since the 2026-07-29 refresh:
+
+- **Runbooks (§19)** — all ten operational runbooks exist under `docs/runbooks/`.
+- **Render deployment verification** — hosted verification passed all four phases
+  (2026-08-01); funding is armed in production.
+
+### 25.8 Known limitations and scheduled fixes
+
+Defects found during T1.9 concurrency testing (2026-08-01):
+
+1. **Confirm-outside-lock race — closed by TX.8 (PR #37, merged 2026-08-01).**
+   Pre-lock balance observations could stale while a fast confirmation cleared the
+   in-flight gate, allowing a second distinct-key transfer. `dispatchFunding` now
+   re-reads wallet and treasury balances inside the advisory lock and recomputes
+   top-up / reserve from fresh values ([C7](./DECISIONS.md#c7--funding-dispatch-engine-owner-t15-destination-hardening-t16)
+   amendment). This was an accepted risk at arming time and is no longer open.
+2. **Crash-after-broadcast reconciliation gap — closed at the use-case layer by
+   T4.1 ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41)); hosted
+   coverage pending T4.2.** A backend killed mid-send rolls back the in-lock
+   database rows: the operation stays `pending`, the wallet is not wedged, and a
+   transfer that reached the network leaves no DB trace and no recorded nonce.
+   `reconcileWallets` now scans the treasury's on-chain outgoing transfers over a
+   bounded lookback and flags any transfer no `funding_transactions` row explains
+   as a critical finding — surfaced in the run summary, never silently adopted.
+   Until T4.2 wires the cron, this detection only runs when the use case is
+   invoked; no scheduled sweep exists in the hosted environment yet.
+
+Test counts on `main` (2026-08-01): **381 unit**, **69 integration** (opt-in,
+Postgres).
