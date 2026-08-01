@@ -38,6 +38,7 @@ import { validWebEnv } from '../support/env.js';
 import {
   createControllableSigner,
   createDeferred,
+  createFakeBalanceReader,
   createFakeReceiptTracker,
 } from '../support/funding-fakes.js';
 import {
@@ -279,6 +280,96 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
     const submitted = rows.filter((row) => row.status === 'submitted');
     expect(submitted).toHaveLength(1);
     expect(signer.sendCalls).toBe(1);
+  });
+
+  it('parallel distinct keys with instant confirmation: in-lock re-read yields one transfer', async () => {
+    // TX.8: when the winner confirms before the loser enters the advisory lock,
+    // the C4 pending-tx gate is clear. Without an in-lock wallet re-read the
+    // loser would sign from its stale pre-lock balance. The loser's lock-time
+    // read must see the funded wallet and no-op.
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS.toLowerCase()]: 20n * ONE_ETH,
+        [WALLET_A_ADDRESS.toLowerCase()]: ONE_ETH / 10n,
+      },
+    });
+
+    const signer = createControllableSigner({
+      onSend: (input) => {
+        const current = balanceReader.balances.get(WALLET_A_ADDRESS.toLowerCase()) ?? 0n;
+        balanceReader.setBalance(WALLET_A_ADDRESS.toLowerCase(), current + input.valueWei);
+        return Promise.resolve();
+      },
+      getNonce: () => signer.sendCalls,
+    });
+
+    // Instant-confirm tracker (default): confirmation clears the in-flight gate.
+    const deps = buildEnsureDeps(signer, { balanceReader });
+
+    const releaseLoser = createDeferred<void>();
+    const winnerPromise = ensureWalletFunded(deps, {
+      walletId: seed.managedWalletId,
+      idempotencyKey: 'inst-winner',
+      role: 'operator',
+      credentialId,
+      correlationId: 'corr-inst-winner',
+      sourceIp: '127.0.0.1',
+    });
+
+    const loserPromise = (async () => {
+      await releaseLoser.promise;
+      // Force a stale pre-lock observation below minimum while the in-lock
+      // BalanceReader still sees the post-confirm funded balance.
+      const fundedWei = balanceReader.balances.get(WALLET_A_ADDRESS.toLowerCase()) ?? 0n;
+      expect(fundedWei).toBeGreaterThanOrEqual(ONE_ETH);
+
+      let walletReadsForLoser = 0;
+      const loserReader: BalanceReader = {
+        verifyChainId: () => balanceReader.verifyChainId(),
+        readBalance: async (address) => {
+          if (address.toLowerCase() === WALLET_A_ADDRESS.toLowerCase()) {
+            walletReadsForLoser += 1;
+            if (walletReadsForLoser === 1) {
+              return {
+                kind: 'observed',
+                balanceWei: ONE_ETH / 10n,
+                blockNumber: 42n,
+                observedAt: new Date('2026-07-29T12:00:00.000Z'),
+              };
+            }
+          }
+          return balanceReader.readBalance(address);
+        },
+      };
+
+      return ensureWalletFunded(
+        { ...deps, balanceReader: loserReader },
+        {
+          walletId: seed.managedWalletId,
+          idempotencyKey: 'inst-loser',
+          role: 'operator',
+          credentialId,
+          correlationId: 'corr-inst-loser',
+          sourceIp: '127.0.0.1',
+        },
+      );
+    })();
+
+    const winner = await winnerPromise;
+    expect(winner.status).toBe('funded');
+    expect(signer.sendCalls).toBe(1);
+    releaseLoser.resolve();
+
+    const loser = await loserPromise;
+    expect(loser.status).toBe('no-op');
+    expect(signer.sendCalls).toBe(1);
+
+    const rows = await handle.db.select().from(fundingTransactions);
+    const transferred = rows.filter((row) =>
+      ['submitted', 'confirmed', 'created', 'submission_unknown'].includes(row.status),
+    );
+    expect(transferred).toHaveLength(1);
+    expect(transferred[0]?.status).toBe('confirmed');
   });
 
   it('route idempotency: same key+wallet replays; same key+different wallet does not cross-replay', async () => {

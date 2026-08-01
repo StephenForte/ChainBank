@@ -477,6 +477,27 @@ Security-review hardening (2026-07-28, PR #8 review — see `tasks/SECURITY-REVI
 - Open follow-up for **T4.x reconciliation**: resolve `submission_unknown` rows by
   searching for the treasury's transactions at the recorded nonce.
 
+TX.8 amendment (2026-08-01) — in-lock balance re-read before top-up / reserve math:
+
+- **`DispatchFundingDependencies` includes `BalanceReader`.** `ensureWalletFunded`
+  passes through the same reader used for its pre-lock observations.
+- **`DispatchFundingInput.treasury.address`** is required so dispatch can re-read
+  the treasury under the advisory lock. Pre-lock `walletBalanceWei` /
+  `treasury.balanceWei` remain the recorded observations and API
+  `balanceBeforeWei`; they are **not** the money-path inputs.
+- **Inside `pg_advisory_xact_lock`**, after wallet re-resolution and the pending-tx
+  gate, dispatch re-reads the destination wallet and treasury balances, then
+  recomputes `calculateTopUp` / spendable reserve from those fresh values plus
+  the existing in-flight sum. A wallet at-or-above minimum on the in-lock read
+  is `no-op` even when the pre-lock observation was below minimum — closing the
+  confirm-outside-lock race proven by T1.9 (stale pre-lock read + fast confirm
+  clearing the in-flight gate → second transfer).
+- **In-lock read failures are terminal pre-broadcast.** They mark the operation
+  `failed` with the BalanceReader code (`RPC_UNAVAILABLE` | `CHAIN_ID_MISMATCH`)
+  and never create a `funding_transactions` row. `RPC_UNAVAILABLE` stays out of
+  `PRE_BROADCAST_ERROR_CODES` so post-`sendNativeTransfer` ambiguity still
+  yields non-terminal `submission_unknown` (C4).
+
 ### C8 — Funding operation status resume (owner: T2.3)
 
 ```ts
@@ -683,3 +704,4 @@ Local design choices (TX.7, 2026-08-01):
 - 2026-08-01 — TX.5 published C12: operator-only `PATCH /v1/treasuries/:id` `{ enabled }`, `treasury:write`, audited enable/disable, and fail-closed ambiguity guard in `resolveTreasuryForWallet` when more than one enabled treasury exists for a chain. Closes the address-only `TREASURY_ADDRESS` silent no-op proven in hosted Phase 4. (Originally handed off as "C11"; renumbered by the planner — C11 is pre-assigned to T2.2.)
 - 2026-08-01 — T2.2 published C11: `POST /v1/environments/{id}/ensure-ready` composes `ensureWalletFunded` per enabled wallet with overall ready/degraded/pending/blocked precedence and env-level idempotency key namespaced per wallet.
 - 2026-08-01 — T1.9 added concurrency/crash-recovery integration coverage for `ensureWalletFunded` and the ensure-funded route (parallel distinct keys, route idempotency namespacing, C4 in-flight pending-tx gate, advisory-lock abort behavior, reserve in-flight accounting under parallelism). No new interface contract. Confirmed two follow-ups for the operator: the confirm-outside-lock race (stale balance read + fast confirmation can double-fund a wallet across distinct keys) and the crash-after-broadcast gap (terminated backend rolls back the in-lock rows, so a broadcast transfer can leave no DB trace for reconciliation).
+- 2026-08-01 — TX.8 amended C7: `dispatchFunding` re-reads wallet and treasury balances inside the advisory lock and recomputes top-up / reserve from those fresh values, so a confirm-outside-lock race cannot sign a second transfer from a stale pre-lock observation (AGENTS.md §7.3).

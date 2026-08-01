@@ -11,6 +11,7 @@ import { createManagedWalletRepository } from '../../src/infrastructure/db/repos
 import { fundingTransactions, managedWallets } from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { createFixedClock } from '../support/clock.js';
+import { createFakeBalanceReader } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -21,6 +22,8 @@ import {
 import { integrationEnabled } from '../support/integration-setup.js';
 
 const ONE_ETH = 10n ** 18n;
+const TREASURY_ADDRESS = '0x1111111111111111111111111111111111111111';
+const WALLET_ADDRESS = '0x2222222222222222222222222222222222222222';
 
 function createControllableSigner(options: {
   readonly onSend?: () => Promise<void>;
@@ -77,14 +80,22 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
 
   function buildDispatch(signer: TreasurySigner, correlationId: string) {
     const clock = createFixedClock();
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS.toLowerCase()]: 20n * ONE_ETH,
+        [WALLET_ADDRESS.toLowerCase()]: ONE_ETH / 10n,
+      },
+    });
     return {
       clock,
+      balanceReader,
       dependencies: {
         operations: createFundingOperationRepository(handle.db),
         transactions: createFundingTransactionRepository(handle.db),
         managedWallets: createManagedWalletRepository(handle.db),
         lock: createFundingDispatchLock(handle.db),
         signer,
+        balanceReader,
         clock,
         idGenerator: { next: () => crypto.randomUUID() },
         logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
@@ -103,6 +114,7 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
           evmChainId: 11_155_111,
           enabled: true,
           reserveWei: ONE_ETH / 2n,
+          address: TREASURY_ADDRESS,
           balanceWei: 20n * ONE_ETH,
         },
         walletId: seed.managedWalletId,
@@ -222,6 +234,8 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
     a.input.idempotencyKey = 'lock-a';
     b.input.idempotencyKey = 'lock-b';
     b.input.walletId = walletB.id;
+    // Second wallet needs an in-lock balance below minimum or it no-ops (TX.8).
+    b.balanceReader.setBalance(walletB.address, ONE_ETH / 10n);
 
     const firstPromise = dispatchFunding(a.dependencies, a.input);
     await new Promise((resolve) => setTimeout(resolve, 50));

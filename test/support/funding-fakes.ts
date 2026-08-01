@@ -1,4 +1,5 @@
 import type {
+  BalanceReader,
   FundingDispatchLock,
   FundingDispatchUnitOfWork,
   FundingOperation,
@@ -12,6 +13,7 @@ import type {
   TransactionTrackingOutcome,
   TreasurySigner,
 } from '../../src/app/ports.js';
+import type { BalanceReading } from '../../src/domain/balance-reading.js';
 import { ChainBankError } from '../../src/domain/errors.js';
 import {
   canTransitionOperationStatus,
@@ -245,6 +247,83 @@ function transitionTx(
   };
   store.set(id, next);
   return next;
+}
+
+/**
+ * Controllable BalanceReader for dispatch / ensure-funded tests.
+ *
+ * Balances are keyed by lowercase address and may be mutated after construction
+ * (e.g. to simulate a confirmed top-up visible to a later in-lock re-read).
+ */
+export function createFakeBalanceReader(options?: {
+  readonly balances?: Map<string, bigint> | Readonly<Record<string, bigint>>;
+  readonly unavailable?: Readonly<
+    Record<string, Extract<BalanceReading, { kind: 'unavailable' }>['errorCode']>
+  >;
+  readonly observedAt?: Date;
+  readonly chainId?: number;
+}): BalanceReader & {
+  readonly reads: string[];
+  readonly balances: Map<string, bigint>;
+  setBalance(address: string, balanceWei: bigint): void;
+  setUnavailable(
+    address: string,
+    errorCode: Extract<BalanceReading, { kind: 'unavailable' }>['errorCode'],
+  ): void;
+} {
+  const balances = new Map<string, bigint>();
+  if (options?.balances instanceof Map) {
+    for (const [address, balanceWei] of options.balances) {
+      balances.set(address.toLowerCase(), balanceWei);
+    }
+  } else if (options?.balances !== undefined) {
+    for (const [address, balanceWei] of Object.entries(options.balances)) {
+      balances.set(address.toLowerCase(), balanceWei);
+    }
+  }
+  const unavailable = new Map<string, Extract<BalanceReading, { kind: 'unavailable' }>['errorCode']>();
+  if (options?.unavailable !== undefined) {
+    for (const [address, errorCode] of Object.entries(options.unavailable)) {
+      unavailable.set(address.toLowerCase(), errorCode);
+    }
+  }
+  const reads: string[] = [];
+  const observedAt = options?.observedAt ?? new Date('2026-07-29T12:00:00.000Z');
+  const chainId = options?.chainId ?? 11_155_111;
+
+  return {
+    reads,
+    balances,
+    setBalance(address, balanceWei) {
+      balances.set(address.toLowerCase(), balanceWei);
+      unavailable.delete(address.toLowerCase());
+    },
+    setUnavailable(address, errorCode) {
+      unavailable.set(address.toLowerCase(), errorCode);
+    },
+    readBalance(address) {
+      const normalized = address.toLowerCase();
+      reads.push(normalized);
+      const errorCode = unavailable.get(normalized);
+      if (errorCode !== undefined) {
+        return Promise.resolve({
+          kind: 'unavailable',
+          errorCode,
+          reason: `Simulated ${errorCode} for ${normalized}`,
+          observedAt,
+        });
+      }
+      return Promise.resolve({
+        kind: 'observed',
+        balanceWei: balances.get(normalized) ?? 0n,
+        blockNumber: 42n,
+        observedAt,
+      });
+    },
+    verifyChainId() {
+      return Promise.resolve({ matches: true, observedChainId: chainId });
+    },
+  };
 }
 
 export function createFakeSigner(overrides: {

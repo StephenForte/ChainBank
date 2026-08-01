@@ -7,6 +7,7 @@ import { ChainBankError, describeUnknownError, isChainBankError } from '../../do
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import type {
+  BalanceReader,
   FundingDispatchLock,
   FundingOperation,
   FundingOperationRepository,
@@ -24,6 +25,8 @@ export interface DispatchFundingDependencies {
   readonly managedWallets: ManagedWalletRepository;
   readonly lock: FundingDispatchLock;
   readonly signer: TreasurySigner;
+  /** Fresh on-chain reads for the in-lock top-up / reserve decision (TX.8). */
+  readonly balanceReader: BalanceReader;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -47,6 +50,12 @@ export interface DispatchFundingInput {
     readonly evmChainId: number;
     readonly enabled: boolean;
     readonly reserveWei: bigint;
+    /** Checksummed or normalized treasury address for the in-lock balance re-read. */
+    readonly address: string;
+    /**
+     * Pre-lock observation only. The money-path reserve check uses a fresh
+     * in-lock {@link BalanceReader} read (TX.8 / AGENTS.md §7.3–7.4).
+     */
     readonly balanceWei: bigint;
   };
   /** Managed wallet id only — destination address must come from the repository. */
@@ -54,6 +63,10 @@ export interface DispatchFundingInput {
   readonly projectEnabled: boolean;
   readonly environmentEnabled: boolean;
   readonly policy: FundingPolicy;
+  /**
+   * Pre-lock observation only (API `balanceBeforeWei` / recorded observations).
+   * Top-up amount is recomputed from a fresh in-lock balance read (TX.8).
+   */
   readonly walletBalanceWei: bigint;
 }
 
@@ -91,9 +104,11 @@ type LockOutcome = DispatchFundingResult | { readonly kind: 'throw'; readonly er
  * Security order of operations:
  * 1. Honor kill switch and enable flags (fail closed).
  * 2. Commit an idempotent funding_operations row before any RPC submission.
- * 3. Under pg_advisory_xact_lock(treasury, chain): re-verify chain ID, re-run
- *    reserve/policy math, refuse if a pending tx exists for the wallet, fetch
- *    nonce, submit, and persist the transaction hash before releasing the lock.
+ * 3. Under pg_advisory_xact_lock(treasury, chain): re-resolve the destination
+ *    wallet, re-verify chain ID, re-read wallet and treasury balances, re-run
+ *    reserve/policy math on those fresh values, refuse if a pending tx exists
+ *    for the wallet, fetch nonce, submit, and persist the transaction hash
+ *    before releasing the lock.
  *
  * Database unavailability prevents signing entirely — the lock/UoW acquisition
  * fails before `sendNativeTransfer` is called.
@@ -240,8 +255,46 @@ async function dispatchUnderLock(
   // Destination is the checksummed display form from the registered row only.
   const destinationAddress = lockedWallet.addressDisplay;
 
-  // Provisional amount for gas estimation: deficit capped by max top-up.
-  const provisionalAmountWei = provisionalTopUpAmountWei(input);
+  // Re-read balances inside the lock so a concurrent confirm that funded this
+  // wallet cannot leave a second dispatcher signing from a stale pre-lock
+  // observation (TX.8 / AGENTS.md §7.3). These reads are strictly pre-broadcast:
+  // failures mark the operation failed and never create a transaction row.
+  const freshWalletBalanceWei = await readBalanceInsideLock(
+    dependencies,
+    uow,
+    operation,
+    destinationAddress,
+    {
+      entityLabel: 'managed wallet',
+      publicMessage: 'The managed wallet balance could not be read from the chain.',
+      context: { managedWalletId: lockedWallet.id, operationId: operation.id },
+    },
+  );
+  if (typeof freshWalletBalanceWei !== 'bigint') {
+    return freshWalletBalanceWei;
+  }
+
+  const freshTreasuryBalanceWei = await readBalanceInsideLock(
+    dependencies,
+    uow,
+    operation,
+    input.treasury.address,
+    {
+      entityLabel: 'treasury',
+      publicMessage: 'The treasury balance could not be read from the chain.',
+      context: { treasuryId: input.treasury.id, operationId: operation.id },
+    },
+  );
+  if (typeof freshTreasuryBalanceWei !== 'bigint') {
+    return freshTreasuryBalanceWei;
+  }
+
+  // Provisional amount for gas estimation: deficit capped by max top-up,
+  // computed from the fresh in-lock wallet balance.
+  const provisionalAmountWei = provisionalTopUpAmountWei({
+    walletBalanceWei: freshWalletBalanceWei,
+    policy: input.policy,
+  });
   const estimatedCostWei = await dependencies.signer.estimateTransferCostWei(
     destinationAddress,
     provisionalAmountWei,
@@ -251,13 +304,13 @@ async function dispatchUnderLock(
   // pass repeatedly against the same pre-send balance (AGENTS.md §7.4).
   const inFlightWei = await uow.transactions.sumInFlightAmountWeiByTreasury(input.treasury.id);
   const treasurySpendableWei = calculateTreasurySpendableWei({
-    treasuryBalanceWei: input.treasury.balanceWei,
+    treasuryBalanceWei: freshTreasuryBalanceWei,
     reserveWei: input.treasury.reserveWei,
     estimatedCostWei,
     inFlightWei,
   });
   const decision = calculateTopUp({
-    currentBalanceWei: input.walletBalanceWei,
+    currentBalanceWei: freshWalletBalanceWei,
     policy: input.policy,
     treasurySpendableWei,
   });
@@ -459,6 +512,14 @@ function assertFundingGates(
  * reach the network. Only these justify a terminal `failed` transaction row;
  * anything else (timeout, transport failure, unknown) must be treated as
  * possibly-broadcast. Fails closed: unrecognized codes are treated as ambiguous.
+ *
+ * BalanceReader unavailable codes are `RPC_UNAVAILABLE` | `CHAIN_ID_MISMATCH`.
+ * `CHAIN_ID_MISMATCH` is listed here for defense in depth, but in-lock balance
+ * read failures are handled by {@link readBalanceInsideLock} *before*
+ * `insertCreated` / `sendNativeTransfer` — they mark the operation failed and
+ * never create a transaction row. `RPC_UNAVAILABLE` must NOT be added to this
+ * set: after `sendNativeTransfer` it remains the ambiguous post-broadcast
+ * signal that produces non-terminal `submission_unknown` (C4).
  */
 const PRE_BROADCAST_ERROR_CODES: ReadonlySet<string> = new Set([
   'SIGNER_UNAVAILABLE',
@@ -474,6 +535,47 @@ const PRE_BROADCAST_ERROR_CODES: ReadonlySet<string> = new Set([
 
 function isProvablyBeforeBroadcast(errorCode: string): boolean {
   return PRE_BROADCAST_ERROR_CODES.has(errorCode);
+}
+
+/**
+ * Fresh balance read under the advisory lock, before any broadcast.
+ *
+ * On `unavailable`, commits a terminal operation failure and returns a throw
+ * outcome. Never creates a `funding_transactions` row, so an `RPC_UNAVAILABLE`
+ * balance-read failure cannot be misfiled as `submission_unknown` (which only
+ * applies after `sendNativeTransfer`).
+ */
+async function readBalanceInsideLock(
+  dependencies: DispatchFundingDependencies,
+  uow: {
+    readonly operations: FundingOperationRepository;
+    readonly transactions: FundingTransactionRepository;
+  },
+  operation: FundingOperation,
+  address: string,
+  labels: {
+    readonly entityLabel: string;
+    readonly publicMessage: string;
+    readonly context: Readonly<Record<string, string>>;
+  },
+): Promise<bigint | { readonly kind: 'throw'; readonly error: ChainBankError }> {
+  const reading = await dependencies.balanceReader.readBalance(address);
+  if (reading.kind === 'observed') {
+    return reading.balanceWei;
+  }
+
+  const completedAt = dependencies.clock.now();
+  await uow.operations.markFailed(operation.id, reading.errorCode, reading.reason, completedAt);
+  return {
+    kind: 'throw',
+    error: new ChainBankError(reading.errorCode, reading.reason, {
+      publicMessage: labels.publicMessage,
+      context: {
+        ...labels.context,
+        entityLabel: labels.entityLabel,
+      },
+    }),
+  };
 }
 
 /**
