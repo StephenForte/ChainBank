@@ -107,7 +107,7 @@ function fundedResult(
     balanceBeforeWei: ONE_ETH / 10n,
     minimumBalanceWei: ONE_ETH,
     targetBalanceWei: 2n * ONE_ETH,
-    transferredWei: status === 'funded' ? (2n * ONE_ETH - ONE_ETH / 10n) : undefined,
+    transferredWei: status === 'funded' ? 2n * ONE_ETH - ONE_ETH / 10n : undefined,
     transactionHash: status === 'funded' || status === 'pending' ? `0x${'ab'.repeat(32)}` : undefined,
     explorerBaseUrl: 'https://sepolia.etherscan.io',
     reasonCode: status === 'blocked' ? 'FUNDING_BLOCKED_RESERVE' : undefined,
@@ -138,9 +138,7 @@ function buildDeps(options?: {
   const environment = options && 'environment' in options ? options.environment : buildEnvironment();
   const project = options && 'project' in options ? options.project : buildProject();
   const wallets = options?.wallets ?? [buildWallet()];
-  const fundWallet =
-    options?.fundWallet ??
-    vi.fn(() => Promise.resolve(fundedResult('funded')));
+  const fundWallet = options?.fundWallet ?? vi.fn(() => Promise.resolve(fundedResult('funded')));
 
   const environments: EnvironmentRepository = {
     findById: vi.fn(() => Promise.resolve(environment)),
@@ -159,7 +157,7 @@ function buildDeps(options?: {
     findById: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
-    list: vi.fn((_filter, pagination) => {
+    list: vi.fn((_filter, pagination: { readonly limit: number; readonly offset: number }) => {
       const slice = wallets.slice(pagination.offset, pagination.offset + pagination.limit);
       return Promise.resolve({ items: slice, total: wallets.length });
     }),
@@ -169,7 +167,13 @@ function buildDeps(options?: {
     environments,
     projects,
     managedWallets,
-    treasuries: { listEnabled: vi.fn(), findById: vi.fn(), upsert: vi.fn(), recordCheckSuccess: vi.fn(), recordCheckFailure: vi.fn() },
+    treasuries: {
+      listEnabled: vi.fn(),
+      findById: vi.fn(),
+      upsert: vi.fn(),
+      recordCheckSuccess: vi.fn(),
+      recordCheckFailure: vi.fn(),
+    },
     balanceObservations: { record: vi.fn(), findLatest: vi.fn() },
     balanceReader: {
       readBalance: vi.fn(),
@@ -317,13 +321,15 @@ describe('ensureEnvironmentReady', () => {
       addressDisplay: '0x3333333333333333333333333333333333333333',
       criticalAtStartup: false,
     });
-    const fundWallet = vi.fn(async (_deps, fundInput: { readonly walletId: string }) => {
+    const fundWallet = vi.fn((_deps, fundInput: { readonly walletId: string }) => {
       if (fundInput.walletId === WALLET_A) {
-        throw new ChainBankError('RPC_UNAVAILABLE', 'simulated rpc failure', {
-          publicMessage: 'Chain unavailable.',
-        });
+        return Promise.reject(
+          new ChainBankError('RPC_UNAVAILABLE', 'simulated rpc failure', {
+            publicMessage: 'Chain unavailable.',
+          }),
+        );
       }
-      return fundedResult('funded');
+      return Promise.resolve(fundedResult('funded'));
     });
 
     const { dependencies, input } = buildDeps({ wallets: [critical, healthy], fundWallet });

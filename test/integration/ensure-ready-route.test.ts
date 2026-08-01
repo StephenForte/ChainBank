@@ -23,7 +23,12 @@ import { createManagedWalletRepository } from '../../src/infrastructure/db/repos
 import { createProjectRepository } from '../../src/infrastructure/db/repositories/project-repository.js';
 import { createServiceHeartbeatRepository } from '../../src/infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from '../../src/infrastructure/db/repositories/treasury-repository.js';
-import { apiCredentials, fundingPolicies, fundingTransactions, managedWallets } from '../../src/infrastructure/db/schema.js';
+import {
+  apiCredentials,
+  fundingPolicies,
+  fundingTransactions,
+  managedWallets,
+} from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
@@ -291,6 +296,15 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
   });
 
   it('concurrent ensure-ready calls with different keys create exactly one transfer per below-minimum wallet', async () => {
+    // Keep transfers in-flight (`pending`) so the per-wallet pending gate is
+    // what serializes concurrent different-key requests. Instant confirmation
+    // would close that window before the sibling request reaches dispatch.
+    await app.close();
+    app = await buildApp({
+      ...container,
+      transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
+    });
+
     const path = `/v1/environments/${seed.environmentId}/ensure-ready`;
 
     const [responseA, responseB] = await Promise.all([
@@ -351,9 +365,9 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
     // Second wallet is criticalAtStartup → overall blocked; others warning.
     expect(json.data.status).toBe('blocked');
     expect(json.data.wallets).toHaveLength(3);
-    expect(json.data.wallets.every((wallet) => wallet.status === 'warning' || wallet.status === 'blocked')).toBe(
-      true,
-    );
+    expect(
+      json.data.wallets.every((wallet) => wallet.status === 'warning' || wallet.status === 'blocked'),
+    ).toBe(true);
 
     const alerts = await handle.pool.query<{ count: string; alert_type: string }>(
       `SELECT count(*)::text AS count, alert_type

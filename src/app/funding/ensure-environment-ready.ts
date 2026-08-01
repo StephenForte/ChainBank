@@ -84,11 +84,9 @@ export async function ensureEnvironmentReady(
 ): Promise<EnsureEnvironmentReadyResult> {
   const environment = await dependencies.environments.findById(input.environmentId);
   if (environment === undefined) {
-    throw new ChainBankError(
-      'ENVIRONMENT_NOT_FOUND',
-      `Environment ${input.environmentId} does not exist`,
-      { publicMessage: 'The environment was not found.' },
-    );
+    throw new ChainBankError('ENVIRONMENT_NOT_FOUND', `Environment ${input.environmentId} does not exist`, {
+      publicMessage: 'The environment was not found.',
+    });
   }
 
   await authorizeScope(
