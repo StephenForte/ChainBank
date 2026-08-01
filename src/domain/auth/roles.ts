@@ -23,6 +23,7 @@ export type Role = (typeof ROLES)[number];
 export const PERMISSIONS = [
   'treasury:read',
   'treasury:check',
+  'treasury:write',
   'email:test',
   'wallet:read',
   'wallet:write',
@@ -38,6 +39,7 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
   operator: [
     'treasury:read',
     'treasury:check',
+    'treasury:write',
     'email:test',
     'wallet:read',
     'wallet:write',

@@ -2,6 +2,7 @@ import type { AppInstance } from '../types.js';
 import { evaluateTreasuryAlerts } from '../../app/alerts/evaluate-treasury-alerts.js';
 import { checkTreasuryBalance } from '../../app/treasury/check-treasury-balance.js';
 import { listTreasuries } from '../../app/treasury/list-treasuries.js';
+import { setTreasuryEnabled } from '../../app/treasury/set-treasury-enabled.js';
 import type { Container } from '../../container.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
@@ -32,6 +33,46 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
         { role: actor.role },
       );
       return { data: treasuries.map(serializeTreasury) };
+    },
+  );
+
+  app.patch(
+    '/v1/treasuries/:id',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: treasuryIdParams,
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['enabled'],
+          properties: {
+            enabled: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+      const body = request.body as { enabled: boolean };
+
+      const treasury = await setTreasuryEnabled(
+        {
+          treasuries: container.repositories.treasuries,
+          auditEvents: container.repositories.auditEvents,
+        },
+        {
+          role: actor.role,
+          treasuryId: id,
+          enabled: body.enabled,
+          operationId: request.id,
+          actorId: actor.credentialId,
+          sourceIp: request.ip,
+        },
+      );
+
+      return { data: serializeTreasury(treasury) };
     },
   );
 

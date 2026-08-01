@@ -284,6 +284,40 @@ Local design choices (T1.8, 2026-07-31):
 - **AlertRepository:** `markPendingEmail` and `touchLastEvaluated` accept optional
   `metadata` merges (additive; pendingEmail key preserved).
 
+### C12 — Treasury row lifecycle (owner: TX.5)
+
+```ts
+// HTTP (operator only; enforced in application services)
+// PATCH /v1/treasuries/:id  body: { enabled: boolean }  // additionalProperties: false
+
+// Application ports (src/app/ports.ts) — TreasuryRepository extension
+setEnabled(id, enabled): Promise<Treasury>;
+
+// Application use case
+setTreasuryEnabled(deps, input): Promise<Treasury>;
+// deps: TreasuryRepository, AuditEventRepository
+// Permission: 'treasury:write' (operator only)
+// Audit: treasury.disabled / treasury.enabled with previous/next enabled state
+// Unknown id → TREASURY_NOT_FOUND (404)
+// Disabling the only enabled treasury for a chain is allowed (fail closed downstream)
+
+// Funding resolution (src/app/funding/ensure-wallet-funded.ts)
+// resolveTreasuryForWallet: >1 enabled row for wallet.chain → INVALID_CONFIGURATION
+// before any signer call (publicMessage: ambiguous treasury configuration)
+```
+
+Local design choices (TX.5, 2026-08-01):
+
+- Closes the hosted Phase 4 silent no-op: an address-only `TREASURY_ADDRESS`
+  change inserts a second enabled row; without the guard, funding kept binding
+  the oldest row (key still matched) and spent from the retired treasury.
+- Option (b) "prefer the signer-matching row" is rejected: it silently
+  reinterprets which treasury is authoritative. Ambiguity refuses loudly;
+  rotation is change config → refuse → `PATCH` disable retired → resume.
+- Reserve accounting, nonce probing, and alert entity ids continue to key off
+  the single resolved row; dispatch's `treasury.enabled` snapshot gate remains
+  defense-in-depth for a mid-flight disable.
+
 ### C4 — Funding operation status values (owner: T1.5)
 
 `funding_operations.status`: `pending | in_progress | succeeded | failed | abandoned`
@@ -604,3 +638,4 @@ Local design choices (TX.7, 2026-08-01):
 - 2026-07-31 — T2.4 extended the operator dashboard with projects, environments, managed wallets, and funding-policy views (PRD §12.2 / P2-US1). Panels load independently (no cross-panel `Promise.all`); pagination query values are stringified via `URLSearchParams`; wei display/edit uses BigInt only. Environments for a selected project are discovered from `GET /v1/wallets?projectId=` because no list-by-project environments route exists; detail still uses `GET /v1/environments/:id`.
 - 2026-07-31 — T1.8 published C10: treasury-scoped `treasury_reserve` critical alert on `FUNDING_BLOCKED_RESERVE`, persist-then-send dedupe, resolve when a later transfer for that treasury submits successfully. Closes the operator-signal gap between the warning email and reserve refusals (P1-US5 / D3 detail).
 - 2026-08-01 — TX.7 published C13: `GET /v1/projects/:id/environments` with `EnvironmentRepository.listByProject`, `getProject`-style scoped reads, and shared string pagination; dashboard no longer discovers environments via wallets.
+- 2026-08-01 — TX.5 published C12: operator-only `PATCH /v1/treasuries/:id` `{ enabled }`, `treasury:write`, audited enable/disable, and fail-closed ambiguity guard in `resolveTreasuryForWallet` when more than one enabled treasury exists for a chain. Closes the address-only `TREASURY_ADDRESS` silent no-op proven in hosted Phase 4. (Originally handed off as "C11"; renumbered by the planner — C11 is pre-assigned to T2.2.)

@@ -148,6 +148,29 @@ describe('dispatchFunding', () => {
     expect(signer.sendCalls).toBe(0);
   });
 
+  it('refuses when the resolved treasury snapshot is disabled', async () => {
+    // Defense in depth for a mid-flight disable: dispatch checks the treasury
+    // enable flag on the input snapshot before any signer call.
+    const { dependencies, signer } = deps({});
+    await expect(
+      dispatchFunding(
+        dependencies,
+        baseInput({
+          treasury: {
+            id: 'treasury-1',
+            evmChainId: 11_155_111,
+            enabled: false,
+            reserveWei: ONE_ETH / 2n,
+            balanceWei: 10n * ONE_ETH,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'ENTITY_DISABLED',
+    });
+    expect(signer.sendCalls).toBe(0);
+  });
+
   it('signs only to the repository address, never a caller-supplied destination', async () => {
     const registered = '0x2222222222222222222222222222222222222222';
     const signer = createFakeSigner({

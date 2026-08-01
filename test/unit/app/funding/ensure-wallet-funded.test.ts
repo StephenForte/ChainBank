@@ -301,9 +301,11 @@ function buildDeps(options?: {
   readonly receiptOutcome?: 'confirmed' | 'pending';
   readonly estimatedCostWei?: bigint;
   readonly emailBehavior?: 'sent' | 'fail';
+  readonly enabledTreasuries?: readonly Treasury[];
 }) {
   const wallet = options && 'wallet' in options ? options.wallet : buildWallet();
   const treasury = buildTreasury();
+  const enabledTreasuries = options?.enabledTreasuries ?? [treasury];
   const stores = createInMemoryFundingStores();
   const alerts = createFakeAlerts();
   const { sender, messages } = createSender(options?.emailBehavior ?? 'sent');
@@ -318,10 +320,13 @@ function buildDeps(options?: {
         return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
       },
     });
-  const balanceReader = createBalanceReader({
+  const balances: Record<string, bigint> = {
     [REGISTERED_ADDRESS.toLowerCase()]: options?.walletBalanceWei ?? ONE_ETH / 10n,
-    [treasury.address.toLowerCase()]: options?.treasuryBalanceWei ?? 20n * ONE_ETH,
-  });
+  };
+  for (const row of enabledTreasuries) {
+    balances[row.address.toLowerCase()] = options?.treasuryBalanceWei ?? 20n * ONE_ETH;
+  }
+  const balanceReader = createBalanceReader(balances);
   const auditEvents: AuditEventRepository = {
     record: vi.fn(() => Promise.resolve()),
   };
@@ -336,9 +341,10 @@ function buildDeps(options?: {
     update: vi.fn(),
   };
   const treasuries: TreasuryRepository = {
-    listEnabled: vi.fn(() => Promise.resolve([treasury])),
+    listEnabled: vi.fn(() => Promise.resolve(enabledTreasuries)),
     findById: vi.fn(),
     upsert: vi.fn(),
+    setEnabled: vi.fn(),
     recordCheckSuccess: vi.fn(),
     recordCheckFailure: vi.fn(),
   };
@@ -590,6 +596,55 @@ describe('ensureWalletFunded', () => {
     // If they diverge, the reserve floor guards an account that is not spending.
     const signer = createFakeSigner({ address: '0x9999999999999999999999999999999999999999' });
     const { dependencies, input } = buildDeps({ signer });
+
+    await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+    });
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('refuses with INVALID_CONFIGURATION when two enabled treasuries share a chain', async () => {
+    // Address-only TREASURY_ADDRESS change inserts a second enabled row. Before
+    // TX.5, resolve picked the oldest and spent from it silently. The ambiguity
+    // guard must fire before any signer call, even when the signer matches one
+    // of the rows.
+    const retired = buildTreasury();
+    const replacement: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-2',
+      address: '0x3333333333333333333333333333333333333333',
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+    };
+    const signer = createFakeSigner({ address: retired.addressDisplay });
+    const { dependencies, input } = buildDeps({
+      signer,
+      enabledTreasuries: [retired, replacement],
+    });
+
+    const error = await ensureWalletFunded(dependencies, input).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ChainBankError);
+    expect(error).toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+    });
+    expect((error as ChainBankError).message).toContain(retired.id);
+    expect((error as ChainBankError).message).toContain(replacement.id);
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('refuses ambiguous treasury config even when the signer matches the newer row', async () => {
+    const retired = buildTreasury();
+    const replacement: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-2',
+      address: '0x3333333333333333333333333333333333333333',
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+    };
+    const signer = createFakeSigner({ address: replacement.addressDisplay });
+    const { dependencies, input } = buildDeps({
+      signer,
+      enabledTreasuries: [retired, replacement],
+    });
 
     await expect(ensureWalletFunded(dependencies, input)).rejects.toMatchObject({
       code: 'INVALID_CONFIGURATION',
