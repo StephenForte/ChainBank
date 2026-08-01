@@ -514,6 +514,48 @@ Local design choices (T2.3, 2026-07-29):
   construction. Response includes wei as decimal strings and explorer URL for
   the transaction hash when present.
 
+### C11 — Environment ensure-ready (owner: T2.2)
+
+```ts
+// src/app/funding/ensure-environment-ready.ts
+function ensureEnvironmentReady(deps, input): Promise<EnsureEnvironmentReadyResult>;
+// HTTP: POST /v1/environments/{id}/ensure-ready
+// Body: { idempotencyKey: string }  // additionalProperties: false; required
+
+type EnsureReadyWalletStatus = 'no-op' | 'funded' | 'pending' | 'warning' | 'blocked';
+type EnsureReadyOverallStatus = 'ready' | 'degraded' | 'pending' | 'blocked';
+```
+
+Local design choices (T2.2, 2026-08-01):
+
+- **Compose, do not fork funding:** calls existing `ensureWalletFunded` once per
+  enabled wallet (serial loop). Destination allowlist, reserve, advisory lock,
+  audit, and C10 reserve-alert dedupe stay inside that path (C7 / C10).
+- **Resolution / authz:** unknown environment → `ENVIRONMENT_NOT_FOUND`. Then
+  `authorizeScope` action `'fund'` at `(projectId, environmentId)` — operator
+  allowed; project-service when scoped; read-only and cron denied (C6 fund
+  extension). Disabled project or environment refuses the **whole** request with
+  `ENTITY_DISABLED` (never a silent `ready`).
+- **Funding gates:** `FUNDING_DISABLED` / kill switch from `ensureWalletFunded`
+  propagate and abort the sweep. No read-only readiness path in this contract.
+- **Wallet set:** all **enabled** managed wallets in the environment, paginating
+  through every page. A wallet with no funding policy is a per-wallet
+  configuration failure (`errorCode`), never skipped.
+- **Per-wallet mapping** from `EnsureWalletFundedResult` / caught errors:
+  `no-op`→`no-op`, `funded`→`funded`, `pending`→`pending`;
+  `blocked`/`failed`/thrown error → `blocked` when `criticalAtStartup`, else
+  `warning`. Per-wallet errors are contained so one failure cannot hide others.
+- **Overall precedence:** any `blocked` → `blocked`; else any `warning` →
+  `degraded`; else any `pending` → `pending`; else `ready`. **Zero eligible
+  wallets is `ready`** (nothing to fund).
+- **Idempotency:** the caller's key is passed through unchanged to each
+  `ensureWalletFunded` call, which namespaces it per wallet as
+  `` `${wallet.id}:${key}` ``. Replaying the same environment-level key therefore
+  replays each wallet's operation instead of double-funding.
+- **Response:** per-wallet entries include `walletId`, checksummed `address`,
+  `status`, `operationId` / `reasonCode` / `errorCode` when present, and
+  balance/target wei as decimal strings (machine-parsable and operator-debuggable).
+
 ### D3 detail — final values, and why they are in version control (2026-07-29)
 
 **Final ladder:** warning **0.75**, critical **0.3**, recovery **1.5**, reserve
@@ -639,3 +681,4 @@ Local design choices (TX.7, 2026-08-01):
 - 2026-07-31 — T1.8 published C10: treasury-scoped `treasury_reserve` critical alert on `FUNDING_BLOCKED_RESERVE`, persist-then-send dedupe, resolve when a later transfer for that treasury submits successfully. Closes the operator-signal gap between the warning email and reserve refusals (P1-US5 / D3 detail).
 - 2026-08-01 — TX.7 published C13: `GET /v1/projects/:id/environments` with `EnvironmentRepository.listByProject`, `getProject`-style scoped reads, and shared string pagination; dashboard no longer discovers environments via wallets.
 - 2026-08-01 — TX.5 published C12: operator-only `PATCH /v1/treasuries/:id` `{ enabled }`, `treasury:write`, audited enable/disable, and fail-closed ambiguity guard in `resolveTreasuryForWallet` when more than one enabled treasury exists for a chain. Closes the address-only `TREASURY_ADDRESS` silent no-op proven in hosted Phase 4. (Originally handed off as "C11"; renumbered by the planner — C11 is pre-assigned to T2.2.)
+- 2026-08-01 — T2.2 published C11: `POST /v1/environments/{id}/ensure-ready` composes `ensureWalletFunded` per enabled wallet with overall ready/degraded/pending/blocked precedence and env-level idempotency key namespaced per wallet.
