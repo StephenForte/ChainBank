@@ -143,6 +143,7 @@ function buildDeps(options?: {
   const environments: EnvironmentRepository = {
     findById: vi.fn(() => Promise.resolve(environment)),
     insert: vi.fn(),
+    listByProject: vi.fn(),
     setEnabled: vi.fn(),
   };
   const projects: ProjectRepository = {
@@ -171,6 +172,7 @@ function buildDeps(options?: {
       listEnabled: vi.fn(),
       findById: vi.fn(),
       upsert: vi.fn(),
+      setEnabled: vi.fn(),
       recordCheckSuccess: vi.fn(),
       recordCheckFailure: vi.fn(),
     },
