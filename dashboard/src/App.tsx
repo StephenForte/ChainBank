@@ -509,9 +509,7 @@ export function App() {
     try {
       const updated = await setEnvironmentEnabled(token, environment.id, nextEnabled);
       setEnvironmentDetail(updated);
-      setProjectEnvironments((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
+      setProjectEnvironments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setMessage(`Environment ${updated.slug} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
     } catch (caught) {
       setEnvironmentError(formatError(caught));
