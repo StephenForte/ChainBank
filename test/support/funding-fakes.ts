@@ -297,4 +297,83 @@ export function createFakeReceiptTracker(
   };
 }
 
+/** Explicitly resolved promise gate for deterministic concurrency tests (no sleeps). */
+export function createDeferred<T = void>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/**
+ * Signer whose `sendNativeTransfer` latency is controlled by caller-resolved
+ * promises. Used by concurrency/crash-recovery integration tests so races are
+ * exercised without `setTimeout` polling.
+ */
+export function createControllableSigner(options: {
+  readonly address?: string;
+  readonly estimatedCostWei?: bigint;
+  readonly chainMatches?: boolean;
+  /** Invoked before the call is counted; await a deferred here to hold the lock. */
+  readonly onSend?: (input: {
+    readonly to: string;
+    readonly valueWei: bigint;
+    readonly nonce: number;
+  }) => Promise<void>;
+  readonly getNonce?: () => number;
+  /** When provided, throw this instead of returning a hash (after onSend). */
+  readonly sendError?: () => unknown;
+}): TreasurySigner & {
+  readonly sendCalls: number;
+  readonly nonces: number[];
+  readonly enteredSendCount: number;
+} {
+  const state = { sendCalls: 0, nonces: [] as number[], enteredSendCount: 0 };
+  return {
+    get address() {
+      return options.address ?? '0x1111111111111111111111111111111111111111';
+    },
+    get sendCalls() {
+      return state.sendCalls;
+    },
+    get nonces() {
+      return state.nonces;
+    },
+    get enteredSendCount() {
+      return state.enteredSendCount;
+    },
+    verifyChainId() {
+      return Promise.resolve({
+        matches: options.chainMatches ?? true,
+        observedChainId: options.chainMatches === false ? 1 : 11_155_111,
+      });
+    },
+    getTransactionCount() {
+      return Promise.resolve(options.getNonce?.() ?? state.sendCalls);
+    },
+    estimateTransferCostWei() {
+      return Promise.resolve(options.estimatedCostWei ?? 21_000n);
+    },
+    async sendNativeTransfer(input) {
+      state.enteredSendCount += 1;
+      state.nonces.push(input.nonce);
+      if (options.onSend !== undefined) {
+        await options.onSend(input);
+      }
+      if (options.sendError !== undefined) {
+        throw options.sendError();
+      }
+      state.sendCalls += 1;
+      return { transactionHash: `0x${state.sendCalls.toString(16).padStart(64, '0')}` };
+    },
+  };
+}
+
 export { isUniqueViolation };

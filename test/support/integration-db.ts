@@ -6,10 +6,13 @@ import {
   chains,
   environments,
   fundingOperations,
+  fundingPolicies,
+  fundingTransactions,
   managedWallets,
   projects,
   treasuries,
 } from '../../src/infrastructure/db/schema.js';
+import type { FundingTransactionStatus } from '../../src/domain/funding/statuses.js';
 import { createLogger } from '../../src/observability/logger.js';
 
 export interface IntegrationDatabaseHandle {
@@ -28,7 +31,14 @@ export interface Phase1Seed {
   readonly operationId: string;
 }
 
-export function createIntegrationDatabase(): IntegrationDatabaseHandle {
+export interface CreateIntegrationDatabaseOptions {
+  /** Override pool size for concurrency tests that hold multiple advisory-lock connections. */
+  readonly poolMax?: number;
+}
+
+export function createIntegrationDatabase(
+  options: CreateIntegrationDatabaseOptions = {},
+): IntegrationDatabaseHandle {
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl === undefined || databaseUrl.trim() === '') {
     throw new Error('DATABASE_URL is required for integration database helpers');
@@ -40,9 +50,22 @@ export function createIntegrationDatabase(): IntegrationDatabaseHandle {
     environment: 'test',
   });
   const handle = createDatabase(
-    { url: databaseUrl, useSsl: false, poolMax: 4, sslCertificateAuthority: undefined },
+    {
+      url: databaseUrl,
+      useSsl: false,
+      poolMax: options.poolMax ?? 4,
+      sslCertificateAuthority: undefined,
+    },
     logger,
   );
+
+  // Checked-out clients emit 'error' when a crash-recovery test calls
+  // pg_terminate_backend; without a listener Node treats that as uncaught.
+  handle.pool.on('connect', (client) => {
+    client.on('error', () => {
+      // expected for deliberately terminated backends in integration tests
+    });
+  });
 
   return {
     db: handle.db,
@@ -177,4 +200,161 @@ export function isPgError(error: unknown, code: string): boolean {
     break;
   }
   return false;
+}
+
+export interface SeedManagedWalletInput {
+  readonly environmentId: string;
+  readonly chainId: string;
+  readonly address: string;
+  readonly role?: 'signer' | 'relayer' | 'other';
+  readonly policy?: {
+    readonly minimumBalanceWei: string;
+    readonly targetBalanceWei: string;
+    readonly maximumTopUpWei: string;
+  };
+}
+
+/** Inserts an additional managed wallet (and optional policy) for multi-wallet concurrency fixtures. */
+export async function seedManagedWallet(
+  db: Database,
+  input: SeedManagedWalletInput,
+): Promise<{ readonly id: string; readonly address: string }> {
+  const [wallet] = await db
+    .insert(managedWallets)
+    .values({
+      environmentId: input.environmentId,
+      chainId: input.chainId,
+      role: input.role ?? 'relayer',
+      address: input.address.toLowerCase(),
+    })
+    .returning({ id: managedWallets.id, address: managedWallets.address });
+
+  if (wallet === undefined) {
+    throw new Error('Failed to seed managed wallet');
+  }
+
+  if (input.policy !== undefined) {
+    await db.insert(fundingPolicies).values({
+      managedWalletId: wallet.id,
+      minimumBalanceWei: input.policy.minimumBalanceWei,
+      targetBalanceWei: input.policy.targetBalanceWei,
+      maximumTopUpWei: input.policy.maximumTopUpWei,
+      version: 1,
+    });
+  }
+
+  return wallet;
+}
+
+export interface SeedInFlightFundingTransactionInput {
+  readonly projectId: string;
+  readonly environmentId: string;
+  readonly treasuryId: string;
+  readonly managedWalletId: string;
+  readonly amountWei: string;
+  readonly status: Extract<FundingTransactionStatus, 'created' | 'submitted' | 'submission_unknown'>;
+  readonly requestedBy?: string;
+  readonly nonce?: number;
+  readonly transactionHash?: string;
+  readonly errorCode?: string;
+  readonly createdAt?: Date;
+}
+
+/**
+ * Seeds an in-flight funding_transactions row (C4: created | submitted | submission_unknown)
+ * with a parent funding_operations row, for pending-tx gate tests.
+ */
+export async function seedInFlightFundingTransaction(
+  db: Database,
+  input: SeedInFlightFundingTransactionInput,
+): Promise<{ readonly operationId: string; readonly transactionId: string }> {
+  const createdAt = input.createdAt ?? new Date('2026-07-29T12:00:00.000Z');
+  const [operation] = await db
+    .insert(fundingOperations)
+    .values({
+      operationType: 'ensure_funded',
+      projectId: input.projectId,
+      environmentId: input.environmentId,
+      requestedBy: input.requestedBy ?? 'cred-inflight-seed',
+      status: 'in_progress',
+      startedAt: createdAt,
+    })
+    .returning({ id: fundingOperations.id });
+
+  if (operation === undefined) {
+    throw new Error('Failed to seed in-flight funding operation');
+  }
+
+  const [transaction] = await db
+    .insert(fundingTransactions)
+    .values({
+      operationId: operation.id,
+      treasuryId: input.treasuryId,
+      managedWalletId: input.managedWalletId,
+      amountWei: input.amountWei,
+      status: input.status,
+      nonce: input.nonce ?? (input.status === 'created' ? null : 1),
+      transactionHash:
+        input.transactionHash ?? (input.status === 'submitted' ? `0x${'cd'.repeat(32)}` : null),
+      errorCode: input.errorCode ?? (input.status === 'submission_unknown' ? 'RPC_UNAVAILABLE' : null),
+      createdAt,
+      submittedAt: input.status === 'submitted' ? createdAt : null,
+    })
+    .returning({ id: fundingTransactions.id });
+
+  if (transaction === undefined) {
+    throw new Error('Failed to seed in-flight funding transaction');
+  }
+
+  return { operationId: operation.id, transactionId: transaction.id };
+}
+
+/**
+ * Returns backend PIDs currently holding a granted Postgres advisory lock.
+ * Used by crash-recovery tests to terminate the connection mid-dispatch.
+ */
+export async function listGrantedAdvisoryLockPids(pool: pg.Pool): Promise<readonly number[]> {
+  const result = await pool.query<{ pid: number }>(
+    `SELECT DISTINCT pid
+     FROM pg_locks
+     WHERE locktype = 'advisory' AND granted = true AND pid IS NOT NULL`,
+  );
+  return result.rows.map((row) => row.pid);
+}
+
+/** Count of backends blocked waiting to acquire a Postgres advisory lock. */
+export async function countWaitingAdvisoryLockBackends(pool: pg.Pool): Promise<number> {
+  const result = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM pg_locks
+     WHERE locktype = 'advisory' AND granted = false`,
+  );
+  return Number(result.rows[0]?.count ?? '0');
+}
+
+/**
+ * Resolves when at least `minimum` backends are waiting on an advisory lock.
+ * Deterministic alternative to sleep-based barriers for concurrency tests.
+ */
+export async function waitForAdvisoryLockWaiters(
+  pool: pg.Pool,
+  minimum: number,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const waiting = await countWaitingAdvisoryLockBackends(pool);
+    if (waiting >= minimum) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Timed out waiting for ${String(minimum)} advisory-lock waiters (saw ${String(waiting)})`,
+      );
+    }
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+  }
 }
