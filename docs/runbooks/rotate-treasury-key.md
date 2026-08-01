@@ -19,9 +19,8 @@ warning/critical/recovery/reserve numbers — use
   that key** (`isSigningCapableRole` is `web` only; monitor strips it before
   parse).
 - Both services need the matching `TREASURY_ADDRESS`.
-- Operator DB access (Render External Database URL or web Shell + `psql`) — there
-  is **no API** to disable a treasury row (see Known gaps in
-  [`README.md`](./README.md)).
+- An operator API token with permission to call
+  `PATCH /v1/treasuries/:id` (operator role only).
 - Funding should be off or kill-switched during the cutover:
   [`disable-all-automated-funding.md`](./disable-all-automated-funding.md).
 
@@ -32,19 +31,22 @@ warning/critical/recovery/reserve numbers — use
    history, observed balances, and alert entity id. Thresholds on the _matching_
    address row re-upsert from env on every boot
    (`registerConfiguredTreasury` + `onConflictDoUpdate`).
-2. **Funding resolves the oldest enabled treasury on the chain**
-   (`listEnabled()` ordered by `created_at` ASC, then first matching `chainId`).
-   If the old row stays `enabled = true`, ensure-funded still binds reserve and
-   nonce accounting to the **old** address.
-3. **`assertSignerMatchesTreasury`** refuses to sign unless the signer address
-   (derived from `TREASURY_PRIVATE_KEY`) matches the resolved treasury row
-   address. A rotation that updates the key but not `TREASURY_ADDRESS`, or that
-   leaves the old row enabled so funding still resolves to the old address, fails
-   closed with:
+2. **Ambiguity guard (TX.5).** While more than one enabled treasury exists for
+   the same chain, `ensure-funded` refuses with `INVALID_CONFIGURATION` before
+   any signer call. That turns an address-only config change into a loud refusal
+   instead of a silent spend from the old row.
+3. **`assertSignerMatchesTreasury`** additionally refuses to sign unless the
+   signer address (derived from `TREASURY_PRIVATE_KEY`) matches the *resolved*
+   treasury row. After the retired row is disabled, funding resolves the remaining
+   row and the signer must match that address.
+4. **Disable the retired row via the API** — never SQL in the happy path:
 
-   - code: `INVALID_CONFIGURATION` (HTTP 400)
-   - public message: `Funding is unavailable because the treasury signer is misconfigured.`
-   - internal log: `Treasury signing key does not match the configured treasury address; refusing to sign.`
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":false}' \
+  "$BASE/v1/treasuries/<retired-treasury-uuid>"
+```
 
 ## Steps
 
@@ -79,17 +81,16 @@ through a scratch file, a shared note, or a shell history.
    [`replenish-treasury.md`](./replenish-treasury.md) pattern) before cutover if
    you expect immediate funding after re-enable.
 
-4. Identify the current treasury row(s) — **SELECT first**:
+4. Identify the current (soon-to-be-retired) treasury id:
 
-```sql
-SELECT id, address, address_display, enabled, created_at, status,
-       last_observed_balance_wei, minimum_reserve_wei
-FROM treasuries
-ORDER BY created_at ASC;
+```bash
+export BASE='https://chainbank-web.onrender.com'
+export TOKEN='cb_…'
+
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
+# Note the id whose address matches the current TREASURY_ADDRESS.
+export RETIRED_TREASURY_ID='…'
 ```
-
-Note the `id` of the row whose `address` matches the **current** (soon-to-be-old)
-`TREASURY_ADDRESS`.
 
 5. In Render → `chainbank-web` → **Environment**:
 
@@ -108,34 +109,26 @@ Note the `id` of the row whose `address` matches the **current** (soon-to-be-old
    inserts the new address row (or updates thresholds if that address already
    existed).
 
-8. **Manual workaround — disable the old treasury row** (no product tool exists):
+8. **Expect funding to refuse** until the retired row is disabled. With two
+   enabled rows for the chain, `ensure-funded` returns `INVALID_CONFIGURATION`
+   with the public message that treasury configuration is ambiguous — that is
+   the intended intermediate state, not a bug.
 
-```sql
--- Confirm target again
-SELECT id, address, enabled FROM treasuries WHERE id = '<old-treasury-uuid>';
-
--- Soft-disable only; do not DELETE (history / alerts stay)
-UPDATE treasuries
-SET enabled = false,
-    updated_at = now()
-WHERE id = '<old-treasury-uuid>'
-  AND enabled = true;
-```
-
-9. Confirm only the new address is enabled:
-
-```sql
-SELECT id, address, enabled, created_at FROM treasuries ORDER BY created_at ASC;
-```
-
-10. Smoke (operator token):
+9. **Disable the retired treasury row** (soft-disable only; do not delete):
 
 ```bash
-export BASE='https://chainbank-web.onrender.com'
-export TOKEN='cb_…'
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":false}' \
+  "$BASE/v1/treasuries/$RETIRED_TREASURY_ID" | jq
+# Expect data.enabled == false and an audit row treasury.disabled.
+```
 
+10. Confirm only the new address is listed:
+
+```bash
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
-# Expect the new address only among enabled rows returned by the API.
+# Expect the new address only (listEnabled omits disabled rows).
 ```
 
 11. Only after verification, clear the kill switch / re-enable funding per your
@@ -145,27 +138,28 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
 
 ## Verification
 
-- `GET /v1/treasuries` lists the new address; old address absent (disabled rows are
-  not listed — `listEnabled`).
+- `GET /v1/treasuries` lists the new address; old address absent (disabled rows
+  are not listed — `listEnabled`).
 - Monitor logs: `Treasury observation recorded` for the new `treasuryId` after a
   Trigger Run.
-- A deliberate ensure-funded with mismatched key/address (if tested in a non-prod
-  clone) must return `INVALID_CONFIGURATION` with the public misconfiguration
-  message — never a successful submit.
+- With two enabled rows (before step 9), ensure-funded must return
+  `INVALID_CONFIGURATION` with the ambiguous-configuration public message — never
+  a successful submit from the old treasury.
 - After re-enable: a real ensure-funded against a below-minimum wallet either
   funds or returns an expected gate (`FUNDING_BLOCKED_RESERVE`, etc.), not
   `INVALID_CONFIGURATION`.
 
 ## Rollback / if this goes wrong
 
-- **Key updated, address not:** expect `INVALID_CONFIGURATION` on ensure-funded.
-  Set `TREASURY_ADDRESS` to the address of the key you deployed, redeploy web +
-  cron, then disable any stale enabled row.
-- **Both env vars updated, old row still enabled:** funding still resolves to the
-  oldest enabled row → same `INVALID_CONFIGURATION`. Complete step 8.
+- **Key updated, address not:** expect `INVALID_CONFIGURATION` on ensure-funded
+  (signer/treasury mismatch). Set `TREASURY_ADDRESS` to the address of the key
+  you deployed, redeploy web + cron, then disable any stale enabled row via
+  `PATCH /v1/treasuries/:id`.
+- **Both env vars updated, old row still enabled:** ambiguity guard refuses
+  funding. Complete step 9.
 - **Need to revert to the old wallet:** set env back to the old address + old key
-  (from your secret store), redeploy, `UPDATE treasuries SET enabled = true`
-  for the old id and `enabled = false` for the abandoned new id. Prefer kill
-  switch during the revert.
+  (from your secret store), redeploy, then
+  `PATCH` the old id with `{"enabled":true}` and the abandoned new id with
+  `{"enabled":false}`. Prefer kill switch during the revert.
 - Open alerts on the old `entity_id` do not automatically move to the new row;
   treat alert state on the abandoned treasury as historical.

@@ -387,7 +387,33 @@ async function resolveTreasuryForWallet(
   wallet: ManagedWallet,
 ): Promise<Treasury> {
   const treasuries = await dependencies.treasuries.listEnabled();
-  const treasury = treasuries.find((row) => row.chain.chainId === wallet.chain.chainId);
+  const matches = treasuries.filter((row) => row.chain.chainId === wallet.chain.chainId);
+
+  // More than one enabled row for a chain is the address-rotation hazard:
+  // bootstrap upserts on (chain_id, address), so a new TREASURY_ADDRESS inserts
+  // a second row while funding would otherwise keep binding the oldest. Refuse
+  // before any signer call so the silent no-op cannot spend from the retired
+  // treasury (TX.5 / AGENTS.md §18).
+  if (matches.length > 1) {
+    const ids = matches.map((row) => row.id).join(', ');
+    const addresses = matches.map((row) => row.address).join(', ');
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      `Ambiguous treasury configuration for chain ${String(wallet.chain.chainId)}: ${String(matches.length)} enabled rows (${ids}; addresses ${addresses}). Disable the retired row before funding.`,
+      {
+        publicMessage:
+          'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+        context: {
+          chainId: wallet.chain.chainId,
+          managedWalletId: wallet.id,
+          treasuryIds: matches.map((row) => row.id),
+          treasuryAddresses: matches.map((row) => row.address),
+        },
+      },
+    );
+  }
+
+  const treasury = matches[0];
   if (treasury === undefined) {
     throw new ChainBankError(
       'TREASURY_NOT_FOUND',

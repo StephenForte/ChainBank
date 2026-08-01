@@ -72,6 +72,8 @@ export interface TreasuryRepository {
   upsert(registration: TreasuryRegistration): Promise<Treasury>;
   findById(id: string): Promise<Treasury | undefined>;
   listEnabled(): Promise<readonly Treasury[]>;
+  /** Soft-enables or soft-disables a treasury row without deleting history. */
+  setEnabled(id: string, enabled: boolean): Promise<Treasury>;
   /**
    * Records a successful reading. Advances both the attempt and observation
    * timestamps and clears any previous failure code.

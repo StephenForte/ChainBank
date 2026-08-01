@@ -57,6 +57,7 @@ function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalan
       upsert: vi.fn(),
       findById: vi.fn(() => Promise.resolve(treasury)),
       listEnabled: vi.fn(() => Promise.resolve([treasury])),
+      setEnabled: vi.fn(),
       recordCheckSuccess: vi.fn(() =>
         Promise.resolve({
           ...treasury,

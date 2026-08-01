@@ -29,13 +29,17 @@ Capabilities operators need that **do not exist** in this repository today.
 Runbooks that depend on them use parameterized SQL (or provider UI) and call that
 out as a **manual workaround**. Do not invent scripts or endpoints to fill these.
 
-| Gap                                                                         | Impact                                                                                                                                            | Workaround today                                                                                                 |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| No treasury enable/disable API                                              | Changing `TREASURY_ADDRESS` inserts a **new** treasury row; the old enabled row still wins funding resolution (`listEnabled` by `created_at` ASC) | SQL `UPDATE treasuries SET enabled = false …` after confirming the target row (runbook 2)                        |
-| `FUNDING_KILL_SWITCH` is env-only (not in `render.yaml`, no runtime toggle) | Kill switch takes effect only after the signing process reloads config (redeploy / restart)                                                       | Set the env var on `chainbank-web` and **Manual Deploy** / restart (runbook 7)                                   |
-| No automated resolver for `submission_unknown` funding transactions         | Ambiguous submissions stay in-flight (block duplicates + count against reserve) until Phase 4 reconciliation                                      | Observe nonce on-chain by hand; do not invent a terminal status (runbook 5; see `tasks/SECURITY-REVIEW-T1.5.md`) |
-| No in-repo database backup/restore tooling                                  | Restore is entirely a Render Postgres provider operation                                                                                          | Render Dashboard backup restore, then verify migrate + readiness (runbook 8)                                     |
-| No API to set `treasuries.enabled`                                          | Operators cannot soft-disable a treasury without SQL                                                                                              | Same SQL workaround as treasury rotation                                                                         |
+| Gap                                                                         | Impact                                                                                                                                       | Workaround today                                                                                                 |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `FUNDING_KILL_SWITCH` is env-only (no runtime toggle)                       | Kill switch takes effect only after the signing process reloads config (redeploy / restart)                                                  | Set the env var on `chainbank-web` and **Manual Deploy** / restart (runbook 7)                                   |
+| No automated resolver for `submission_unknown` funding transactions         | Ambiguous submissions stay in-flight (block duplicates + count against reserve) until Phase 4 reconciliation                                 | Observe nonce on-chain by hand; do not invent a terminal status (runbook 5; see `tasks/SECURITY-REVIEW-T1.5.md`) |
+| No in-repo database backup/restore tooling                                  | Restore is entirely a Render Postgres provider operation                                                                                     | Render Dashboard backup restore, then verify migrate + readiness (runbook 8)                                     |
+
+Closed previously:
+
+- **Treasury enable/disable API** — `PATCH /v1/treasuries/:id` `{ "enabled": boolean }`
+  (operator-only, audited). Rotation no longer needs SQL; see
+  [`rotate-treasury-key.md`](./rotate-treasury-key.md).
 
 ## Operational prerequisites
 

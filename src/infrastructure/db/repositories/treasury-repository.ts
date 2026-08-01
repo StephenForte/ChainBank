@@ -105,6 +105,21 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
       });
     },
 
+    async setEnabled(id: string, enabled: boolean): Promise<Treasury> {
+      return withDatabaseErrors('treasuries.setEnabled', async () => {
+        const [row] = await db
+          .update(treasuries)
+          .set({ enabled, updatedAt: new Date() })
+          .where(eq(treasuries.id, id))
+          .returning({ id: treasuries.id });
+
+        if (row === undefined) {
+          throw new ChainBankError('TREASURY_NOT_FOUND', `Treasury ${id} was not found`);
+        }
+        return loadById(row.id);
+      });
+    },
+
     async recordCheckSuccess(input: RecordCheckSuccessInput): Promise<Treasury> {
       return withDatabaseErrors('treasuries.recordCheckSuccess', async () => {
         await db

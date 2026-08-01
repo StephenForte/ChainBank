@@ -195,10 +195,10 @@ The recipient's private key is never requested or stored (P1-US1). If you find
 yourself pasting it anywhere, stop.
 
 Do **not** switch to a freshly generated treasury wallet at this point unless you
-mean to: changing `TREASURY_ADDRESS` inserts a second `treasuries` row, funding
-keeps resolving to the older one, and `assertSignerMatchesTreasury` then fails
-closed until the old row is disabled by hand. See the Known gaps table in
-[`README.md`](./README.md) and `rotate-treasury-key.md`.
+mean to follow [`rotate-treasury-key.md`](./rotate-treasury-key.md): changing
+`TREASURY_ADDRESS` inserts a second `treasuries` row, and funding refuses with
+`INVALID_CONFIGURATION` (ambiguous treasury configuration) until the retired row
+is disabled via `PATCH /v1/treasuries/:id`.
 
 - [ ] Set `TREASURY_PRIVATE_KEY` on the **web service only**. Confirm it is absent
       from the monitor cron. Confirm the key derives to the address already in
@@ -224,11 +224,13 @@ and turn funding off afterwards unless you have decided to leave it armed.
       Expect `INVALID_CONFIGURATION`: the signer/treasury binding refusing to spend
       from an account that is not the reserve-enforced treasury. Restore the real key
       afterwards.
-      **Change the key, not the address.** Changing `TREASURY_ADDRESS` instead does
-      _not_ trigger this check: it inserts a second `treasuries` row while funding
-      keeps resolving to the older one, which still matches the unchanged key, so the
-      transfer succeeds normally. That was the original wording here and live testing
-      on 2026-08-01 disproved it — see the TX.5 entry in `tasks/worker-plan.md`.
+      **Address-only variant (also fail-closed after TX.5):** changing
+      `TREASURY_ADDRESS` alone inserts a second enabled `treasuries` row; funding
+      then refuses with `INVALID_CONFIGURATION` (ambiguous treasury configuration)
+      and makes **no** signer call. Disable the retired row with
+      `PATCH /v1/treasuries/:id` `{ "enabled": false }` before continuing — see
+      [`rotate-treasury-key.md`](./rotate-treasury-key.md). Live testing on
+      2026-08-01 proved the pre-TX.5 silent no-op; the ambiguity guard closes it.
 - [ ] `ensure-funded` with a fresh idempotency key → `funded` or `pending`, with a
       real `transactionHash` and the expected `transferredWei`.
 - [ ] Verify on Etherscan: correct destination, correct amount.

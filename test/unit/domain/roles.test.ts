@@ -11,6 +11,7 @@ describe('role permissions', () => {
   it('grants the operator treasury and wallet capabilities', () => {
     expect(roleHasPermission('operator', 'treasury:read')).toBe(true);
     expect(roleHasPermission('operator', 'treasury:check')).toBe(true);
+    expect(roleHasPermission('operator', 'treasury:write')).toBe(true);
     expect(roleHasPermission('operator', 'email:test')).toBe(true);
     expect(roleHasPermission('operator', 'wallet:read')).toBe(true);
     expect(roleHasPermission('operator', 'wallet:write')).toBe(true);
@@ -25,6 +26,7 @@ describe('role permissions', () => {
     expect(roleHasPermission('read-only', 'wallet:read')).toBe(true);
     expect(roleHasPermission('read-only', 'project:read')).toBe(true);
     expect(roleHasPermission('read-only', 'treasury:check')).toBe(false);
+    expect(roleHasPermission('read-only', 'treasury:write')).toBe(false);
     expect(roleHasPermission('read-only', 'email:test')).toBe(false);
     expect(roleHasPermission('read-only', 'wallet:write')).toBe(false);
     expect(roleHasPermission('read-only', 'project:write')).toBe(false);
@@ -32,6 +34,7 @@ describe('role permissions', () => {
 
   it('allows the treasury monitor to check balances but not send test email', () => {
     expect(roleHasPermission('cron-treasury-monitor', 'treasury:check')).toBe(true);
+    expect(roleHasPermission('cron-treasury-monitor', 'treasury:write')).toBe(false);
     expect(roleHasPermission('cron-treasury-monitor', 'email:test')).toBe(false);
     expect(roleHasPermission('cron-treasury-monitor', 'wallet:write')).toBe(false);
   });
@@ -41,6 +44,7 @@ describe('role permissions', () => {
     const permissions: readonly Permission[] = [
       'treasury:read',
       'treasury:check',
+      'treasury:write',
       'email:test',
       'wallet:read',
       'wallet:write',
