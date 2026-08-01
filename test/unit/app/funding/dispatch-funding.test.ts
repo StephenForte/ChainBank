@@ -3,9 +3,14 @@ import { dispatchFunding } from '../../../../src/app/funding/dispatch-funding.js
 import { ChainBankError } from '../../../../src/domain/errors.js';
 import { createLogger } from '../../../../src/observability/logger.js';
 import { createFixedClock } from '../../../support/clock.js';
-import { createFakeSigner, createInMemoryFundingStores } from '../../../support/funding-fakes.js';
+import {
+  createFakeBalanceReader,
+  createFakeSigner,
+  createInMemoryFundingStores,
+} from '../../../support/funding-fakes.js';
 
 const WALLET_ADDRESS = '0x2222222222222222222222222222222222222222';
+const TREASURY_ADDRESS = '0x1111111111111111111111111111111111111111';
 const ONE_ETH = 10n ** 18n;
 
 function baseInput(overrides: Record<string, unknown> = {}) {
@@ -21,6 +26,8 @@ function baseInput(overrides: Record<string, unknown> = {}) {
       evmChainId: 11_155_111,
       enabled: true,
       reserveWei: ONE_ETH / 2n,
+      address: TREASURY_ADDRESS,
+      // Pre-lock observation only; money path uses the in-lock BalanceReader.
       balanceWei: 10n * ONE_ETH,
     },
     walletId: 'wallet-1',
@@ -32,6 +39,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
       maximumTopUpWei: 5n * ONE_ETH,
       isEnabled: true,
     },
+    // Pre-lock observation only; money path uses the in-lock BalanceReader.
     walletBalanceWei: ONE_ETH / 10n,
     ...overrides,
   };
@@ -97,21 +105,41 @@ function deps(overrides: {
   readonly stores?: ReturnType<typeof createInMemoryFundingStores>;
   readonly lock?: ReturnType<typeof createInMemoryFundingStores>['lock'];
   readonly managedWallets?: ReturnType<typeof createManagedWalletRepo>;
+  readonly balanceReader?: ReturnType<typeof createFakeBalanceReader>;
+  readonly walletBalanceWei?: bigint;
+  readonly treasuryBalanceWei?: bigint;
+  readonly walletAddresses?: readonly string[];
 }) {
   const stores = overrides.stores ?? createInMemoryFundingStores();
   const clock = createFixedClock();
   let n = 0;
   const signer = overrides.signer ?? createFakeSigner({});
+  const walletWei = overrides.walletBalanceWei ?? ONE_ETH / 10n;
+  const treasuryWei = overrides.treasuryBalanceWei ?? 10n * ONE_ETH;
+  const balanceEntries: Record<string, bigint> = {
+    [TREASURY_ADDRESS.toLowerCase()]: treasuryWei,
+    [WALLET_ADDRESS.toLowerCase()]: walletWei,
+  };
+  for (const address of overrides.walletAddresses ?? []) {
+    balanceEntries[address.toLowerCase()] = walletWei;
+  }
+  const balanceReader =
+    overrides.balanceReader ??
+    createFakeBalanceReader({
+      balances: balanceEntries,
+    });
   return {
     stores,
     clock,
     signer,
+    balanceReader,
     dependencies: {
       operations: stores.operations,
       transactions: stores.transactions,
       managedWallets: overrides.managedWallets ?? createManagedWalletRepo(),
       lock: overrides.lock ?? stores.lock,
       signer,
+      balanceReader,
       clock,
       idGenerator: { next: () => `id-${String(++n)}` },
       logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
@@ -161,6 +189,7 @@ describe('dispatchFunding', () => {
             evmChainId: 11_155_111,
             enabled: false,
             reserveWei: ONE_ETH / 2n,
+            address: TREASURY_ADDRESS,
             balanceWei: 10n * ONE_ETH,
           },
         }),
@@ -219,11 +248,11 @@ describe('dispatchFunding', () => {
     expect(signer.sendCalls).toBe(1);
   });
 
-  it('returns no-op when the wallet is already at or above minimum', async () => {
-    const { dependencies, signer } = deps({});
+  it('returns no-op when the in-lock wallet balance is already at or above minimum', async () => {
+    const { dependencies, signer } = deps({ walletBalanceWei: ONE_ETH });
     const result = await dispatchFunding(
       dependencies,
-      baseInput({ walletBalanceWei: ONE_ETH, idempotencyKey: 'noop-1' }),
+      baseInput({ walletBalanceWei: ONE_ETH / 10n, idempotencyKey: 'noop-1' }),
     );
     expect(result.kind).toBe('no-op');
     if (result.kind === 'no-op') {
@@ -232,9 +261,49 @@ describe('dispatchFunding', () => {
     expect(signer.sendCalls).toBe(0);
   });
 
+  it('no-ops from a fresh in-lock read even when the stale pre-lock balance was below minimum', async () => {
+    // TX.8: the pre-lock observation stays on the input for API/audit, but the
+    // money decision must use the lock-time re-read.
+    const { dependencies, signer } = deps({ walletBalanceWei: ONE_ETH });
+    const result = await dispatchFunding(
+      dependencies,
+      baseInput({
+        walletBalanceWei: ONE_ETH / 10n,
+        idempotencyKey: 'stale-below-fresh-above',
+      }),
+    );
+    expect(result.kind).toBe('no-op');
+    expect(signer.sendCalls).toBe(0);
+  });
+
+  it('funds from the fresh in-lock deficit, not a larger stale pre-lock deficit', async () => {
+    // Stale observation: 0.1 ETH → deficit 1.9 ETH. Fresh: 0.5 ETH → deficit 1.5 ETH.
+    const freshWalletWei = ONE_ETH / 2n;
+    const signer = createFakeSigner({
+      send: (input) => {
+        expect(input.valueWei).toBe(2n * ONE_ETH - freshWalletWei);
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+    const { dependencies } = deps({ signer, walletBalanceWei: freshWalletWei });
+    const result = await dispatchFunding(
+      dependencies,
+      baseInput({
+        walletBalanceWei: ONE_ETH / 10n,
+        idempotencyKey: 'fresh-deficit',
+      }),
+    );
+    expect(result.kind).toBe('submitted');
+    if (result.kind === 'submitted') {
+      expect(result.transaction.amountWei).toBe(2n * ONE_ETH - freshWalletWei);
+    }
+    expect(signer.sendCalls).toBe(1);
+  });
+
   it('blocks when reserve would be breached', async () => {
     const { dependencies, signer } = deps({
       signer: createFakeSigner({ estimatedCostWei: 9n * ONE_ETH }),
+      treasuryBalanceWei: ONE_ETH + 1000n,
     });
     const result = await dispatchFunding(
       dependencies,
@@ -245,7 +314,9 @@ describe('dispatchFunding', () => {
           evmChainId: 11_155_111,
           enabled: true,
           reserveWei: ONE_ETH,
-          balanceWei: ONE_ETH + 1000n,
+          address: TREASURY_ADDRESS,
+          // Stale high balance must not override the fresh in-lock read.
+          balanceWei: 100n * ONE_ETH,
         },
       }),
     );
@@ -382,9 +453,62 @@ describe('dispatchFunding', () => {
     expect(txs[0]?.status).toBe('failed');
   });
 
+  it('treats an in-lock balance-read RPC_UNAVAILABLE as terminal pre-broadcast failure', async () => {
+    // BalanceReader uses RPC_UNAVAILABLE for read failures; the same code after
+    // sendNativeTransfer means submission_unknown. In-lock reads happen before
+    // insertCreated, so they must never create a transaction row.
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS.toLowerCase()]: 10n * ONE_ETH,
+        [WALLET_ADDRESS.toLowerCase()]: ONE_ETH / 10n,
+      },
+      unavailable: {
+        [WALLET_ADDRESS.toLowerCase()]: 'RPC_UNAVAILABLE',
+      },
+    });
+    const { dependencies, signer, stores } = deps({ balanceReader });
+
+    await expect(
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'in-lock-read-fail' })),
+    ).rejects.toMatchObject({ code: 'RPC_UNAVAILABLE' });
+
+    expect(signer.sendCalls).toBe(0);
+    expect([...stores.txsById.values()]).toHaveLength(0);
+    const failedOp = [...stores.opsById.values()].find((op) => op.idempotencyKey === 'in-lock-read-fail');
+    expect(failedOp?.status).toBe('failed');
+    expect(failedOp?.errorCode).toBe('RPC_UNAVAILABLE');
+  });
+
+  it('treats an in-lock treasury balance-read failure as terminal pre-broadcast failure', async () => {
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS.toLowerCase()]: 10n * ONE_ETH,
+        [WALLET_ADDRESS.toLowerCase()]: ONE_ETH / 10n,
+      },
+      unavailable: {
+        [TREASURY_ADDRESS.toLowerCase()]: 'CHAIN_ID_MISMATCH',
+      },
+    });
+    const { dependencies, signer, stores } = deps({ balanceReader });
+
+    await expect(
+      dispatchFunding(dependencies, baseInput({ idempotencyKey: 'in-lock-treasury-fail' })),
+    ).rejects.toMatchObject({ code: 'CHAIN_ID_MISMATCH' });
+
+    expect(signer.sendCalls).toBe(0);
+    expect([...stores.txsById.values()]).toHaveLength(0);
+    const failedOp = [...stores.opsById.values()].find((op) => op.idempotencyKey === 'in-lock-treasury-fail');
+    expect(failedOp?.status).toBe('failed');
+    expect(failedOp?.errorCode).toBe('CHAIN_ID_MISMATCH');
+  });
+
   it('counts in-flight transfers to other wallets against the treasury reserve', async () => {
     const reserveWei = 9n * ONE_ETH;
-    const treasury = { balanceWei: 10n * ONE_ETH, reserveWei };
+    const treasury = {
+      balanceWei: 10n * ONE_ETH,
+      reserveWei,
+      address: TREASURY_ADDRESS,
+    };
     // Each wallet may draw up to 0.9 ETH; three would breach a 9 ETH reserve
     // on a 10 ETH balance if in-flight amounts were ignored.
     const policy = {
@@ -409,6 +533,9 @@ describe('dispatchFunding', () => {
     ]);
     const { dependencies, stores } = deps({
       managedWallets: createManagedWalletRepo({ wallets }),
+      walletBalanceWei: 0n,
+      treasuryBalanceWei: 10n * ONE_ETH,
+      walletAddresses: [...wallets.values()].map((w) => w.addressDisplay),
     });
     const walletInput = (id: string, idempotencyKey: string) =>
       baseInput({
@@ -437,7 +564,7 @@ describe('dispatchFunding', () => {
     // The invariant: everything in flight together cannot breach the reserve.
     const inFlightWei = [...stores.txsById.values()]
       .filter((tx) => tx.status === 'submitted')
-      .reduce((total, tx) => total + tx.amountWei, 0n);
-    expect(inFlightWei).toBeLessThanOrEqual(treasury.balanceWei - reserveWei);
+      .reduce((sum, tx) => sum + tx.amountWei, 0n);
+    expect(inFlightWei).toBeLessThanOrEqual(10n * ONE_ETH - reserveWei);
   });
 });

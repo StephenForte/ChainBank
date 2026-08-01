@@ -176,6 +176,9 @@ export async function ensureWalletFunded(
         managedWallets: dependencies.managedWallets,
         lock: dependencies.lock,
         signer,
+        // In-lock re-reads drive the money decision; pre-lock readings above
+        // remain the recorded observations / API balanceBeforeWei (TX.8).
+        balanceReader: dependencies.balanceReader,
         clock: dependencies.clock,
         idGenerator: dependencies.idGenerator,
         logger: dependencies.logger,
@@ -197,6 +200,7 @@ export async function ensureWalletFunded(
           evmChainId: treasury.chain.chainId,
           enabled: treasury.enabled,
           reserveWei: treasury.thresholds.minimumReserveWei,
+          address: treasury.addressDisplay,
           balanceWei: treasuryReading.balanceWei,
         },
         walletId: wallet.id,
