@@ -46,6 +46,24 @@ describe('loadConfig', () => {
     expect(web.alerts.reminderIntervalMs).toBe(0);
   });
 
+  it('defaults and parses RECONCILE_FAILURE_ALERT_THRESHOLD', () => {
+    const defaults = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(defaults.alerts.reconcileFailureAlertThreshold).toBe(3);
+
+    const overridden = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({ RECONCILE_FAILURE_ALERT_THRESHOLD: '5' }),
+    });
+    expect(overridden.alerts.reconcileFailureAlertThreshold).toBe(5);
+
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({ RECONCILE_FAILURE_ALERT_THRESHOLD: '0' }),
+      }),
+    ).toThrow(ChainBankError);
+  });
+
   it('requires email credentials for the treasury monitor', () => {
     expect(() =>
       loadConfig({

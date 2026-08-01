@@ -91,6 +91,11 @@ export interface FundingConfig {
 export interface AlertsConfig {
   /** Reminder interval derived from ALERT_REMINDER_INTERVAL_HOURS. */
   readonly reminderIntervalMs: number;
+  /**
+   * Consecutive failed reconciliation runs before opening a critical alert
+   * (RECONCILE_FAILURE_ALERT_THRESHOLD; C15 / P4-US3).
+   */
+  readonly reconcileFailureAlertThreshold: number;
 }
 
 export interface ReconciliationConfig {
@@ -179,6 +184,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     apiSecurity: options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted) : undefined,
     alerts: {
       reminderIntervalMs: env.ALERT_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000,
+      reconcileFailureAlertThreshold: env.RECONCILE_FAILURE_ALERT_THRESHOLD,
     },
     reconciliation:
       options.serviceRole === 'cron-reconciler'

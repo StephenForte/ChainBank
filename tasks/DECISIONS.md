@@ -741,6 +741,63 @@ T4.2 amendment (2026-08-01) — cron wiring / exit semantics (no new contract nu
 - Render: `chainbank-wallet-reconciler` cron every 6h; `TREASURY_PRIVATE_KEY` on web
   - reconciler only — never on `chainbank-treasury-monitor`.
 
+### C15 — Reconciliation failure alert (owner: T4.3)
+
+```ts
+// src/app/alerts/notify-reconciliation-failure.ts
+export const RECONCILIATION_FAILURE_ALERT_TYPE = 'reconciliation_failure';
+
+function classifyReconciliationRun(run): 'failure' | 'success' | 'neutral';
+function countConsecutiveFailures(recentNewestFirst): number;
+function maybeNotifyReconciliationFailure(deps, input): Promise<NotifyReconciliationFailureResult>;
+// deps: AlertRepository, ReconciliationRunRepository, ManagedWalletRepository,
+//       EmailSender | undefined, AuditEventRepository, Clock, Logger
+// Result kinds: opened | deduped | retried | resolved | none-open | skipped
+
+// src/app/ports.ts — ReconciliationRunRepository (additive)
+listRecent(limit): Promise<readonly ReconciliationRun[]>; // newest-first by started_at
+
+// Config
+RECONCILE_FAILURE_ALERT_THRESHOLD → config.alerts.reconcileFailureAlertThreshold // default 3
+```
+
+Local design choices (T4.3, 2026-08-01):
+
+- **What counts as a failed run:** a finished run with `error_code` set, **except**
+  policy refusals. `FUNDING_DISABLED` (funding disabled or kill switch via
+  `assertFundingArmed`) is **neutral** — it neither increments the consecutive
+  failure streak nor resolves an open alert, so a parked reconciler does not page
+  operators and does not clear a real outage signal.
+- **What does not count:** `outgoing_scan_status: 'incomplete'` and
+  `wallets_failed > 0` alone do **not** classify the run as a failure. Those are
+  in-run degradations recorded as findings/counters on an otherwise completed
+  sweep; P4-US3 pages on repeated **run-level process failure** (`error_code`),
+  not on per-wallet or scan incompleteness that still produced a finished summary.
+  Unfinished rows (`finished_at` null) are also neutral.
+- **Consecutive count:** derived from `ReconciliationRunRepository.listRecent`
+  (newest-first). Neutrals are skipped (transparent in the streak); a success ends
+  it. No new counter column and no migration.
+- **Identity:** entityType `'treasury'`, entityId = each enabled treasury at
+  evaluation time, alert type `reconciliation_failure`, severity `critical`.
+  Shares the treasury entity with C3a/C10; TX.6 typed lookup prevents collision.
+  MVP typically has one enabled treasury per reconciler process.
+- **Dedupe / persist-then-send:** one open alert per treasury. First evaluation at
+  or above threshold sets `metadata_json.pendingEmail = 'critical'` then sends;
+  `acknowledgeSend` only after provider `sent`. Further failing runs update
+  `last_evaluated_at` + metadata (consecutive count, affected wallets, error
+  categories) without re-sending. Failed sends leave pending for retry.
+- **Resolution:** next **successful** run resolves append-oriented
+  (`state='resolved'`, never delete). **No recovery email** — no template exists,
+  and C10 set the precedent (critical refusal/failure signal only).
+- **Call site:** failure-isolated hook at the end of `reconcileWallets` after
+  `markFinished` (mirrors C10's `maybeNotifyReserveAlert`). Alert-store / email
+  errors are logged and must not change the run outcome or cron exit code.
+- **Audit:** `treasury.alert.email.sent` / `treasury.alert.email.failed` on send
+  attempts; `treasury.alert.resolved` with `reason: 'reconciliation-recovered'`.
+- **Cron wiring:** `src/jobs/wallet-reconciler.ts` passes
+  `config.alerts.reconcileFailureAlertThreshold` into `ReconcileWalletsDependencies`
+  (alerts / emailSender / auditEvents already required for C10 reserve notify).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                  |
@@ -790,3 +847,4 @@ T4.2 amendment (2026-08-01) — cron wiring / exit semantics (no new contract nu
 - 2026-08-01 — T4.1 published C14: `reconcileWallets` use case (below-minimum sweep via `dispatchFunding`, reserve stop-and-continue, `submission_unknown` evidence-based settlement, crash-orphan outgoing scan, `reconciliation_runs` migration `0004`, permission `reconciliation:run` for cron-reconciler only).
 - 2026-08-01 — TX.3 (Wave 4 close refresh): README and PRD §25 appendix updated to merged state — ensure-ready (C11), treasury lifecycle (C12), list-environments (C13), armed hosted funding, TX.8 race closed, T4.1 reconciliation use case landed (C14) with cron wiring pending in T4.2.
 - 2026-08-01 — T4.2 wired `cron-reconciler` job + Render blueprint: signing-capable role, lookback/email config, exit semantics (policy vs malfunction), `wallet-reconciler` heartbeat; C14 amended in place (no new contract number).
+- 2026-08-01 — T4.3 published C15: reconciliation-failure critical alert after `RECONCILE_FAILURE_ALERT_THRESHOLD` consecutive failed runs (`error_code` set, policy refusals neutral), persist-then-send dedupe, resolve on next successful run without recovery email; consecutive count derived via `listRecent`.

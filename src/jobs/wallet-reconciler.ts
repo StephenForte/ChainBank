@@ -101,6 +101,7 @@ export function buildReconcileWalletsDependencies(
     operatorRecipients: config.email?.operatorRecipients ?? [],
     dashboardBaseUrl: config.app.publicBaseUrl,
     environment: config.app.environment,
+    reconcileFailureAlertThreshold: config.alerts.reconcileFailureAlertThreshold,
     outgoingLookbackBlocks: BigInt(config.reconciliation.outgoingLookbackBlocks),
     ...overrides,
   };

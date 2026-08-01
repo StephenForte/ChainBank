@@ -84,10 +84,9 @@ export const environmentSchema = z.object({
   TRUSTED_PROXY_HOPS: positiveInteger.default(1),
 
   /**
-   * Arms funding workflows for signing-capable roles (`web`, `cron-reconciler`).
-   * Requires a structurally valid TREASURY_PRIVATE_KEY for those roles; the
-   * treasury-monitor role never reads the key and always boots with funding
-   * disabled.
+   * Arms funding workflows for signing-capable roles. Requires a structurally
+   * valid TREASURY_PRIVATE_KEY for those roles; the treasury-monitor role never
+   * reads the key and always boots with funding disabled.
    */
   FUNDING_ENABLED: booleanFlag.default(false),
 
@@ -125,6 +124,12 @@ export const environmentSchema = z.object({
    * Default 20000 (~2.8 days at Sepolia ~12s blocks).
    */
   RECONCILE_OUTGOING_LOOKBACK_BLOCKS: positiveInteger.default(20_000),
+
+  /**
+   * Consecutive reconciliation-run failures before paging the operator (P4-US3 / C15).
+   * Consumed by the cron-reconciler via config.alerts.reconcileFailureAlertThreshold.
+   */
+  RECONCILE_FAILURE_ALERT_THRESHOLD: positiveInteger.default(3),
 });
 
 export type RawEnvironment = z.infer<typeof environmentSchema>;

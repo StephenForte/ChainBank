@@ -4,6 +4,7 @@ import type { FundingPolicy } from '../../domain/funding/funding-math.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
+import { maybeNotifyReconciliationFailure } from '../alerts/notify-reconciliation-failure.js';
 import {
   notifyTreasuryReserveRefusal,
   resolveTreasuryReserveAlert,
@@ -78,6 +79,11 @@ export interface ReconcileWalletsDependencies {
   readonly operatorRecipients: readonly string[];
   readonly dashboardBaseUrl: string;
   readonly environment: string;
+  /**
+   * Consecutive failed runs before opening a reconciliation_failure alert (C15).
+   * From RECONCILE_FAILURE_ALERT_THRESHOLD (default 3).
+   */
+  readonly reconcileFailureAlertThreshold: number;
   /** Override for tests; production default is {@link DEFAULT_RECONCILE_OUTGOING_LOOKBACK_BLOCKS}. */
   readonly outgoingLookbackBlocks?: bigint;
 }
@@ -115,6 +121,8 @@ export interface ReconcileWalletsResult {
  * 4. Paginate eligible wallets to completion; fund below-minimum only, serial.
  * 5. On reserve block: notify once per treasury (C10), then continue assessing
  *    remaining wallets without submitting.
+ * 6. After the run is marked finished: evaluate reconciliation-failure alerting
+ *    (C15) in a failure-isolated hook that cannot change the run outcome.
  */
 export async function reconcileWallets(
   dependencies: ReconcileWalletsDependencies,
@@ -293,6 +301,12 @@ export async function reconcileWallets(
     errorSummary: runErrorSummary,
   });
 
+  await maybeNotifyReconciliationFailureAfterRun(dependencies, {
+    run: finished,
+    credentialId: input.credentialId,
+    correlationId: input.correlationId,
+  });
+
   return {
     run: finished,
     counters,
@@ -302,6 +316,70 @@ export async function reconcileWallets(
     outgoingScanStatus,
     findings,
   };
+}
+
+/**
+ * C15 failure-isolated hook: alert-store / email errors must never change the
+ * finished run's outcome or the caller's result.
+ */
+async function maybeNotifyReconciliationFailureAfterRun(
+  dependencies: ReconcileWalletsDependencies,
+  input: {
+    readonly run: ReconciliationRun;
+    readonly credentialId: string;
+    readonly correlationId: string;
+  },
+): Promise<void> {
+  try {
+    const treasuries = await dependencies.treasuries.listEnabled();
+    if (treasuries.length === 0) {
+      dependencies.logger.warn(
+        {
+          event: 'reconciliation.failure_alert.no_treasury',
+          correlationId: input.correlationId,
+          runId: input.run.runId,
+        },
+        'Reconciliation failure alert skipped: no enabled treasury to attach the alert entity',
+      );
+      return;
+    }
+
+    const actor = { type: 'cron' as const, id: input.credentialId };
+    for (const treasury of treasuries) {
+      await maybeNotifyReconciliationFailure(
+        {
+          alerts: dependencies.alerts,
+          reconciliationRuns: dependencies.reconciliationRuns,
+          managedWallets: dependencies.managedWallets,
+          emailSender: dependencies.emailSender,
+          auditEvents: dependencies.auditEvents,
+          clock: dependencies.clock,
+          logger: dependencies.logger,
+        },
+        {
+          run: input.run,
+          treasury,
+          failureAlertThreshold: dependencies.reconcileFailureAlertThreshold,
+          operatorRecipients: dependencies.operatorRecipients,
+          dashboardBaseUrl: dependencies.dashboardBaseUrl,
+          environment: dependencies.environment,
+          operationId: input.correlationId,
+          actor,
+        },
+      );
+    }
+  } catch (error) {
+    dependencies.logger.error(
+      {
+        event: 'reconciliation.failure_alert.notification_failed',
+        correlationId: input.correlationId,
+        runId: input.run.runId,
+        err:
+          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      },
+      'Reconciliation failure alert notification failed; run outcome unchanged',
+    );
+  }
 }
 
 async function listAllEligibleWallets(
