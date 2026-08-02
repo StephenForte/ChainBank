@@ -278,7 +278,10 @@ export function App() {
       setProjectsTotal(next.pagination.total);
       setProjectsState(next.data.length === 0 ? 'empty' : 'ready');
       if (selectedProjectId === '' && next.data.length > 0) {
-        setSelectedProjectId(next.data[0]?.id ?? '');
+        // Prefer the first enabled project: a disabled one (e.g. a retired smoke
+        // test that happens to be oldest) must not scope the policy panel by default.
+        const defaultProject = next.data.find((project) => project.enabled) ?? next.data[0];
+        setSelectedProjectId(defaultProject?.id ?? '');
       }
     } catch (caught) {
       setProjects([]);
