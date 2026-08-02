@@ -798,6 +798,27 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   concerns with the change itself. Recorded because unreviewed pushes to the
   money-path repo should be a noted exception, not an invisible one.
 
+- **TX.13** 🟢 Live wallet balances in the dashboard `[T2.4, TX.12]` — contract
+  **C17** (pre-assigned: new API route `GET /v1/wallets/:id/balance`)
+  Operator request (2026-08-02): show each managed wallet's live on-chain ETH
+  beside its policy minimum — the Balance/Minimum/Status view the wallets were
+  originally specced from. No balance endpoint exists; build on
+  `BalanceReader.readBalance` (already fail-closed, never-throws). Fresh read,
+  no `balance_observations` write from a GET. **Authz is the security-relevant
+  part:** project-service scoping must match C13's `resolveReadableProjectIds`
+  pattern — a scoped credential must not read balances outside its scope; role
+  matrix covered in tests. Fail closed in the response: an unreadable balance is
+  an explicit `unavailable` shape and **never renders as `0`** — dashboard shows
+  an "unavailable" chip. Load on demand (button), not on mount: each check is a
+  real RPC call and public Sepolia is rate-limited. Chips reuse the TX.12 badge
+  system (`below min` warn / `≥ min` ok / `no policy` / `unavailable` unknown).
+
+  Also closes the loop on TX.12's danger-red observation: operator flinched
+  (#58 demoted Disable buttons to secondary outline), and disabling the smoke
+  project surfaced the default-selection bug (#59 — default now prefers the
+  first **enabled** project; the API orders by `created_at` so a retired oldest
+  project had become the permanent default scope).
+
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
   - integration tests against a Postgres service container. Actions pinned by SHA.
