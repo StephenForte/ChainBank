@@ -1073,13 +1073,16 @@ Honest accounting of where the current state falls short of §20:
   2026-08-02 and superseded: T4.4's concurrency coverage lands in the
   integration suite (which CI runs) rather than an Anvil e2e suite (which it
   does not). A real-chain harness is deferred, not dropped.
-- **Reconciliation has never run against a non-empty wallet set.** No managed
-  wallet has `reconciliation_enabled = true`, so every hosted sweep has assessed
-  **zero** wallets. §20's first Phase 4 exit criterion — long-running wallets
-  remain above policy minimum during a test period — therefore has no evidence
-  behind it, and a green cron run over an empty set is not evidence. This is the
-  only thing standing between Phase 4 being code-complete and being demonstrably
-  done.
+- **Reconciliation has funded a real wallet in production (2026-08-02), but the
+  "test period" is still accruing.** Four ForteL2 wallets are enrolled; run
+  `aa93e369-e492-43f1-b054-522f6f4c6277` assessed 4, funded 1, and moved
+  254982149095701880 wei to BATCHER in transaction `0xdb6ef91b…f49ae` (status
+  `0x1`, block 11405512), leaving it at exactly its 0.4 ETH target. Verified
+  against a public Sepolia node, not only ChainBank's records. §20's first exit
+  criterion asks that wallets remain above minimum _during a test period_, so what
+  is outstanding is repetition — BATCHER falling below minimum again and being
+  restored unattended on the 6-hourly schedule, at least twice. Capability is
+  demonstrated; duration is not.
 - **Residual after TX.10 (fail closed by design):** a crash between the durable
   intent commit and the broadcast wedges that wallet
   (`submission_unknown` / `BROADCAST_INTENT`, no hash) until reconciliation proves
