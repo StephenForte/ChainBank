@@ -70,27 +70,40 @@ export type NotifyReconciliationFailureResult =
 /**
  * Classifies a finished reconciliation run for consecutive-failure alerting (C15).
  *
- * - `failure`: `error_code` set and not a policy refusal.
- * - `success`: finished with no `error_code`.
+ * - `failure`: `error_code` set and not a policy refusal, **or** a sweep that
+ *   attempted work and accomplished none of it (see below).
+ * - `success`: finished, no `error_code`, and at least something worked.
  * - `neutral`: unfinished, or policy refusal (`FUNDING_DISABLED` / kill switch).
  *
- * `outgoing_scan_status: 'incomplete'` and `wallets_failed > 0` alone do **not**
- * classify as failure — those are in-run degradations on an otherwise completed
- * sweep; paging is reserved for run-level process failure.
+ * Per-wallet failures never reach `error_code` — the sweep catches them into
+ * counters — so classifying on `error_code` alone would call a run in which
+ * *every* wallet failed a success, and a success **resolves an open alert**. A
+ * degraded RPC could therefore clear a real outage alert and report recovery
+ * while nothing was funded, which is precisely the silent degradation P4-US3
+ * exists to prevent. Resolution is a claim that reconciliation works, so it
+ * requires evidence that something worked — the same positive-evidence
+ * discipline C14 applies before settling a `submission_unknown` row.
+ *
+ * A run that funded at least one wallet stays a success even if others failed:
+ * partial progress is progress, and the surviving failures remain visible in
+ * the run summary. `outgoing_scan_status: 'incomplete'` alone still does not
+ * classify as failure — it degrades orphan detection without meaning the sweep
+ * failed to fund.
  */
 export function classifyReconciliationRun(
-  run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode'>,
+  run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed'>,
 ): ReconciliationRunClass {
   if (run.finishedAt === undefined) {
     return 'neutral';
   }
-  if (run.errorCode === undefined) {
-    return 'success';
+  if (run.errorCode !== undefined) {
+    return POLICY_REFUSAL_ERROR_CODES.has(run.errorCode) ? 'neutral' : 'failure';
   }
-  if (POLICY_REFUSAL_ERROR_CODES.has(run.errorCode)) {
-    return 'neutral';
+  // Attempted work, accomplished none of it: not evidence of recovery.
+  if (run.walletsFailed > 0 && run.walletsFunded === 0) {
+    return 'failure';
   }
-  return 'failure';
+  return 'success';
 }
 
 /**

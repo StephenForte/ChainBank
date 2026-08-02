@@ -314,17 +314,54 @@ describe('classifyReconciliationRun / countConsecutiveFailures', () => {
     ).toBe('neutral');
   });
 
-  it('does not treat incomplete scan or wallets_failed alone as failure', () => {
+  it('does not treat an incomplete scan alone as failure', () => {
+    // Degrades crash-orphan detection; says nothing about whether funding worked.
     expect(
       classifyReconciliationRun(
         makeRun({
           id: '1',
           runId: 'r1',
           outgoingScanStatus: 'incomplete',
-          walletsFailed: 3,
+          walletsAssessed: 2,
+          walletsNoop: 2,
         }),
       ),
     ).toBe('success');
+  });
+
+  it('treats a sweep that funded nothing while failing wallets as a failure', () => {
+    // Per-wallet errors never reach error_code, so without this a fully failed
+    // sweep would count as success — and a success resolves an open alert,
+    // reporting recovery while nothing was funded (P4-US3 silent degradation).
+    expect(
+      classifyReconciliationRun(
+        makeRun({
+          id: '1',
+          runId: 'r1',
+          walletsAssessed: 3,
+          walletsFunded: 0,
+          walletsFailed: 3,
+        }),
+      ),
+    ).toBe('failure');
+  });
+
+  it('treats partial progress as success even when some wallets failed', () => {
+    expect(
+      classifyReconciliationRun(
+        makeRun({
+          id: '1',
+          runId: 'r1',
+          walletsAssessed: 3,
+          walletsFunded: 2,
+          walletsFailed: 1,
+        }),
+      ),
+    ).toBe('success');
+  });
+
+  it('treats a clean sweep with nothing to do as success', () => {
+    expect(classifyReconciliationRun(makeRun({ id: '1', runId: 'r1', walletsAssessed: 0 }))).toBe('success');
   });
 
   it('skips neutrals when counting consecutive failures', () => {

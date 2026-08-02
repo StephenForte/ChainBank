@@ -768,12 +768,24 @@ Local design choices (T4.3, 2026-08-01):
   `assertFundingArmed`) is **neutral** — it neither increments the consecutive
   failure streak nor resolves an open alert, so a parked reconciler does not page
   operators and does not clear a real outage signal.
-- **What does not count:** `outgoing_scan_status: 'incomplete'` and
-  `wallets_failed > 0` alone do **not** classify the run as a failure. Those are
-  in-run degradations recorded as findings/counters on an otherwise completed
-  sweep; P4-US3 pages on repeated **run-level process failure** (`error_code`),
-  not on per-wallet or scan incompleteness that still produced a finished summary.
-  Unfinished rows (`finished_at` null) are also neutral.
+- **A sweep that accomplished nothing is also a failure** (amended at planner
+  review, 2026-08-02): a finished run with no `error_code` but
+  `wallets_failed > 0` **and** `wallets_funded === 0` classifies as `failure`,
+  not `success`. Per-wallet errors never reach `error_code` — the sweep catches
+  them into counters — so classifying on `error_code` alone called a run in
+  which _every_ wallet failed a success, and a success **resolves an open
+  alert**. A degraded RPC could therefore clear a genuine outage alert and
+  report recovery while nothing was funded: exactly the silent degradation
+  P4-US3 exists to prevent. Resolution asserts that reconciliation works, so it
+  requires evidence that something worked — the positive-evidence discipline
+  C14 already applies before settling a `submission_unknown` row.
+- **What still does not count:** a run that funded at least one wallet stays a
+  `success` even if others failed — partial progress is progress, and the
+  failures stay visible in the run summary and findings.
+  `outgoing_scan_status: 'incomplete'` alone does not classify as failure
+  either: it degrades crash-orphan detection without meaning the sweep failed
+  to fund. (TX.9 addresses scan reliability separately.) Unfinished rows
+  (`finished_at` null) are neutral.
 - **Consecutive count:** derived from `ReconciliationRunRepository.listRecent`
   (newest-first). Neutrals are skipped (transparent in the streak); a success ends
   it. No new counter column and no migration.
