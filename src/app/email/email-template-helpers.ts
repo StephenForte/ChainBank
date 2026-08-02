@@ -11,13 +11,21 @@ export function formatBalanceDisplay(wei: bigint): string {
   return `${formatWeiAsEther(wei)} ETH`;
 }
 
+/** Escape text for safe interpolation into HTML element/attribute content. */
+const HTML_ESCAPE_LOOKUP: Readonly<Record<string, string>> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+
 export function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+  let escaped = '';
+  for (const char of value) {
+    escaped += HTML_ESCAPE_LOOKUP[char] ?? char;
+  }
+  return escaped;
 }
 
 export function htmlRow(label: string, value: string): string {
