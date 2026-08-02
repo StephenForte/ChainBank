@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type {
   RecordCheckFailureInput,
   RecordCheckSuccessInput,
+  RecordOutgoingScanCompleteInput,
   Treasury,
   TreasuryRegistration,
   TreasuryRepository,
@@ -154,6 +155,26 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
         return loadById(input.treasuryId);
       });
     },
+
+    async recordOutgoingScanComplete(input: RecordOutgoingScanCompleteInput): Promise<Treasury> {
+      return withDatabaseErrors('treasuries.recordOutgoingScanComplete', async () => {
+        if (input.scannedToBlock < 0n) {
+          throw new ChainBankError(
+            'INVALID_CONFIGURATION',
+            'Outgoing scan watermark must be a non-negative block number',
+          );
+        }
+        await db
+          .update(treasuries)
+          .set({
+            lastOutgoingScanBlock: weiToDatabaseNumeric(input.scannedToBlock, 'scannedToBlock'),
+            lastOutgoingScanAt: input.scannedAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(treasuries.id, input.treasuryId));
+        return loadById(input.treasuryId);
+      });
+    },
   };
 }
 
@@ -191,6 +212,11 @@ function toTreasury(row: TreasuryWithChain): Treasury {
     lastObservedAt: row.lastObservedAt ?? undefined,
     lastCheckedAt: row.lastCheckedAt ?? undefined,
     lastCheckErrorCode: row.lastCheckErrorCode ?? undefined,
+    lastOutgoingScanBlock:
+      row.lastOutgoingScanBlock === null
+        ? undefined
+        : weiFromDatabaseNumeric(row.lastOutgoingScanBlock, 'lastOutgoingScanBlock'),
+    lastOutgoingScanAt: row.lastOutgoingScanAt ?? undefined,
     enabled: row.enabled,
   };
 }

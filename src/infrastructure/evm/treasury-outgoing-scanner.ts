@@ -10,6 +10,7 @@ import {
 import type {
   ConfirmedNonceResult,
   FindByNonceResult,
+  LatestBlockNumberResult,
   OutgoingScanResult,
   TreasuryOutgoingScanner,
   TreasuryOutgoingTransfer,
@@ -23,12 +24,16 @@ const RPC_TIMEOUT_MS = 10_000;
 const RPC_RETRY_COUNT = 2;
 /** Bound concurrent getBlock calls so a large lookback cannot overwhelm the RPC. */
 const BLOCK_SCAN_CONCURRENCY = 8;
+/** Progress logs for long scans — interval, not per block (TX.9 defect 4). */
+const PROGRESS_LOG_INTERVAL_MS = 30_000;
 
 export interface CreateTreasuryOutgoingScannerOptions {
   readonly chain: ChainConfig;
   readonly logger: Logger;
   /** Test-only transport override. */
   readonly transport?: Transport;
+  /** Test-only clock for progress-interval assertions. */
+  readonly nowMs?: () => number;
 }
 
 /**
@@ -52,6 +57,8 @@ export function createTreasuryOutgoingScanner(
     chain: viemChain,
     transport,
   });
+
+  const nowMs = options.nowMs ?? (() => Date.now());
 
   return {
     async getConfirmedTransactionCount(address: string): Promise<ConfirmedNonceResult> {
@@ -89,12 +96,62 @@ export function createTreasuryOutgoingScanner(
       }
     },
 
+    async getLatestBlockNumber(): Promise<LatestBlockNumberResult> {
+      try {
+        const chainCheck = await verifyConfiguredChain(publicClient, options.chain.chainId);
+        if (!chainCheck.ok) {
+          return {
+            kind: 'unavailable',
+            errorCode: chainCheck.errorCode,
+            reason: chainCheck.reason,
+          };
+        }
+        const blockNumber = await publicClient.getBlockNumber();
+        return { kind: 'ok', blockNumber };
+      } catch (error) {
+        options.logger.error(
+          { detail: describeUnknownError(error) },
+          'Failed to read latest block number',
+        );
+        return {
+          kind: 'unavailable',
+          errorCode: 'RPC_UNAVAILABLE',
+          reason: 'Latest block number could not be read from the RPC endpoint.',
+        };
+      }
+    },
+
     async findOutgoingByNonce(input: {
       readonly fromAddress: string;
       readonly nonce: number;
       readonly lookbackBlocks: bigint;
     }): Promise<FindByNonceResult> {
-      const scan = await scanOutgoingWindow(publicClient, options, input);
+      if (input.lookbackBlocks < 0n) {
+        throw new ChainBankError(
+          'INVALID_CONFIGURATION',
+          'Outgoing lookback block count must be non-negative',
+        );
+      }
+
+      const tipResult = await this.getLatestBlockNumber();
+      if (tipResult.kind === 'unavailable') {
+        return {
+          kind: 'incomplete',
+          errorCode: tipResult.errorCode,
+          reason: tipResult.reason,
+        };
+      }
+
+      const fromBlock =
+        tipResult.blockNumber > input.lookbackBlocks
+          ? tipResult.blockNumber - input.lookbackBlocks
+          : 0n;
+      const scan = await scanOutgoingWindow(publicClient, options, {
+        fromAddress: input.fromAddress,
+        fromBlock,
+        toBlock: tipResult.blockNumber,
+        nowMs,
+      });
       if (scan.kind === 'incomplete') {
         return scan;
       }
@@ -106,11 +163,12 @@ export function createTreasuryOutgoingScanner(
       return { kind: 'found', transfer: match };
     },
 
-    async listRecentOutgoingTransfers(input: {
+    async listOutgoingTransfers(input: {
       readonly fromAddress: string;
-      readonly lookbackBlocks: bigint;
+      readonly fromBlock: bigint;
+      readonly toBlock: bigint;
     }): Promise<OutgoingScanResult> {
-      return scanOutgoingWindow(publicClient, options, input);
+      return scanOutgoingWindow(publicClient, options, { ...input, nowMs });
     },
   };
 }
@@ -118,18 +176,33 @@ export function createTreasuryOutgoingScanner(
 async function scanOutgoingWindow(
   publicClient: PublicClient,
   options: CreateTreasuryOutgoingScannerOptions,
-  input: { readonly fromAddress: string; readonly lookbackBlocks: bigint },
+  input: {
+    readonly fromAddress: string;
+    readonly fromBlock: bigint;
+    readonly toBlock: bigint;
+    readonly nowMs: () => number;
+  },
 ): Promise<OutgoingScanResult> {
   if (!isAddress(input.fromAddress, { strict: false })) {
     throw new ChainBankError('INVALID_ADDRESS', `"${input.fromAddress}" is not a valid EVM address`, {
       publicMessage: 'The supplied address is not a valid EVM address.',
     });
   }
-  if (input.lookbackBlocks < 0n) {
-    throw new ChainBankError('INVALID_CONFIGURATION', 'Outgoing lookback block count must be non-negative');
+  if (input.fromBlock < 0n || input.toBlock < 0n) {
+    throw new ChainBankError('INVALID_CONFIGURATION', 'Outgoing scan block range must be non-negative');
+  }
+  if (input.fromBlock > input.toBlock) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'Outgoing scan fromBlock must be less than or equal to toBlock',
+    );
   }
 
   const fromNormalized = input.fromAddress.toLowerCase();
+  const totalBlocks = input.toBlock - input.fromBlock + 1n;
+  const startedAtMs = input.nowMs();
+  let lastProgressLogAtMs = startedAtMs;
+  let blocksScanned = 0n;
 
   try {
     const chainCheck = await verifyConfiguredChain(publicClient, options.chain.chainId);
@@ -141,14 +214,27 @@ async function scanOutgoingWindow(
       };
     }
 
-    const tip = await publicClient.getBlockNumber();
-    const fromBlock = tip > input.lookbackBlocks ? tip - input.lookbackBlocks : 0n;
     const transfers: TreasuryOutgoingTransfer[] = [];
 
-    for (let windowStart = fromBlock; windowStart <= tip; windowStart += BigInt(BLOCK_SCAN_CONCURRENCY)) {
+    options.logger.info(
+      {
+        event: 'reconciliation.outgoing_scan.started',
+        fromAddress: fromNormalized,
+        fromBlock: input.fromBlock.toString(),
+        toBlock: input.toBlock.toString(),
+        totalBlocks: totalBlocks.toString(),
+      },
+      'Treasury outgoing scan started',
+    );
+
+    for (
+      let windowStart = input.fromBlock;
+      windowStart <= input.toBlock;
+      windowStart += BigInt(BLOCK_SCAN_CONCURRENCY)
+    ) {
       const windowEnd =
-        windowStart + BigInt(BLOCK_SCAN_CONCURRENCY) - 1n > tip
-          ? tip
+        windowStart + BigInt(BLOCK_SCAN_CONCURRENCY) - 1n > input.toBlock
+          ? input.toBlock
           : windowStart + BigInt(BLOCK_SCAN_CONCURRENCY) - 1n;
 
       const blockNumbers: bigint[] = [];
@@ -188,15 +274,55 @@ async function scanOutgoingWindow(
           });
         }
       }
+
+      blocksScanned += BigInt(blockNumbers.length);
+      const now = input.nowMs();
+      if (now - lastProgressLogAtMs >= PROGRESS_LOG_INTERVAL_MS) {
+        const remaining = totalBlocks - blocksScanned;
+        options.logger.info(
+          {
+            event: 'reconciliation.outgoing_scan.progress',
+            fromAddress: fromNormalized,
+            blocksScanned: blocksScanned.toString(),
+            blocksRemaining: remaining.toString(),
+            totalBlocks: totalBlocks.toString(),
+            fromBlock: input.fromBlock.toString(),
+            toBlock: input.toBlock.toString(),
+            elapsedMs: now - startedAtMs,
+          },
+          'Treasury outgoing scan progress',
+        );
+        lastProgressLogAtMs = now;
+      }
     }
 
-    return { kind: 'ok', transfers };
+    options.logger.info(
+      {
+        event: 'reconciliation.outgoing_scan.completed',
+        fromAddress: fromNormalized,
+        blocksScanned: blocksScanned.toString(),
+        transferCount: transfers.length,
+        fromBlock: input.fromBlock.toString(),
+        toBlock: input.toBlock.toString(),
+        elapsedMs: input.nowMs() - startedAtMs,
+      },
+      'Treasury outgoing scan completed',
+    );
+
+    return {
+      kind: 'ok',
+      transfers,
+      fromBlock: input.fromBlock,
+      toBlock: input.toBlock,
+    };
   } catch (error) {
     options.logger.error(
       {
         detail: describeUnknownError(error),
         fromAddress: fromNormalized,
-        lookbackBlocks: input.lookbackBlocks.toString(),
+        fromBlock: input.fromBlock.toString(),
+        toBlock: input.toBlock.toString(),
+        blocksScanned: blocksScanned.toString(),
       },
       'Treasury outgoing scan failed',
     );

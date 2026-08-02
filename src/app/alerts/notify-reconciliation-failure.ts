@@ -86,9 +86,9 @@ export type NotifyReconciliationFailureResult =
  *
  * A run that funded at least one wallet stays a success even if others failed:
  * partial progress is progress, and the surviving failures remain visible in
- * the run summary. `outgoing_scan_status: 'incomplete'` alone still does not
- * classify as failure — it degrades orphan detection without meaning the sweep
- * failed to fund.
+ * the run summary. `outgoing_scan_status` (`incomplete` / `not-run`) alone still
+ * does not classify as failure — it degrades orphan detection without meaning
+ * the sweep failed to fund (C15 / TX.9).
  */
 export function classifyReconciliationRun(
   run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed'>,

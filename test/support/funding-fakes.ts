@@ -488,7 +488,7 @@ export function createInMemoryReconciliationRunRepository(): ReconciliationRunRe
         submissionUnknownResolved: 0,
         submissionUnknownLeftPending: 0,
         unexplainedTransferCount: 0,
-        outgoingScanStatus: 'complete',
+        outgoingScanStatus: 'not-run',
         findings: [],
         errorCode: undefined,
         errorSummary: undefined,
@@ -534,25 +534,37 @@ export function createInMemoryReconciliationRunRepository(): ReconciliationRunRe
 /** Controllable outgoing scanner for reconciliation unit/integration tests. */
 export function createFakeOutgoingScanner(options?: {
   readonly confirmedNonce?: number | (() => number);
+  readonly latestBlockNumber?: bigint;
   readonly transfers?: readonly TreasuryOutgoingTransfer[];
   readonly findByNonce?: (nonce: number) => FindByNonceResult;
   readonly listResult?: OutgoingScanResult;
   readonly nonceResult?: ConfirmedNonceResult;
 }): TreasuryOutgoingScanner & {
   setConfirmedNonce(nonce: number): void;
+  setLatestBlockNumber(blockNumber: bigint): void;
   setTransfers(transfers: readonly TreasuryOutgoingTransfer[]): void;
   setListIncomplete(errorCode: string, reason: string): void;
+  readonly listCalls: Array<{ fromAddress: string; fromBlock: bigint; toBlock: bigint }>;
+  readonly findByNonceCalls: Array<{ fromAddress: string; nonce: number; lookbackBlocks: bigint }>;
 } {
   let confirmedNonce =
     typeof options?.confirmedNonce === 'function' ? options.confirmedNonce() : (options?.confirmedNonce ?? 0);
+  let latestBlockNumber = options?.latestBlockNumber ?? 1_000n;
   let transfers = [...(options?.transfers ?? [])];
   let listOverride: OutgoingScanResult | undefined = options?.listResult;
   let nonceOverride: ConfirmedNonceResult | undefined = options?.nonceResult;
+  const listCalls: Array<{ fromAddress: string; fromBlock: bigint; toBlock: bigint }> = [];
+  const findByNonceCalls: Array<{ fromAddress: string; nonce: number; lookbackBlocks: bigint }> = [];
 
   return {
+    listCalls,
+    findByNonceCalls,
     setConfirmedNonce(nonce) {
       confirmedNonce = nonce;
       nonceOverride = undefined;
+    },
+    setLatestBlockNumber(blockNumber) {
+      latestBlockNumber = blockNumber;
     },
     setTransfers(next) {
       transfers = [...next];
@@ -567,7 +579,15 @@ export function createFakeOutgoingScanner(options?: {
       }
       return Promise.resolve({ kind: 'ok' as const, confirmedNonce });
     },
+    getLatestBlockNumber() {
+      return Promise.resolve({ kind: 'ok' as const, blockNumber: latestBlockNumber });
+    },
     findOutgoingByNonce(input) {
+      findByNonceCalls.push({
+        fromAddress: input.fromAddress,
+        nonce: input.nonce,
+        lookbackBlocks: input.lookbackBlocks,
+      });
       if (options?.findByNonce !== undefined) {
         return Promise.resolve(options.findByNonce(input.nonce));
       }
@@ -580,11 +600,31 @@ export function createFakeOutgoingScanner(options?: {
       }
       return Promise.resolve({ kind: 'found' as const, transfer: match });
     },
-    listRecentOutgoingTransfers() {
+    listOutgoingTransfers(input) {
+      listCalls.push({
+        fromAddress: input.fromAddress,
+        fromBlock: input.fromBlock,
+        toBlock: input.toBlock,
+      });
       if (listOverride !== undefined) {
+        if (listOverride.kind === 'ok') {
+          return Promise.resolve({
+            ...listOverride,
+            fromBlock: input.fromBlock,
+            toBlock: input.toBlock,
+          });
+        }
         return Promise.resolve(listOverride);
       }
-      return Promise.resolve({ kind: 'ok' as const, transfers });
+      const inWindow = transfers.filter(
+        (transfer) => transfer.blockNumber >= input.fromBlock && transfer.blockNumber <= input.toBlock,
+      );
+      return Promise.resolve({
+        kind: 'ok' as const,
+        transfers: inWindow,
+        fromBlock: input.fromBlock,
+        toBlock: input.toBlock,
+      });
     },
   };
 }

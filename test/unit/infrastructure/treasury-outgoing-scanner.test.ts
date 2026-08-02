@@ -1,0 +1,231 @@
+import { Writable } from 'node:stream';
+import { custom, type Transport } from 'viem';
+import { describe, expect, it } from 'vitest';
+import { createTreasuryOutgoingScanner } from '../../../src/infrastructure/evm/treasury-outgoing-scanner.js';
+import { createLogger } from '../../../src/observability/logger.js';
+
+const SEPOLIA_CHAIN_ID = 11_155_111;
+const TREASURY = '0x1111111111111111111111111111111111111111';
+const OTHER = '0x2222222222222222222222222222222222222222';
+
+function collectLogs(): { stream: Writable; lines: () => Array<Record<string, unknown>> } {
+  const chunks: Buffer[] = [];
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+      callback();
+    },
+  });
+  return {
+    stream,
+    lines: () =>
+      Buffer.concat(chunks)
+        .toString('utf8')
+        .split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+  };
+}
+
+function mockTransport(options: {
+  readonly tip: bigint;
+  readonly transfersByBlock?: ReadonlyMap<bigint, readonly unknown[]>;
+  readonly failAtBlock?: bigint;
+}): Transport {
+  return custom({
+    async request({ method, params }) {
+      switch (method) {
+        case 'eth_chainId':
+          return `0x${SEPOLIA_CHAIN_ID.toString(16)}`;
+        case 'eth_blockNumber':
+          return `0x${options.tip.toString(16)}`;
+        case 'eth_getBlockByNumber': {
+          const raw = (params as [string, boolean])[0];
+          const blockNumber = BigInt(raw);
+          if (options.failAtBlock !== undefined && blockNumber === options.failAtBlock) {
+            throw new Error('simulated RPC failure');
+          }
+          const txs = options.transfersByBlock?.get(blockNumber) ?? [];
+          return {
+            number: `0x${blockNumber.toString(16)}`,
+            hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+            timestamp: '0x1',
+            transactions: txs,
+          };
+        }
+        default:
+          throw new Error(`Unhandled RPC method in test transport: ${method}`);
+      }
+    },
+  });
+}
+
+describe('createTreasuryOutgoingScanner', () => {
+  it('scans an inclusive window and returns only native value transfers from the treasury', async () => {
+    const hash = `0x${'ab'.repeat(32)}`;
+    const transport = mockTransport({
+      tip: 10n,
+      transfersByBlock: new Map([
+        [
+          5n,
+          [
+            {
+              hash,
+              from: TREASURY,
+              to: OTHER,
+              value: `0x${(10n ** 18n).toString(16)}`,
+              nonce: '0x3',
+              type: '0x2',
+            },
+            {
+              hash: `0x${'cd'.repeat(32)}`,
+              from: TREASURY,
+              to: OTHER,
+              value: '0x0',
+              nonce: '0x4',
+              type: '0x2',
+            },
+            {
+              hash: `0x${'ef'.repeat(32)}`,
+              from: OTHER,
+              to: TREASURY,
+              value: `0x${(10n ** 18n).toString(16)}`,
+              nonce: '0x1',
+              type: '0x2',
+            },
+          ],
+        ],
+      ]),
+    });
+
+    const scanner = createTreasuryOutgoingScanner({
+      chain: {
+        slug: 'ethereum-sepolia',
+        chainId: SEPOLIA_CHAIN_ID,
+        displayName: 'Ethereum Sepolia',
+        nativeSymbol: 'ETH',
+        rpcUrl: 'https://rpc.example.test/sepolia',
+        explorerBaseUrl: 'https://sepolia.etherscan.io',
+      },
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport,
+    });
+
+    const result = await scanner.listOutgoingTransfers({
+      fromAddress: TREASURY,
+      fromBlock: 5n,
+      toBlock: 5n,
+    });
+
+    expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') {
+      return;
+    }
+    expect(result.transfers).toHaveLength(1);
+    expect(result.transfers[0]?.transactionHash).toBe(hash);
+    expect(result.transfers[0]?.nonce).toBe(3);
+  });
+
+  it('fails closed to incomplete on RPC error mid-window', async () => {
+    const scanner = createTreasuryOutgoingScanner({
+      chain: {
+        slug: 'ethereum-sepolia',
+        chainId: SEPOLIA_CHAIN_ID,
+        displayName: 'Ethereum Sepolia',
+        nativeSymbol: 'ETH',
+        rpcUrl: 'https://rpc.example.test/sepolia',
+        explorerBaseUrl: 'https://sepolia.etherscan.io',
+      },
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport: mockTransport({ tip: 20n, failAtBlock: 12n }),
+    });
+
+    const result = await scanner.listOutgoingTransfers({
+      fromAddress: TREASURY,
+      fromBlock: 10n,
+      toBlock: 15n,
+    });
+    expect(result).toMatchObject({ kind: 'incomplete', errorCode: 'RPC_UNAVAILABLE' });
+  });
+
+  it('emits periodic progress logs during a long scan', async () => {
+    const sink = collectLogs();
+    let now = 0;
+    const scanner = createTreasuryOutgoingScanner({
+      chain: {
+        slug: 'ethereum-sepolia',
+        chainId: SEPOLIA_CHAIN_ID,
+        displayName: 'Ethereum Sepolia',
+        nativeSymbol: 'ETH',
+        rpcUrl: 'https://rpc.example.test/sepolia',
+        explorerBaseUrl: 'https://sepolia.etherscan.io',
+      },
+      logger: createLogger({
+        level: 'info',
+        serviceRole: 'test',
+        environment: 'test',
+        destination: sink.stream,
+      }),
+      transport: mockTransport({ tip: 40n }),
+      nowMs: () => {
+        now += 10_000;
+        return now;
+      },
+    });
+
+    await scanner.listOutgoingTransfers({
+      fromAddress: TREASURY,
+      fromBlock: 1n,
+      toBlock: 40n,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const progress = sink.lines().filter((line) => line.event === 'reconciliation.outgoing_scan.progress');
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress[0]).toMatchObject({
+      event: 'reconciliation.outgoing_scan.progress',
+      blocksScanned: expect.any(String),
+      blocksRemaining: expect.any(String),
+    });
+  });
+
+  it('leaves findOutgoingByNonce as not_found when the nonce is outside the searched window', async () => {
+    const scanner = createTreasuryOutgoingScanner({
+      chain: {
+        slug: 'ethereum-sepolia',
+        chainId: SEPOLIA_CHAIN_ID,
+        displayName: 'Ethereum Sepolia',
+        nativeSymbol: 'ETH',
+        rpcUrl: 'https://rpc.example.test/sepolia',
+        explorerBaseUrl: 'https://sepolia.etherscan.io',
+      },
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport: mockTransport({
+        tip: 100n,
+        transfersByBlock: new Map([
+          [
+            10n,
+            [
+              {
+                hash: `0x${'11'.repeat(32)}`,
+                from: TREASURY,
+                to: OTHER,
+                value: '0x1',
+                nonce: '0x7',
+                type: '0x2',
+              },
+            ],
+          ],
+        ]),
+      }),
+    });
+
+    // lookback 20 from tip 100 ⇒ window [80, 100]; nonce at block 10 is outside.
+    const result = await scanner.findOutgoingByNonce({
+      fromAddress: TREASURY,
+      nonce: 7,
+      lookbackBlocks: 20n,
+    });
+    expect(result).toEqual({ kind: 'not_found' });
+  });
+});

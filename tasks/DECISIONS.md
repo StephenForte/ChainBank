@@ -676,8 +676,9 @@ function reconcileWallets(deps, input): Promise<ReconcileWalletsResult>;
 // Ports (src/app/ports.ts)
 interface TreasuryOutgoingScanner {
   getConfirmedTransactionCount(address): Promise<ConfirmedNonceResult>;
+  getLatestBlockNumber(): Promise<LatestBlockNumberResult>;
   findOutgoingByNonce({ fromAddress, nonce, lookbackBlocks }): Promise<FindByNonceResult>;
-  listRecentOutgoingTransfers({ fromAddress, lookbackBlocks }): Promise<OutgoingScanResult>;
+  listOutgoingTransfers({ fromAddress, fromBlock, toBlock }): Promise<OutgoingScanResult>;
 }
 interface ReconciliationRunRepository {
   insertStarted / markFinished / findById;
@@ -686,6 +687,8 @@ interface ReconciliationFundingQuery {
   listSubmissionUnknownByTreasury(treasuryId);
   listRecordedTransactionHashesByTreasury(treasuryId);
 }
+// TreasuryRepository (additive)
+recordOutgoingScanComplete({ treasuryId, scannedToBlock, scannedAt }): Promise<Treasury>;
 ```
 
 Local design choices (T4.1, 2026-08-01):
@@ -740,6 +743,39 @@ T4.2 amendment (2026-08-01) — cron wiring / exit semantics (no new contract nu
   (aborted; never treat default `outgoing_scan_status='complete'` as clean).
 - Render: `chainbank-wallet-reconciler` cron every 6h; `TREASURY_PRIVATE_KEY` on web
   - reconciler only — never on `chainbank-treasury-monitor`.
+
+TX.9 amendment (2026-08-02) — production-scale outgoing scan (no new contract number):
+
+- **Incremental watermark on `treasuries`:** columns `last_outgoing_scan_block`
+  (`numeric(78,0)`) and `last_outgoing_scan_at` (migration `0005`). Chosen over
+  `reconciliation_runs` because the scan is per-treasury and that table already
+  carries observed state (`last_observed_balance_wei`, `last_checked_at`).
+  `registerConfiguredTreasury` / `treasuries.upsert` `onConflictDoUpdate` must
+  **not** touch these columns (boot must not clobber the watermark).
+- **Advance only on a genuinely complete scan.** Partial / failed scans leave the
+  marker unchanged (same positive-evidence discipline as `submission_unknown`
+  settlement). `recordOutgoingScanComplete` is the sole writer.
+- **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is a per-run cap**, not "always scan this
+  much". First run / no marker: tip-relative capped window. Gap ≤ cap: resume
+  from `last_outgoing_scan_block + 1`. Gap > cap: scan the most recent
+  cap-worth, advance the marker only to the scanned tip, and record finding
+  `outgoing_scan_coverage_behind`.
+- **`findOutgoingByNonce` does not inherit the incremental window.** It bounds
+  the hunt by the `submission_unknown` row's `createdAt` (age → blocks + margin,
+  capped at the per-run max). Not found within the searched window ⇒ leave
+  **pending** — never settle on absence.
+- **`outgoing_scan_status`:** `'complete' | 'incomplete' | 'not-run'`. Initialise
+  / default to `'not-run'`; every early-exit path (policy, missing signer, etc.)
+  persists `'not-run'`. A run row must never assert a check that did not happen.
+  Scan status still does **not** feed C15 `classifyReconciliationRun` — alerting
+  unchanged.
+- **Policy logging:** `FUNDING_DISABLED` logs at `warn` under
+  `reconciliation.run.policy_disabled`; reserve `reconciliation.run.failed`
+  (`error`) for genuine malfunction. Exit-code classification from T4.2 /
+  C15 neutrality for `FUNDING_DISABLED` unchanged.
+- **Progress logs:** long scans emit periodic
+  `reconciliation.outgoing_scan.progress` (blocks scanned / remaining / elapsed),
+  not per block.
 
 ### C15 — Reconciliation failure alert (owner: T4.3)
 
@@ -822,7 +858,7 @@ Local design choices (T4.3, 2026-08-01):
 | `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
 | `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
 | `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                        |
-| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000`                                          | T4.2 (registered in T4.1)   |
+| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000` (per-run max window; TX.9)               | T4.2 (registered in T4.1; semantics TX.9) |
 
 ## 4. Decision log (append-only)
 
@@ -860,3 +896,4 @@ Local design choices (T4.3, 2026-08-01):
 - 2026-08-01 — TX.3 (Wave 4 close refresh): README and PRD §25 appendix updated to merged state — ensure-ready (C11), treasury lifecycle (C12), list-environments (C13), armed hosted funding, TX.8 race closed, T4.1 reconciliation use case landed (C14) with cron wiring pending in T4.2.
 - 2026-08-01 — T4.2 wired `cron-reconciler` job + Render blueprint: signing-capable role, lookback/email config, exit semantics (policy vs malfunction), `wallet-reconciler` heartbeat; C14 amended in place (no new contract number).
 - 2026-08-01 — T4.3 published C15: reconciliation-failure critical alert after `RECONCILE_FAILURE_ALERT_THRESHOLD` consecutive failed runs (`error_code` set, policy refusals neutral), persist-then-send dedupe, resolve on next successful run without recovery email; consecutive count derived via `listRecent`.
+- 2026-08-02 — TX.9 amended C14 in place: incremental per-treasury outgoing-scan watermark (migration `0005`), per-run cap semantics for `RECONCILE_OUTGOING_LOOKBACK_BLOCKS`, `outgoing_scan_status='not-run'`, policy-refusal log level, scan progress logs.

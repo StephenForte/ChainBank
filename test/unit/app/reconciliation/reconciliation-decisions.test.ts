@@ -6,6 +6,10 @@ import {
   emptySweepCounters,
   isEligibleForReconciliation,
   isMatchingSubmissionTransfer,
+  NONCE_SEARCH_BLOCK_MARGIN,
+  nonceSearchLookbackBlocks,
+  planOutgoingScanWindow,
+  RECONCILE_BLOCK_TIME_MS,
   reconciliationIdempotencyKey,
 } from '../../../../src/app/reconciliation/reconciliation-decisions.js';
 import type { ManagedWallet, TreasuryOutgoingTransfer } from '../../../../src/app/ports.js';
@@ -203,5 +207,79 @@ describe('reconciliation decisions', () => {
 
   it('builds deterministic reconcile idempotency keys', () => {
     expect(reconciliationIdempotencyKey('run-1', 'wallet-9')).toBe('reconcile:run-1:wallet-9');
+  });
+
+  describe('planOutgoingScanWindow', () => {
+    it('falls back to a tip-relative capped window on first run', () => {
+      const plan = planOutgoingScanWindow({
+        tip: 50_000n,
+        lastScannedBlock: undefined,
+        maxBlocksPerRun: 20_000n,
+      });
+      expect(plan).toEqual({
+        kind: 'scan',
+        fromBlock: 30_000n,
+        toBlock: 50_000n,
+        tip: 50_000n,
+        lastScannedBlock: undefined,
+        isCoverageBehind: false,
+        advanceMarkerTo: 50_000n,
+      });
+    });
+
+    it('resumes contiguously from the stored marker when the gap fits the cap', () => {
+      const plan = planOutgoingScanWindow({
+        tip: 1_050n,
+        lastScannedBlock: 1_000n,
+        maxBlocksPerRun: 20_000n,
+      });
+      expect(plan).toEqual({
+        kind: 'scan',
+        fromBlock: 1_001n,
+        toBlock: 1_050n,
+        tip: 1_050n,
+        lastScannedBlock: 1_000n,
+        isCoverageBehind: false,
+        advanceMarkerTo: 1_050n,
+      });
+    });
+
+    it('scans the most recent cap-worth when the gap exceeds the cap', () => {
+      const plan = planOutgoingScanWindow({
+        tip: 50_000n,
+        lastScannedBlock: 1_000n,
+        maxBlocksPerRun: 20_000n,
+      });
+      expect(plan).toMatchObject({
+        kind: 'scan',
+        fromBlock: 30_000n,
+        toBlock: 50_000n,
+        isCoverageBehind: true,
+        advanceMarkerTo: 50_000n,
+      });
+    });
+
+    it('returns empty when the marker is already at the tip', () => {
+      expect(
+        planOutgoingScanWindow({
+          tip: 9_000n,
+          lastScannedBlock: 9_000n,
+          maxBlocksPerRun: 20_000n,
+        }),
+      ).toEqual({ kind: 'empty', tip: 9_000n, lastScannedBlock: 9_000n });
+    });
+  });
+
+  describe('nonceSearchLookbackBlocks', () => {
+    it('bounds the hunt by row age and never exceeds the per-run cap', () => {
+      const now = new Date('2026-08-02T00:00:00.000Z');
+      const createdAt = new Date(now.getTime() - 100 * RECONCILE_BLOCK_TIME_MS);
+      expect(
+        nonceSearchLookbackBlocks({ createdAt, now, maxBlocks: 20_000n }),
+      ).toBe(100n + NONCE_SEARCH_BLOCK_MARGIN);
+
+      const ancient = new Date(now.getTime() - 1_000_000 * RECONCILE_BLOCK_TIME_MS);
+      expect(nonceSearchLookbackBlocks({ createdAt: ancient, now, maxBlocks: 20_000n })).toBe(20_000n);
+    });
   });
 });

@@ -102,6 +102,13 @@ export const treasuries = pgTable(
     /** Populated only when the most recent attempt failed. */
     lastCheckErrorCode: text('last_check_error_code'),
 
+    /**
+     * Highest block included in a genuinely complete outgoing scan (C14 / TX.9).
+     * Advanced only on success; boot upsert must never clobber these columns.
+     */
+    lastOutgoingScanBlock: weiColumn('last_outgoing_scan_block'),
+    lastOutgoingScanAt: timestamp('last_outgoing_scan_at', { withTimezone: true }),
+
     enabled: boolean('enabled').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -369,8 +376,11 @@ export const reconciliationRuns = pgTable('reconciliation_runs', {
   submissionUnknownResolved: integer('submission_unknown_resolved').notNull().default(0),
   submissionUnknownLeftPending: integer('submission_unknown_left_pending').notNull().default(0),
   unexplainedTransferCount: integer('unexplained_transfer_count').notNull().default(0),
-  /** complete | incomplete — incomplete when an RPC scan could not finish. */
-  outgoingScanStatus: text('outgoing_scan_status').notNull().default('complete'),
+  /**
+   * complete | incomplete | not-run — not-run when the scan phase never executed
+   * (policy stop / early exit); incomplete when an RPC scan could not finish.
+   */
+  outgoingScanStatus: text('outgoing_scan_status').notNull().default('not-run'),
   findingsJson: jsonb('findings_json').notNull().default([]),
   errorCode: text('error_code'),
   errorSummary: text('error_summary'),

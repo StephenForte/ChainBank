@@ -95,7 +95,7 @@ export function createReconciliationRunRepository(db: Database): ReconciliationR
 
 function toReconciliationRun(row: ReconciliationRunRow): ReconciliationRun {
   const scanStatus = row.outgoingScanStatus;
-  if (scanStatus !== 'complete' && scanStatus !== 'incomplete') {
+  if (scanStatus !== 'complete' && scanStatus !== 'incomplete' && scanStatus !== 'not-run') {
     throw new ChainBankError(
       'INTERNAL_ERROR',
       `Invalid reconciliation_runs.outgoing_scan_status: ${scanStatus}`,

@@ -119,9 +119,9 @@ export const environmentSchema = z.object({
   ALERT_REMINDER_INTERVAL_HOURS: nonNegativeInteger.default(24),
 
   /**
-   * How far back the reconciler scans treasury outgoing transfers when settling
-   * `submission_unknown` rows and detecting crash-orphans (C14 / T4.2).
-   * Default 20000 (~2.8 days at Sepolia ~12s blocks).
+   * Maximum treasury-outgoing blocks scanned per reconciler run (C14 / TX.9).
+   * Incremental resume uses the per-treasury watermark; this cap bounds each
+   * run (first run / long outage). Default 20000 (~2.8 days at Sepolia ~12s).
    */
   RECONCILE_OUTGOING_LOOKBACK_BLOCKS: positiveInteger.default(20_000),
 

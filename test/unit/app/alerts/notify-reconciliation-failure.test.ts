@@ -44,6 +44,8 @@ const treasury: Treasury = {
   lastObservedAt: undefined,
   lastCheckedAt: undefined,
   lastCheckErrorCode: undefined,
+  lastOutgoingScanBlock: undefined,
+  lastOutgoingScanAt: undefined,
   enabled: true,
 };
 

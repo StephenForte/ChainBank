@@ -29,6 +29,9 @@ export interface Treasury {
   readonly lastObservedAt: Date | undefined;
   readonly lastCheckedAt: Date | undefined;
   readonly lastCheckErrorCode: string | undefined;
+  /** Highest block included in a complete outgoing scan (C14 / TX.9). */
+  readonly lastOutgoingScanBlock: bigint | undefined;
+  readonly lastOutgoingScanAt: Date | undefined;
   readonly enabled: boolean;
 }
 
@@ -60,6 +63,13 @@ export interface RecordCheckFailureInput {
   readonly checkedAt: Date;
 }
 
+export interface RecordOutgoingScanCompleteInput {
+  readonly treasuryId: string;
+  /** Inclusive end block of a genuinely complete scan window. */
+  readonly scannedToBlock: bigint;
+  readonly scannedAt: Date;
+}
+
 export interface ChainRepository {
   /** Idempotently reconciles the configured chain into the database. */
   upsert(registration: ChainRegistration): Promise<ChainDescriptor>;
@@ -84,6 +94,11 @@ export interface TreasuryRepository {
    * known balance untouched, so a failed read never becomes a zero balance.
    */
   recordCheckFailure(input: RecordCheckFailureInput): Promise<Treasury>;
+  /**
+   * Advances the outgoing-scan watermark after a genuinely complete window.
+   * Partial / failed scans must not call this (C14 / TX.9).
+   */
+  recordOutgoingScanComplete(input: RecordOutgoingScanCompleteInput): Promise<Treasury>;
 }
 
 export interface BalanceObservationInput {
@@ -708,7 +723,12 @@ export interface TreasuryOutgoingTransfer {
 }
 
 export type OutgoingScanResult =
-  | { readonly kind: 'ok'; readonly transfers: readonly TreasuryOutgoingTransfer[] }
+  | {
+      readonly kind: 'ok';
+      readonly transfers: readonly TreasuryOutgoingTransfer[];
+      readonly fromBlock: bigint;
+      readonly toBlock: bigint;
+    }
   | { readonly kind: 'incomplete'; readonly errorCode: string; readonly reason: string };
 
 export type FindByNonceResult =
@@ -720,6 +740,10 @@ export type ConfirmedNonceResult =
   | { readonly kind: 'ok'; readonly confirmedNonce: number }
   | { readonly kind: 'unavailable'; readonly errorCode: string; readonly reason: string };
 
+export type LatestBlockNumberResult =
+  | { readonly kind: 'ok'; readonly blockNumber: bigint }
+  | { readonly kind: 'unavailable'; readonly errorCode: string; readonly reason: string };
+
 /**
  * Public-client scan of treasury outgoing native transfers (C14).
  * Fail closed: RPC failure yields incomplete / unavailable, never an empty
@@ -727,14 +751,20 @@ export type ConfirmedNonceResult =
  */
 export interface TreasuryOutgoingScanner {
   getConfirmedTransactionCount(address: string): Promise<ConfirmedNonceResult>;
+  getLatestBlockNumber(): Promise<LatestBlockNumberResult>;
   findOutgoingByNonce(input: {
     readonly fromAddress: string;
     readonly nonce: number;
     readonly lookbackBlocks: bigint;
   }): Promise<FindByNonceResult>;
-  listRecentOutgoingTransfers(input: {
+  /**
+   * Scan inclusive `[fromBlock, toBlock]` for native value transfers from the
+   * treasury. Callers compute the window (incremental watermark + per-run cap).
+   */
+  listOutgoingTransfers(input: {
     readonly fromAddress: string;
-    readonly lookbackBlocks: bigint;
+    readonly fromBlock: bigint;
+    readonly toBlock: bigint;
   }): Promise<OutgoingScanResult>;
 }
 
@@ -754,7 +784,7 @@ export interface ReconciliationRun {
   readonly submissionUnknownResolved: number;
   readonly submissionUnknownLeftPending: number;
   readonly unexplainedTransferCount: number;
-  readonly outgoingScanStatus: 'complete' | 'incomplete';
+  readonly outgoingScanStatus: 'complete' | 'incomplete' | 'not-run';
   readonly findings: readonly ReconciliationFinding[];
   readonly errorCode: string | undefined;
   readonly errorSummary: string | undefined;
@@ -776,6 +806,15 @@ export type ReconciliationFinding =
       readonly severity: 'critical';
       readonly treasuryId: string;
       readonly errorCode: string;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: 'outgoing_scan_coverage_behind';
+      readonly severity: 'warning';
+      readonly treasuryId: string;
+      readonly lastScannedBlock: string;
+      readonly scannedFromBlock: string;
+      readonly tip: string;
       readonly reason: string;
     }
   | {
@@ -812,7 +851,7 @@ export interface FinishReconciliationRunInput {
   readonly submissionUnknownResolved: number;
   readonly submissionUnknownLeftPending: number;
   readonly unexplainedTransferCount: number;
-  readonly outgoingScanStatus: 'complete' | 'incomplete';
+  readonly outgoingScanStatus: 'complete' | 'incomplete' | 'not-run';
   readonly findings: readonly ReconciliationFinding[];
   readonly errorCode: string | undefined;
   readonly errorSummary: string | undefined;

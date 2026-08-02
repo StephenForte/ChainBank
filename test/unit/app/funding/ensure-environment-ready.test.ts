@@ -175,6 +175,7 @@ function buildDeps(options?: {
       setEnabled: vi.fn(),
       recordCheckSuccess: vi.fn(),
       recordCheckFailure: vi.fn(),
+      recordOutgoingScanComplete: vi.fn(),
     },
     balanceObservations: { record: vi.fn(), findLatest: vi.fn() },
     balanceReader: {
