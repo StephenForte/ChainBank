@@ -879,7 +879,7 @@ export function App() {
                         <td>
                           <button
                             type="button"
-                            className={project.enabled ? 'danger' : undefined}
+                            className={project.enabled ? 'secondary' : undefined}
                             disabled={projectBusyId === project.id}
                             onClick={() => void onToggleProject(project)}
                           >
@@ -998,7 +998,7 @@ export function App() {
                   </dl>
                   <button
                     type="button"
-                    className={environmentDetail.enabled ? 'danger' : undefined}
+                    className={environmentDetail.enabled ? 'secondary' : undefined}
                     disabled={environmentBusy}
                     onClick={() => void onToggleEnvironment(environmentDetail)}
                   >
@@ -1117,7 +1117,7 @@ export function App() {
                             <td>
                               <button
                                 type="button"
-                                className={wallet.enabled ? 'danger' : undefined}
+                                className={wallet.enabled ? 'secondary' : undefined}
                                 disabled={walletBusyId === wallet.id}
                                 onClick={() => void onToggleWallet(wallet)}
                               >
@@ -1125,7 +1125,7 @@ export function App() {
                               </button>{' '}
                               <button
                                 type="button"
-                                className={wallet.reconciliationEnabled ? 'danger' : undefined}
+                                className={wallet.reconciliationEnabled ? 'secondary' : undefined}
                                 disabled={walletBusyId === wallet.id}
                                 onClick={() => void onToggleWalletReconciliation(wallet)}
                               >

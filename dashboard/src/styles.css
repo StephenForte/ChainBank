@@ -326,16 +326,6 @@ button.secondary:active:not(:disabled) {
 }
 
 /* Disable / destructive actions — solid bad fill, never brand-green */
-button.danger {
-  background: var(--bad);
-  color: var(--on-dark);
-}
-
-button.danger:hover:not(:disabled),
-button.danger:active:not(:disabled) {
-  background: var(--bad-strong);
-}
-
 .hint,
 .muted {
   color: var(--steel);
