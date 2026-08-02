@@ -9,14 +9,14 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-02, Wave 5c in review)
+## Status (updated 2026-08-02, TX.9 merged — T4.4 is all that remains)
 
-`main` is at **407 unit tests plus 75 integration tests** (both counts re-run by the
-planner against `origin/main` on 2026-08-02 — the previous 365/64 figure was stale),
-with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
+`main` is at **428 unit tests plus 77 integration tests** (both counts re-run by the
+planner against `origin/main` on 2026-08-02 — the previously published 365/64 was
+stale), with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
 validation) green on every PR.
 
-**One open PR: #44 (TX.9), changes requested.** No stale branches.
+**No open PRs, no stale branches.** Phase 4 is one task from exit: T4.4.
 
 | Task                                                         | Status      | Landed in                  |
 | ------------------------------------------------------------ | ----------- | -------------------------- |
@@ -48,8 +48,8 @@ validation) green on every PR.
 | T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done     | PR #40                     |
 | T4.2 reconciler cron entry + Render blueprint                | ✅ done     | PR #41                     |
 | T4.3 reconciliation failure alerting (C15)                   | ✅ done     | PR #42                     |
-| TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | 🔄 review   | PR #44 — changes requested |
-| Remaining: T4.4 (last task in Phase 4)                       | not started | —                          |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done     | PR #44 (two review rounds) |
+| Remaining: T4.4 (last task in Phase 4, contract C16)         | not started | —                          |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -98,17 +98,27 @@ funding armed and serving. The emergency stop is
 ✅ **Wave 5a complete:** TX.8 (#37), T4.1 (#40, C14), TX.3 (#39).
 ✅ **Wave 5b complete:** T4.2 (#41) and T4.3 (#42, C15) merged — the reconciler cron
 is deployed on Render and has completed live runs.
-**Wave 5c (now):** **TX.9** 🔴 is in review as PR #44 with **changes requested** —
-see the review outcome in the Cross-cutting entry. **T4.4** 🔴 cron-vs-API
-concurrency is prompted and ready to dispatch, but **blocked on TX.9 merging**
-because it must assert TX.9's corrected scan shape. **D6 has been reconfirmed and
-superseded** (2026-08-02) — details in the T4.4 entry. Phase 4 exits with T4.4.
+✅ **Wave 5c:** **TX.9** merged (#44) after two review rounds — the outgoing scan is
+incremental and forward-contiguous, and the nonce hunt bisects. **Wave 5d (now):**
+**T4.4** 🔴 cron-vs-API concurrency (contract **C16**) is prompted and unblocked —
+dispatch it. **D6 was reconfirmed and superseded** (2026-08-02) — details in the
+T4.4 entry. Phase 4 exits with T4.4.
 
-**Live-operation status (2026-08-02):** the reconciler runs on Render every 6
-hours with the signing key, and reaches the funding gate correctly. It has **not
-yet completed a run with `FUNDING_ENABLED=true`** — runs at the default lookback
-exceed practical runtime and were cancelled (TX.9 defect 1). Lower
-`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` before trusting the schedule.
+**Live-operation status (2026-08-02, after TX.9):** the reconciler runs on Render
+every 6 hours with the signing key and reaches the funding gate correctly. Two
+things are still true and both must be cleared before Phase 4's exit criterion
+("long-running wallets remain above policy minimum during a test period") has any
+evidence behind it:
+
+- **No wallet has `reconciliation_enabled = true` yet**, so a sweep assesses zero
+  wallets. A green run over an empty set proves nothing — check `wallets_assessed`
+  on the run row, not the exit code.
+- **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is still manually lowered in hosted
+  config.** TX.9 makes restoring it to `20000` safe (the nonce hunt bisects rather
+  than sweeps). Expect the first runs after restoring it to report
+  `outgoing_scan_status: 'incomplete'` with an `outgoing_scan_coverage_behind`
+  finding while the watermark drains its backlog at roughly 11× real time. **That
+  is the fix working, not a regression** — and per C15 it does not page.
 
 ## Commit and merge contract
 
@@ -354,7 +364,8 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Consecutive-failure threshold, affected wallets + error categories, recovery
   recorded after success. Template already exists.
 - **T4.4** 🔴 Cron-vs-API concurrency tests `[T4.2, T2.2, TX.8, TX.9]` — contract
-  **C16** (pre-assigned). **Prompted 2026-08-02; blocked on TX.9 merging.**
+  **C16** (pre-assigned). **Prompted 2026-08-02; unblocked — TX.9 merged (#44).
+  Ready to dispatch.**
   Reconciler and ensure-ready racing the same treasury: no duplicate transfers,
   no nonce conflicts. Depends on TX.8 so the tests lock in the fixed
   read-inside-lock behavior rather than encoding the race, and on TX.9 so they
@@ -391,8 +402,8 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   post-broadcast meaning (C4). The previously-impossible test now passes:
   parallel distinct keys with an instant-confirm tracker → exactly one transfer.
 
-- **TX.9** 🔴 Make the treasury outgoing scan usable in production `[T4.1, T4.2]`
-  — amends contract **C14** (no new number)
+- **TX.9** ✅ 🔴 Make the treasury outgoing scan usable in production `[T4.1, T4.2]`
+  — DONE (PR #44, two review rounds); amends contract **C14** (no new number)
   Found operating the reconciler live on 2026-08-01/02, after T4.2 wired the
   cron. Four defects, all in the crash-orphan / `submission_unknown` scan path.
   **The first is the blocker: the feature as shipped cannot complete a run at
@@ -489,8 +500,29 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   but that misses finished pre-`0005` rows still reading `'complete'`; reorgs
   (tip < marker) are unhandled and should be a stated C14 limitation.
 
-  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` stays at its lowered hosted value until
-  this lands.
+  **Round 2 accepted and merged (planner re-review, 2026-08-02).** All three
+  blockers fixed and all four minors addressed. Verified by re-running the round-1
+  probes rather than by reading the diff:
+
+  - The crash-orphan at block 5 000 that the tip-facing plan silently abandoned is
+    now **reported** — window `[1_001, 21_000]`, status `incomplete`, marker
+    advanced to `21_000`, never past an unscanned block.
+  - Successive runs tile contiguously with no gap
+    (`[1_001, 21_000] → [21_001, 41_000] → [41_001, 50_000]`), so a backlog drains
+    instead of being abandoned.
+  - The aged-row nonce hunt dropped from **20 001** RPC round trips to **17**
+    (16 bisect probes + 1 `getBlock`), and still fails closed on an RPC failure at
+    any probe.
+  - Watermark advances are flushed only after `markFinished`, so a kill re-scans
+    rather than skips.
+
+  Gate re-run locally: 428 unit, 77 integration; migration `0005` re-proved forward
+  from `0004` on populated data. C14's amendment no longer contradicts itself —
+  "advance only on a genuinely complete scan" is stated consistently. C15 untouched.
+
+  **Hosted follow-up:** `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` can now be restored to
+  `20000`. See the live-operation status note near the top for what to expect on
+  the first runs afterwards.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
@@ -617,17 +649,17 @@ response or a routine rotation dependent on hand-written SQL.
    T1.9 (#35). Funding armed in production at wave close.
 2. ✅ **Wave 5a (complete 2026-08-01):** TX.8 (#37) → T4.1 (#40) → TX.3 (#39).
 3. ✅ **Wave 5b (complete 2026-08-01):** T4.2 (#41) → T4.3 (#42, C15).
-4. **Wave 5c (now):** TX.9 🔴 (PR #44, changes requested) → T4.4 🔴 cron-vs-API
-   concurrency (C16, prompted and held until TX.9 merges). Phase 4 exits here.
+4. ✅ **Wave 5c (complete 2026-08-02):** TX.9 (#44, two review rounds).
+5. **Wave 5d (now):** T4.4 🔴 cron-vs-API concurrency (C16) — prompted and
+   unblocked. **Phase 4 exits here.**
 
 Merge-order cautions for Wave 5:
 
-- **TX.9 before T4.4 — still binding, and now concrete.** T4.4 asserts the window
-  arithmetic `[M+1, min(M+C, T)]` advancing to `min(M+C, T)`, status `'complete'`
-  only when the window reaches the tip. That is the _corrected_ TX.9 shape, not
-  what PR #44 currently does. The T4.4 prompt instructs the worker to stop and
-  report `blocked` if it finds tip-facing windows on `main` — so a TX.9 merged
-  without review item 1 will visibly halt T4.4 rather than get quietly encoded.
+- ✅ **TX.9 before T4.4 — satisfied.** `main` now has the corrected shape T4.4
+  asserts: windows `[M+1, min(M+C, T)]` advancing to `min(M+C, T)`, status
+  `'complete'` only when the window reaches the tip. The T4.4 prompt still tells
+  the worker to stop and report `blocked` on tip-facing windows; that guard is now
+  a no-op but is worth leaving in as a regression tripwire.
 - ✅ **TX.9 and T4.3 both edit `reconcile-wallets.ts`** — resolved as planned:
   T4.3 landed first (#42) and TX.9 built on it. Verified at review that TX.9's
   policy-logging change did not disturb C15's `FUNDING_DISABLED`-is-neutral rule

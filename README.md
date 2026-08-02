@@ -7,9 +7,9 @@ Treasury and wallet-funding service for EVM development environments.
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
 **Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) nearly
-done — the reconciliation use case (C14), the 6-hourly reconciler cron, and
-failure alerting (C15) are all merged and deployed. One task remains (T4.4,
-cron-vs-API concurrency), plus a scan-performance fix in review (TX.9).**
+done — the reconciliation use case (C14), the 6-hourly reconciler cron, failure
+alerting (C15), and the incremental outgoing scan (TX.9, migration `0005`) are
+all merged and deployed. One task remains: T4.4, cron-vs-API concurrency.**
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -283,11 +283,11 @@ Short version:
 
 ## Phase roadmap (short)
 
-| Phase | Focus                                                                      | Status                                                                                                                                                                                                                      |
-| ----- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                                                                                                                 |
-| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                                                                                                                          |
-| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)                                                                                                                 |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                                                                                                                            |
-| 4     | Scheduled wallet reconciliation                                            | in progress — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), and failure alerting (T4.3, C15) merged and deployed; cron-vs-API concurrency (T4.4, C16) remains, and TX.9 scan fixes are in review |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                                                                                                                                |
+| Phase | Focus                                                                      | Status                                                                                                                                                                                                                                                              |
+| ----- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                                                                                                                                                         |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                                                                                                                                                                  |
+| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)                                                                                                                                                         |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                                                                                                                                                                    |
+| 4     | Scheduled wallet reconciliation                                            | in progress — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), failure alerting (T4.3, C15), and the incremental forward-contiguous outgoing scan (TX.9, migration `0005`) merged and deployed; cron-vs-API concurrency (T4.4, C16) remains |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                                                                                                                                                                        |

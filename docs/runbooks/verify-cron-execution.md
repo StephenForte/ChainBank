@@ -53,13 +53,19 @@ threshold value changes —
 >   it true. A successful run over an empty set is not evidence that
 >   reconciliation works — check `wallets_assessed` on the run row, not just the
 >   exit code.
-> - **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is manually lowered in hosted config
->   pending TX.9.** At the default (20000) the outgoing scan issues one
->   `getBlock` per block and cannot finish; runs exceeded 5–10 minutes and were
->   cancelled. Do not restore the default until TX.9 has landed and a run has
->   written a scan watermark. A short lookback means a missed run leaves an
->   unscanned gap, and `submission_unknown` rows older than the window correctly
->   stay pending rather than settling.
+> - **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` may have been manually lowered in
+>   hosted config before TX.9 landed. Restoring it to `20000` is now safe.** TX.9
+>   made the scan incremental (it resumes from a per-treasury watermark rather
+>   than re-scanning a fixed window) and made the `submission_unknown` nonce hunt
+>   bisect instead of sweeping. The value is now a **per-run maximum**, not
+>   "always scan this much."
+> - **After restoring it, expect the first runs to report
+>   `outgoing_scan_status: 'incomplete'` with an `outgoing_scan_coverage_behind`
+>   finding. This is correct, not a regression.** The watermark is draining a
+>   backlog accumulated while the scan was capped short; windows advance
+>   forward-contiguously so nothing is skipped, and it catches up at roughly 11×
+>   real time. Per C15 an incomplete scan alone does not page. The run reads
+>   `complete` again once the window reaches the tip.
 
 1. Confirm schedule and recent runs: Render → **`chainbank-wallet-reconciler`** →
    **Logs** / run history.
@@ -79,12 +85,11 @@ threshold value changes —
 
    - `Wallet reconciler run started`
    - `Prior reconciliation runs aborted before finish` (only if any
-     `finished_at IS NULL` rows exist — treat those as aborted, not clean.
-     `outgoing_scan_status` currently defaults to `complete`, so an aborted row
-     reads clean and `finished_at IS NULL` is the authoritative signal. TX.9
-     changes that default to `not-run`; once it lands, rows written _before_ it
-     may still show a stale `complete` and stay misleading, so keep using
-     `finished_at`.)
+     `finished_at IS NULL` rows exist — treat those as aborted, not clean. Since
+     TX.9 / migration `0005`, `outgoing_scan_status` defaults to `not-run`, so a
+     newly aborted row no longer reads clean. Rows written **before** `0005` may
+     still show a stale `complete`, so `finished_at IS NULL` remains the
+     authoritative signal for aborted runs.)
    - `Wallet reconciler run completed` **or**
      `…skipped by funding policy…; exiting zero`
    - `Wallet reconciler run finished` with `exitCode: 0`

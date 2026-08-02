@@ -965,7 +965,7 @@ document a reader would otherwise be misled by.
 | 1 — Treasury MVP and on-demand funding | Complete. Reserve-exhaustion operator email (P1-US5 / [C10](./DECISIONS.md#c10--treasury-reserve-exhaustion-alert-owner-t18)) and concurrency integration tests (T1.9) are delivered.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2 — Projects, environments, readiness  | Complete. Projects, environments, scoped credentials, operation status, expanded dashboard, `POST /v1/environments/{id}/ensure-ready` ([C11](./DECISIONS.md#c11--environment-ensure-ready-owner-t22)), and `GET /v1/projects/{id}/environments` ([C13](./DECISIONS.md#c13--list-environments-for-a-project-owner-tx7)) are delivered.                                                                                                                                                                                                                                                                                                                                                                                       |
 | 3 — Daily monitoring and email alerts  | Complete. Alert lifecycle, all templates, PRD §19 runbooks, and hosted verification (all four phases, 2026-08-01) are delivered.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 4 — Managed-wallet reconciliation      | In progress. Merged and deployed: the reconciliation use case ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41), migration `0004`) — below-minimum sweep through the C7 dispatch engine, evidence-based `submission_unknown` settlement, crash-orphan outgoing scan; the 6-hourly `chainbank-wallet-reconciler` cron (T4.2); and consecutive-failure alerting (T4.3, [C15](./DECISIONS.md#c15--reconciliation-failure-alert-owner-t43)). Remaining: cron-vs-API concurrency (T4.4, C16). In review: TX.9, which makes the outgoing scan incremental (migration `0005`) — until it lands the scan cannot finish at its default lookback, so the hosted `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is manually lowered. |
+| 4 — Managed-wallet reconciliation      | In progress. Merged and deployed: the reconciliation use case ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41), migration `0004`) — below-minimum sweep through the C7 dispatch engine, evidence-based `submission_unknown` settlement, crash-orphan outgoing scan; the 6-hourly `chainbank-wallet-reconciler` cron (T4.2); and consecutive-failure alerting (T4.3, [C15](./DECISIONS.md#c15--reconciliation-failure-alert-owner-t43)). and the incremental outgoing scan (TX.9, migration `0005`) — forward-contiguous windows from a per-treasury watermark, with the `submission_unknown` nonce hunt bisecting on account nonce instead of sweeping blocks. Remaining: cron-vs-API concurrency (T4.4, C16). |
 | 5–8                                    | Out of scope for this effort.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 **Funding is armed in production** (2026-08-01). The hosted deployment passed all
@@ -1059,13 +1059,13 @@ The full registry is in `tasks/DECISIONS.md`.
 Honest accounting of where the current state falls short of §20:
 
 - **Scheduled reconciliation runs in the hosted environment but has not yet
-  completed a full sweep with funding enabled.** T4.2 wired the 6-hourly
-  `chainbank-wallet-reconciler` cron on Render with the signing key, and it
-  reaches the funding gate correctly. Runs at the default
-  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` exceed practical runtime and were
-  cancelled (TX.9 defect 1), so the hosted value is manually lowered pending
-  TX.9. §20's cron-driven top-up is therefore wired but not yet demonstrated
-  end to end on a live schedule.
+  completed a full sweep with funding enabled over a non-empty wallet set.** T4.2
+  wired the 6-hourly `chainbank-wallet-reconciler` cron on Render with the signing
+  key, and it reaches the funding gate correctly. TX.9 removed the runtime blocker
+  (the scan is incremental and the nonce hunt bisects), so
+  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` can be restored to its `20000` default.
+  §20's cron-driven top-up is therefore wired and now able to complete, but not
+  yet demonstrated end to end against real managed wallets on a live schedule.
 - `reconciliation_enabled` defaults to **false** on every managed wallet, so a
   sweep assesses zero wallets until one is deliberately registered with it true.
   A green run over an empty set is not evidence that reconciliation works.
@@ -1102,19 +1102,30 @@ Defects found during T1.9 concurrency testing (2026-08-01):
    but see the TX.9 entry below: at the default lookback the scan cannot finish,
    so detection is currently bounded by a manually lowered window.
 
-Open defects found operating the reconciler live (2026-08-02), tracked as TX.9
-and in review as PR #44:
+Defects found operating the reconciler live (2026-08-02) — all closed by TX.9
+(PR #44, merged after two review rounds):
 
-3. **The outgoing scan cannot complete at its own default setting.** It issues
-   one `getBlock(includeTransactions)` per block, so a 20 000-block lookback is
-   2 500 sequential batches pulling full transaction bodies; live runs exceeded
-   5–10 minutes and were cancelled. The fix is incremental scanning from a
-   persisted per-treasury watermark (migration `0005`). A short lookback in the
-   meantime means a missed run leaves an unscanned gap, and `submission_unknown`
-   rows older than the window correctly stay pending rather than settling.
-4. **A run could record a scan it never performed.** `outgoing_scan_status`
-   defaulted to `complete`, so a policy-disabled early exit persisted a clean
-   scan result. Fixed in TX.9 by defaulting to `not-run`.
+3. **The outgoing scan could not complete at its own default setting — closed.**
+   It issued one `getBlock(includeTransactions)` per block, so a 20 000-block
+   lookback was 2 500 sequential batches pulling full transaction bodies; live
+   runs exceeded 5–10 minutes and were cancelled. The scan now resumes from a
+   persisted per-treasury watermark (migration `0005`) in **forward-contiguous**
+   windows `[marker + 1, min(marker + cap, tip)]`, so no range is ever skipped
+   and a backlog drains over successive runs rather than being abandoned. While
+   a backlog remains the run records `outgoing_scan_status: 'incomplete'` — it
+   must not read clean while coverage is behind. Separately, the
+   `submission_unknown` nonce hunt now **bisects** on account nonce
+   (~⌈log₂(window)⌉ probes) instead of sweeping block bodies: measured 17 RPC
+   round trips where the sweep took 20 001.
+4. **A run could record a scan it never performed — closed.**
+   `outgoing_scan_status` defaulted to `complete`, so a policy-disabled early
+   exit persisted a clean scan result. It now defaults to `not-run`, and every
+   early-exit path (policy, missing signer, zero enabled treasuries) persists
+   that. Rows written before migration `0005` may still show a stale `complete`;
+   `finished_at IS NULL` remains the authoritative signal for aborted runs.
 
-Test counts on `main` (re-run 2026-08-02): **407 unit**, **75 integration**
-(opt-in, Postgres). The previously published 381/69 was stale.
+**Stated limitation:** a chain reorg below the watermark is not rescanned — if
+`tip < marker` the scan idles until the chain catches up. Recorded in C14.
+
+Test counts on `main` (re-run 2026-08-02, after TX.9): **428 unit**,
+**77 integration** (opt-in, Postgres). The previously published 381/69 was stale.
