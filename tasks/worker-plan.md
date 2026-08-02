@@ -9,14 +9,23 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-02, TX.9 merged — T4.4 is all that remains)
+## Status (updated 2026-08-02, T4.4 in review — TX.10 opened)
 
 `main` is at **428 unit tests plus 77 integration tests** (both counts re-run by the
 planner against `origin/main` on 2026-08-02 — the previously published 365/64 was
 stale), with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
 validation) green on every PR.
 
-**No open PRs, no stale branches.** Phase 4 is one task from exit: T4.4.
+**One open PR: #46 (T4.4), small change requested.** No stale branches.
+
+**Phase 4 exit is qualified, not blocked.** T4.4 measured a real crash-induced
+duplicate transfer under the cron-vs-API race (`sendCalls=2`, one DB row) — the
+long-known crash-after-broadcast gap, detected by TX.9's scan but never
+prevented. P4-US2 is satisfied for lock serialization, nonce discipline, reserve
+behaviour under race, and watermark integrity; it is **not** satisfied for
+crash-induced duplicates. That is now tracked as **TX.10** and recorded as an
+accepted, detected risk. Phase 4 may exit on this basis — but the exit note must
+say so rather than claiming the criterion is wholly met.
 
 | Task                                                         | Status      | Landed in                  |
 | ------------------------------------------------------------ | ----------- | -------------------------- |
@@ -49,7 +58,8 @@ validation) green on every PR.
 | T4.2 reconciler cron entry + Render blueprint                | ✅ done     | PR #41                     |
 | T4.3 reconciliation failure alerting (C15)                   | ✅ done     | PR #42                     |
 | TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done     | PR #44 (two review rounds) |
-| Remaining: T4.4 (last task in Phase 4, contract C16)         | not started | —                          |
+| T4.4 cron-vs-API concurrency (C16)                           | 🔄 review   | PR #46 — change requested  |
+| TX.10 prevent crash-induced duplicate transfers              | not started | — (opened by T4.4 finding) |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -86,12 +96,16 @@ funding armed and serving. The emergency stop is
    re-reads wallet and treasury balances inside the lock and recomputes the
    top-up/reserve decision from the fresh values (C7 amendment). The accepted risk
    recorded at arming time is closed once this deploys.
-2. **Crash-after-broadcast gap (folded into T4.1) — open.** A backend killed mid-send
-   rolls back the in-lock rows: the operation stays `pending`, the wallet is NOT
-   wedged, and a transfer that reached the network leaves no DB trace and no
-   recorded nonce. Row-based reconciliation cannot find it; T4.1 must compare
-   on-chain treasury transactions against expected state, not only resolve stored
-   `submission_unknown` rows.
+2. **Crash-after-broadcast gap — detection closed (T4.1/C14 + TX.9); prevention
+   open as TX.10.** A backend killed mid-send rolls back the in-lock rows: the
+   operation stays `pending`, the wallet is NOT wedged, and a transfer that
+   reached the network leaves no DB trace and no recorded nonce. Row-based
+   reconciliation cannot find it, so T4.1 compares on-chain treasury transactions
+   against expected state and TX.9 made that scan able to finish — an orphan is
+   now reliably surfaced as a critical `unexplained_outgoing_transfer`.
+   **T4.4 then measured the other half:** because nothing durable gates the next
+   racer, a waiting API request sends a _second_ transfer (`sendCalls=2`, one DB
+   row). Detection without prevention. See **TX.10**.
 
 ### Next wave
 
@@ -364,8 +378,8 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   Consecutive-failure threshold, affected wallets + error categories, recovery
   recorded after success. Template already exists.
 - **T4.4** 🔴 Cron-vs-API concurrency tests `[T4.2, T2.2, TX.8, TX.9]` — contract
-  **C16** (pre-assigned). **Prompted 2026-08-02; unblocked — TX.9 merged (#44).
-  Ready to dispatch.**
+  **C16** (pre-assigned). **In review as PR #46 — changes requested 2026-08-02
+  (small; one skipped case to convert). Publishes C16.**
   Reconciler and ensure-ready racing the same treasury: no duplicate transfers,
   no nonce conflicts. Depends on TX.8 so the tests lock in the fixed
   read-inside-lock behavior rather than encoding the race, and on TX.9 so they
@@ -388,6 +402,23 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   signer fake (C16), so a duplicate-nonce dispatch fails loudly. A real-chain
   Anvil harness is **deferred, not dropped**; schedule it if Phase 5 needs it.
   D6's answer cell is updated in place — not renumbered, no D11.
+
+  **Review outcome (planner, 2026-08-02) — PR #46, small change requested.** Gate
+  re-run locally and green: 428 unit, 83 integration + 1 skipped. Scope held (no
+  `src/`), the `createFakeSigner` extension is additive with defaults unchanged,
+  and the three TX.9-shape assertions pin the corrected behaviour. Six real cases
+  land. **The one skipped case surfaced a genuine, quantified finding — see TX.10.**
+  The planner un-skipped it and instrumented it rather than trusting the
+  rationale: the assertion the prompt demanded (`submission_unknown` left pending
+  after a backend kill) is **unachievable**, because `pg_terminate_backend` rolls
+  back the in-lock rows so no such row is ever created — a planner prompt error
+  that conflated the crash path with the ambiguous-post-broadcast path. Requested:
+  replace the bare skip with (a) a characterisation test pinning today's behaviour
+  against TX.10, (b) an assertion that TX.9's outgoing scan reports the resulting
+  orphan as `unexplained_outgoing_transfer` — the safety net that makes the gap
+  tolerable, currently untested under this race — and (c) the ambiguous-failure
+  path (`sendError` → `RPC_UNAVAILABLE`, as in `funding-crash-recovery.test.ts`)
+  which _can_ assert `submission_unknown` stays pending with no second send.
 
 ### Cross-cutting
 
@@ -524,6 +555,46 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   `20000`. See the live-operation status note near the top for what to expect on
   the first runs afterwards.
 
+- **TX.10** 🔴 Prevent crash-induced duplicate transfers `[T1.5, TX.8, T4.4]`
+  — will amend contract **C7** (no new number; pre-assign at dispatch)
+  **Quantified by T4.4 (PR #46) on 2026-08-02, in the exact race P4-US2 names.**
+  This is the long-known crash-after-broadcast gap — T1.9 found it, T4.1/C14 and
+  TX.9 addressed **detection** — but prevention was never closed, and T4.4 is the
+  first time the duplicate has been measured rather than reasoned about.
+
+  **Measured:** kill the lock-holding backend mid-send while an API racer waits on
+  the advisory lock, then let both settle:
+
+  ```
+  sendCalls=2   unknowns=0   funding_transactions rows=1   statuses=["confirmed"]
+  ```
+
+  Two transfers broadcast on-chain; one DB row. The killed backend's in-lock rows
+  roll back, so the first transfer leaves **no trace and no recorded nonce** — and
+  because nothing is pending, the waiter re-reads a not-yet-mined balance,
+  recomputes the same top-up, and sends again. The wallet is funded twice and the
+  treasury is debited twice.
+
+  **Why this is tolerable today, and why it still needs fixing.** TX.9's outgoing
+  scan detects the orphan as a critical `unexplained_outgoing_transfer`, so the
+  money is never silently lost — but detection is after the fact. P4-US2's
+  criterion is that concurrent jobs and API calls do **not** issue duplicate
+  transactions. Phase 4 must not claim that criterion is fully met; it is met for
+  lock serialization, nonce discipline, reserve behaviour, and watermark
+  integrity, and **not** for crash-induced duplicates. Recorded as an accepted,
+  detected risk until TX.10 lands.
+
+  **Direction (not yet a design — the worker owns this):** the in-lock rows
+  rolling back is the root cause, so an intent record must survive the crash.
+  Likely a pre-broadcast intent row written and committed **outside** the
+  dispatch transaction (or via a separate connection) so a killed backend leaves
+  a durable "a send may have gone out at nonce N" marker that gates the next
+  racer, converging on the same `submission_unknown` semantics C4 already
+  defines. Push back if that is the wrong shape.
+
+  **Do not weaken T4.4's characterisation tests to make this pass** — update them
+  to assert the new behaviour and say so explicitly in the handoff.
+
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
   - integration tests against a Postgres service container. Actions pinned by SHA.
@@ -650,8 +721,13 @@ response or a routine rotation dependent on hand-written SQL.
 2. ✅ **Wave 5a (complete 2026-08-01):** TX.8 (#37) → T4.1 (#40) → TX.3 (#39).
 3. ✅ **Wave 5b (complete 2026-08-01):** T4.2 (#41) → T4.3 (#42, C15).
 4. ✅ **Wave 5c (complete 2026-08-02):** TX.9 (#44, two review rounds).
-5. **Wave 5d (now):** T4.4 🔴 cron-vs-API concurrency (C16) — prompted and
-   unblocked. **Phase 4 exits here.**
+5. **Wave 5d (now):** T4.4 🔴 cron-vs-API concurrency (C16) — in review as #46,
+   small change requested. **Phase 4 exits here, with the TX.10 caveat recorded.**
+6. **Wave 6 (next):** TX.10 🔴 prevent crash-induced duplicate transfers — opened
+   by T4.4's measurement, amends C7. Not a Phase 4 blocker: the duplicate is
+   detected by TX.9's outgoing scan, so it is an accepted, visible risk rather
+   than a silent one. Dispatch it once T4.4 lands and its characterisation tests
+   are in place to be flipped.
 
 Merge-order cautions for Wave 5:
 
