@@ -17,26 +17,46 @@ typecheck, unit, build, audit, secret scan, migration validation) green on every
 
 **No open PRs. Every planned Phase 1–4 task is merged. No known open defects.**
 
-**Phase 4 is NOT yet exited, and the reason is evidence, not code.** The §20 exit
-criteria are three; two are demonstrably met and one has nothing behind it:
+**Reconciliation funded a real wallet in production for the first time on
+2026-08-02.** Four ForteL2 wallets are enrolled (HARVEST, ADMIN, BATCHER,
+PROPOSER) in project `fortel2` / environment `development`. The §20 exit criteria:
 
-| §20 Phase 4 exit criterion                                                    | State                                                                                                                                   |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Long-running ForteL2 wallets remain above policy minimum during a test period | ❌ **No evidence.** No managed wallet has `reconciliation_enabled = true`, so every hosted sweep to date has assessed **zero** wallets. |
-| API and cron concurrency tests pass                                           | ✅ T4.4 (C16) + TX.10 — 86 integration tests, **0 skipped**.                                                                            |
-| Failure and recovery alerting works                                           | ✅ T4.3 (C15), covered by unit and integration tests.                                                                                   |
+| §20 Phase 4 exit criterion                                                    | State                                                                                                           |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Long-running ForteL2 wallets remain above policy minimum during a test period | 🟡 **Mechanism proven, duration not yet.** One top-up observed end to end; the "test period" is still accruing. |
+| API and cron concurrency tests pass                                           | ✅ T4.4 (C16) + TX.10 — 86 integration tests, **0 skipped**.                                                    |
+| Failure and recovery alerting works                                           | ✅ T4.3 (C15), covered by unit and integration tests.                                                           |
 
-The crash-induced duplicate that held the phase open is **closed by TX.10** (#48):
-T4.4 measured `sendCalls=2` with one DB row; the durable pre-broadcast intent now
-yields `sendCalls=1`, and the case that was `.skip`-ped is un-skipped and inverted.
+**Live evidence (verified against a public Sepolia node, not just our own logs):**
 
-What remains is operational: enrol at least one wallet with
-`reconciliation_enabled = true` and observe it across several 6-hourly runs. Until
-then "the code is complete and tested" is true and "reconciliation demonstrably
-keeps wallets funded" is not — they are different claims and only the first is
-earned. **Operator decision needed:** run that observation window before declaring
-Phase 4 exited, or declare it exited on code completeness and carry the live
-verification into Phase 5.
+- **Run `2cee03df-7edf-4752-861b-3bb7a29b9671`** (19:35:50Z) — staged enable of the
+  three wallets already above minimum. `walletsAssessed: 3, walletsFunded: 0,
+walletsNoop: 3`. First sweep in production history to assess a non-empty set.
+- **Run `aa93e369-e492-43f1-b054-522f6f4c6277`** (19:44:27Z) — BATCHER enrolled.
+  `walletsAssessed: 4, walletsFunded: 1, walletsNoop: 3, walletsBlocked: 0,
+walletsFailed: 0`, `outgoingScanStatus: complete`, exit 0, `durationMs: 19512`.
+- **Transaction
+  `0xdb6ef91bfaac35ace560db7b62ad24406806ddaa4a34021c1590edc6778f49ae`** — status
+  `0x1`, block 11405512, 21000 gas, to `0x3D54…a31d` (BATCHER),
+  value **254982149095701880 wei**. That is exactly `min(target − balance,
+maxTopUp)`, and BATCHER's post-transfer balance is **0.400000000000000000 ETH** —
+  its target to the wei. Destination and amount confirmed by
+  `eth_getTransactionByHash` / `eth_getTransactionReceipt` against
+  `ethereum-sepolia-rpc.publicnode.com`, independent of ChainBank's own records.
+
+Three things this run also demonstrated in production for the first time:
+`outgoingScanStatus: complete` (TX.9's incremental scan reached the chain tip
+rather than timing out), a 19.5s total runtime where the pre-TX.9 scan alone could
+not finish, and the C14 below-minimum rule funding exactly one of four assessed
+wallets.
+
+**What is still missing is duration, not capability.** The criterion says wallets
+remain above minimum _during a test period_; we have one restoration, not a period.
+BATCHER burns gas posting batches, so it should fall below 0.15 again and be
+restored unattended on the 6-hourly schedule. **Phase 4 exits when that has
+happened at least twice without intervention** — that is the difference between
+"the mechanism works" and "reconciliation keeps wallets funded". No task remains;
+this is a waiting game, and the run IDs above are the start of the record.
 
 | Task                                                         | Status  | Landed in                  |
 | ------------------------------------------------------------ | ------- | -------------------------- |
