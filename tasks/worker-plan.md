@@ -9,23 +9,26 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-02, T4.4 in review — TX.10 opened)
+## Status (updated 2026-08-02, T4.4 merged — Phase 4 held open for TX.10)
 
 `main` is at **428 unit tests plus 77 integration tests** (both counts re-run by the
 planner against `origin/main` on 2026-08-02 — the previously published 365/64 was
 stale), with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
 validation) green on every PR.
 
-**One open PR: #46 (T4.4), small change requested.** No stale branches.
+**Phase 4 is HELD OPEN until TX.10 lands** (operator decision, 2026-08-02).
 
-**Phase 4 exit is qualified, not blocked.** T4.4 measured a real crash-induced
-duplicate transfer under the cron-vs-API race (`sendCalls=2`, one DB row) — the
-long-known crash-after-broadcast gap, detected by TX.9's scan but never
-prevented. P4-US2 is satisfied for lock serialization, nonce discipline, reserve
-behaviour under race, and watermark integrity; it is **not** satisfied for
-crash-induced duplicates. That is now tracked as **TX.10** and recorded as an
-accepted, detected risk. Phase 4 may exit on this basis — but the exit note must
-say so rather than claiming the criterion is wholly met.
+T4.4 measured a real crash-induced duplicate transfer under the cron-vs-API race
+(`sendCalls=2`, one `funding_transactions` row) — the long-known
+crash-after-broadcast gap, detected by TX.9's scan but never prevented. P4-US2 is
+satisfied for lock serialization, nonce discipline, reserve behaviour under race,
+and watermark integrity; it is **not** satisfied for crash-induced duplicates.
+
+The planner offered to exit Phase 4 with that caveat recorded, since the
+duplicate is reliably surfaced as a critical finding rather than lost silently.
+**The operator chose to hold the phase open instead** — P4-US2 says concurrent
+jobs and API calls must not issue duplicate transactions, and detection is not
+prevention. Phase 4 exits when **TX.10** closes it, not before.
 
 | Task                                                         | Status      | Landed in                  |
 | ------------------------------------------------------------ | ----------- | -------------------------- |
@@ -58,8 +61,8 @@ say so rather than claiming the criterion is wholly met.
 | T4.2 reconciler cron entry + Render blueprint                | ✅ done     | PR #41                     |
 | T4.3 reconciliation failure alerting (C15)                   | ✅ done     | PR #42                     |
 | TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done     | PR #44 (two review rounds) |
-| T4.4 cron-vs-API concurrency (C16)                           | 🔄 review   | PR #46 — change requested  |
-| TX.10 prevent crash-induced duplicate transfers              | not started | — (opened by T4.4 finding) |
+| T4.4 cron-vs-API concurrency (C16)                           | ✅ done     | PR #46 (one case `.skip`)  |
+| TX.10 prevent crash-induced duplicate transfers              | not started | — Phase 4 exits with this  |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -412,13 +415,14 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   rationale: the assertion the prompt demanded (`submission_unknown` left pending
   after a backend kill) is **unachievable**, because `pg_terminate_backend` rolls
   back the in-lock rows so no such row is ever created — a planner prompt error
-  that conflated the crash path with the ambiguous-post-broadcast path. Requested:
-  replace the bare skip with (a) a characterisation test pinning today's behaviour
-  against TX.10, (b) an assertion that TX.9's outgoing scan reports the resulting
-  orphan as `unexplained_outgoing_transfer` — the safety net that makes the gap
-  tolerable, currently untested under this race — and (c) the ambiguous-failure
-  path (`sendError` → `RPC_UNAVAILABLE`, as in `funding-crash-recovery.test.ts`)
-  which _can_ assert `submission_unknown` stays pending with no second send.
+  that conflated the crash path with the ambiguous-post-broadcast path.
+
+  **Merged as-is with the skip (operator decision, 2026-08-02); the three
+  requested tests move into TX.10's scope rather than being dropped.** TX.10 has
+  to rewrite that case anyway — it is precisely the behaviour TX.10 changes — so
+  writing them twice would be waste. They are listed in the TX.10 entry below and
+  must not be quietly lost: **if TX.10 lands without them, the skip has simply
+  been inherited** and the suite still reports green on an unverified property.
 
 ### Cross-cutting
 
@@ -592,8 +596,33 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   racer, converging on the same `submission_unknown` semantics C4 already
   defines. Push back if that is the wrong shape.
 
-  **Do not weaken T4.4's characterisation tests to make this pass** — update them
-  to assert the new behaviour and say so explicitly in the handoff.
+  **Required test scope — inherited from T4.4's review, do not drop.** T4.4 merged
+  with its crash case `.skip`-ped; these three were requested there and moved here
+  because TX.10 rewrites that case anyway. All live in
+  `test/integration/cron-vs-api-concurrency.test.ts`:
+
+  1. **Un-skip and invert the crash case.** After the fix, killing the lock holder
+     mid-send while an API racer waits must yield **one** transfer, not two —
+     `sendCalls === 1` — and the interrupted attempt must leave a durable record
+     that gates the waiter rather than vanishing.
+  2. **Assert the detection safety net still fires.** TX.9's outgoing scan must
+     report a genuinely orphaned transfer as a critical
+     `unexplained_outgoing_transfer` under this race. This is currently untested
+     and must remain true after TX.10 — prevention must not silently disable the
+     detector that has been covering for it.
+  3. **Ambiguous post-broadcast failure under race.** Using the
+     `sendError` → `RPC_UNAVAILABLE` pattern from
+     `test/integration/funding-crash-recovery.test.ts:219` (a _different_ path
+     from a backend kill — this one does produce a row), assert
+     `submission_unknown` is left **pending** and the racer submits no second
+     transfer.
+
+  **Phase 4 exits when this lands** (operator decision, 2026-08-02) — so a
+  `.skip` in this task is not an acceptable outcome. If any of the three cannot be
+  written, stop and report `blocked` with the reason rather than skipping it.
+
+  **Do not weaken T4.4's other tests to make this pass** — update them to assert
+  the new behaviour and call that out explicitly in the handoff.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
@@ -721,13 +750,13 @@ response or a routine rotation dependent on hand-written SQL.
 2. ✅ **Wave 5a (complete 2026-08-01):** TX.8 (#37) → T4.1 (#40) → TX.3 (#39).
 3. ✅ **Wave 5b (complete 2026-08-01):** T4.2 (#41) → T4.3 (#42, C15).
 4. ✅ **Wave 5c (complete 2026-08-02):** TX.9 (#44, two review rounds).
-5. **Wave 5d (now):** T4.4 🔴 cron-vs-API concurrency (C16) — in review as #46,
-   small change requested. **Phase 4 exits here, with the TX.10 caveat recorded.**
-6. **Wave 6 (next):** TX.10 🔴 prevent crash-induced duplicate transfers — opened
-   by T4.4's measurement, amends C7. Not a Phase 4 blocker: the duplicate is
-   detected by TX.9's outgoing scan, so it is an accepted, visible risk rather
-   than a silent one. Dispatch it once T4.4 lands and its characterisation tests
-   are in place to be flipped.
+5. ✅ **Wave 5d (complete 2026-08-02):** T4.4 (#46, C16) — merged with its crash
+   case `.skip`-ped; that case and two others move into TX.10.
+6. **Wave 6 (now):** TX.10 🔴 prevent crash-induced duplicate transfers — opened by
+   T4.4's measurement, amends **C7**. **Phase 4 exits here** (operator decision,
+   2026-08-02: detection is not prevention, and P4-US2 requires that concurrent
+   jobs and API calls do not issue duplicate transactions). Dispatch now — T4.4
+   has landed, so the case TX.10 must invert is already in the suite.
 
 Merge-order cautions for Wave 5:
 
