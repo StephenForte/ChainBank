@@ -94,6 +94,12 @@ threshold value changes —
      `…skipped by funding policy…; exiting zero`
    - `Wallet reconciler run finished` with `exitCode: 0`
 
+   Completion lines include the sweep counters (`walletsAssessed`,
+   `walletsFunded`, `walletsNoop`, `walletsBlocked`, `walletsFailed`) and
+   `weiTransferred` as a **decimal string** (including `"0"` when nothing
+   moved). Do not expect a raw number — operators can match it to
+   `reconciliation_runs.wei_transferred` / the on-chain value.
+
    Malfunction: `Wallet reconciler run finished with run-level malfunction` /
    `Wallet reconciler run failed` with `exitCode: 1`.
 
@@ -142,7 +148,9 @@ ORDER BY last_seen_at DESC;
 ```
 
 `detail` for a successful reconciler path includes `event: 'run'`, `exitKind`,
-and `runId`. Monitor success includes `event: 'run'`, `outcome`, and `treasuryId`.
+`runId`, sweep counters (`walletsAssessed`, `walletsFunded`, `walletsFailed`),
+`weiTransferred` (decimal string, including `"0"`), and `outgoingScanStatus`.
+Monitor success includes `event: 'run'`, `outcome`, and `treasuryId`.
 
 ## Optional: confirm treasury observation via API (monitor)
 
