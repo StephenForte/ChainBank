@@ -43,12 +43,17 @@ import {
   emptySweepCounters,
   isEligibleForReconciliation,
   isMatchingSubmissionTransfer,
+  nonceSearchLookbackBlocks,
+  planOutgoingScanWindow,
   reconciliationIdempotencyKey,
   type SweepCounters,
   classifyOutgoingAgainstRecords,
 } from './reconciliation-decisions.js';
 
-/** Default lookback (~2.8 days at Sepolia ~12s blocks). Documented in C14. */
+/**
+ * Default per-run outgoing-scan cap (~2.8 days at Sepolia ~12s blocks).
+ * Meaning (TX.9): maximum blocks scanned per run, not "always scan this much".
+ */
 export const DEFAULT_RECONCILE_OUTGOING_LOOKBACK_BLOCKS = 20_000n;
 
 const WALLET_LIST_PAGE_SIZE = 100;
@@ -84,7 +89,10 @@ export interface ReconcileWalletsDependencies {
    * From RECONCILE_FAILURE_ALERT_THRESHOLD (default 3).
    */
   readonly reconcileFailureAlertThreshold: number;
-  /** Override for tests; production default is {@link DEFAULT_RECONCILE_OUTGOING_LOOKBACK_BLOCKS}. */
+  /**
+   * Per-run outgoing-scan cap (TX.9). Production default is
+   * {@link DEFAULT_RECONCILE_OUTGOING_LOOKBACK_BLOCKS}.
+   */
   readonly outgoingLookbackBlocks?: bigint;
 }
 
@@ -103,7 +111,7 @@ export interface ReconcileWalletsResult {
   readonly submissionUnknownResolved: number;
   readonly submissionUnknownLeftPending: number;
   readonly unexplainedTransferCount: number;
-  readonly outgoingScanStatus: 'complete' | 'incomplete';
+  readonly outgoingScanStatus: 'complete' | 'incomplete' | 'not-run';
   readonly findings: readonly ReconciliationFinding[];
 }
 
@@ -146,10 +154,18 @@ export async function reconcileWallets(
   let submissionUnknownResolved = 0;
   let submissionUnknownLeftPending = 0;
   let unexplainedTransferCount = 0;
-  let outgoingScanStatus: 'complete' | 'incomplete' = 'complete';
+  // TX.9: never claim a scan that did not run (early policy / signer exits).
+  let outgoingScanStatus: 'complete' | 'incomplete' | 'not-run' = 'not-run';
   let counters = emptySweepCounters();
   let runErrorCode: string | undefined;
   let runErrorSummary: string | undefined;
+  // Watermark advances are applied only after markFinished succeeds so a kill
+  // between scan classification and durable findings cannot orphan a critical
+  // finding above an advanced marker (TX.9 round 2).
+  const pendingWatermarkAdvances: Array<{
+    readonly treasuryId: string;
+    readonly scannedToBlock: bigint;
+  }> = [];
 
   try {
     assertFundingArmed(dependencies);
@@ -167,13 +183,14 @@ export async function reconcileWallets(
 
     const treasuries = await dependencies.treasuries.listEnabled();
     const reserveStoppedByTreasury = new Map<string, boolean>();
+    let anyScanIncomplete = false;
 
     for (const treasury of treasuries) {
       assertSignerMatchesTreasury(signer, treasury);
 
       const resolution = await resolveSubmissionUnknownForTreasury(dependencies, {
         treasury,
-        lookbackBlocks,
+        maxLookbackBlocks: lookbackBlocks,
         correlationId: input.correlationId,
       });
       submissionUnknownResolved += resolution.resolved;
@@ -182,13 +199,24 @@ export async function reconcileWallets(
 
       const orphanScan = await detectCrashOrphansForTreasury(dependencies, {
         treasury,
-        lookbackBlocks,
+        maxBlocksPerRun: lookbackBlocks,
       });
       if (orphanScan.scanStatus === 'incomplete') {
-        outgoingScanStatus = 'incomplete';
+        anyScanIncomplete = true;
       }
       unexplainedTransferCount += orphanScan.unexplained.length;
       findings.push(...orphanScan.findings);
+      if (orphanScan.pendingAdvance !== undefined) {
+        pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+      }
+    }
+
+    // Zero enabled treasuries: the scan loop body never ran — not-run, not a
+    // vacuous complete (TX.9 round 2 / same class as defect 2).
+    if (treasuries.length === 0) {
+      outgoingScanStatus = 'not-run';
+    } else {
+      outgoingScanStatus = anyScanIncomplete ? 'incomplete' : 'complete';
     }
 
     const wallets = await listAllEligibleWallets(dependencies.managedWallets);
@@ -270,17 +298,38 @@ export async function reconcileWallets(
   } catch (error) {
     runErrorCode = isChainBankError(error) ? error.code : 'INTERNAL_ERROR';
     runErrorSummary = isChainBankError(error) ? error.publicMessage : 'Reconciliation run failed.';
-    dependencies.logger.error(
-      {
-        event: 'reconciliation.run.failed',
-        correlationId: input.correlationId,
-        runId,
-        errorCode: runErrorCode,
-        err:
-          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
-      },
-      'Reconciliation run failed',
-    );
+    // TX.9: policy refusals are deliberate stops (C15 neutral / exit 0). Log below
+    // error under a distinct event so cron-failure alerting is not poisoned.
+    if (runErrorCode === 'FUNDING_DISABLED') {
+      dependencies.logger.warn(
+        {
+          event: 'reconciliation.run.policy_disabled',
+          correlationId: input.correlationId,
+          runId,
+          errorCode: runErrorCode,
+          outgoingScanStatus,
+          err:
+            error instanceof Error
+              ? { message: error.message, name: error.name }
+              : { message: String(error) },
+        },
+        'Reconciliation run stopped by funding policy',
+      );
+    } else {
+      dependencies.logger.error(
+        {
+          event: 'reconciliation.run.failed',
+          correlationId: input.correlationId,
+          runId,
+          errorCode: runErrorCode,
+          err:
+            error instanceof Error
+              ? { message: error.message, name: error.name }
+              : { message: String(error) },
+        },
+        'Reconciliation run failed',
+      );
+    }
   }
 
   const finished = await dependencies.reconciliationRuns.markFinished({
@@ -300,6 +349,26 @@ export async function reconcileWallets(
     errorCode: runErrorCode,
     errorSummary: runErrorSummary,
   });
+
+  // Findings are durable; now advance watermarks. A failure here leaves the
+  // next run re-scanning the same window (fail closed — duplicate findings
+  // beat a lost key-compromise signal).
+  for (const advance of pendingWatermarkAdvances) {
+    await dependencies.treasuries.recordOutgoingScanComplete({
+      treasuryId: advance.treasuryId,
+      scannedToBlock: advance.scannedToBlock,
+      scannedAt: dependencies.clock.now(),
+    });
+    dependencies.logger.info(
+      {
+        event: 'reconciliation.outgoing_scan.watermark_advanced',
+        correlationId: input.correlationId,
+        treasuryId: advance.treasuryId,
+        scannedToBlock: advance.scannedToBlock.toString(),
+      },
+      'Treasury outgoing-scan watermark advanced',
+    );
+  }
 
   await maybeNotifyReconciliationFailureAfterRun(dependencies, {
     run: finished,
@@ -638,7 +707,7 @@ async function resolveSubmissionUnknownForTreasury(
   dependencies: ReconcileWalletsDependencies,
   input: {
     readonly treasury: Treasury;
-    readonly lookbackBlocks: bigint;
+    readonly maxLookbackBlocks: bigint;
     readonly correlationId: string;
   },
 ): Promise<{
@@ -655,7 +724,7 @@ async function resolveSubmissionUnknownForTreasury(
     const settlement = await settleSubmissionUnknownRow(dependencies, {
       row,
       treasury: input.treasury,
-      lookbackBlocks: input.lookbackBlocks,
+      maxLookbackBlocks: input.maxLookbackBlocks,
       correlationId: input.correlationId,
     });
 
@@ -682,7 +751,7 @@ async function settleSubmissionUnknownRow(
   input: {
     readonly row: FundingTransaction;
     readonly treasury: Treasury;
-    readonly lookbackBlocks: bigint;
+    readonly maxLookbackBlocks: bigint;
     readonly correlationId: string;
   },
 ): Promise<{ readonly kind: 'resolved' } | { readonly kind: 'pending'; readonly reason: string }> {
@@ -708,10 +777,18 @@ async function settleSubmissionUnknownRow(
     return { kind: 'pending', reason: 'account nonce has not advanced past recorded nonce' };
   }
 
+  // TX.9: nonce hunt is age-bounded from the row's createdAt, not the
+  // incremental crash-orphan watermark (which may post-date the broadcast).
+  const lookbackBlocks = nonceSearchLookbackBlocks({
+    createdAt: row.createdAt,
+    now: dependencies.clock.now(),
+    maxBlocks: input.maxLookbackBlocks,
+  });
+
   const found = await dependencies.outgoingScanner.findOutgoingByNonce({
     fromAddress: treasury.addressDisplay,
     nonce: row.nonce,
-    lookbackBlocks: input.lookbackBlocks,
+    lookbackBlocks,
   });
 
   if (found.kind === 'incomplete') {
@@ -721,10 +798,10 @@ async function settleSubmissionUnknownRow(
     };
   }
   if (found.kind === 'not_found') {
-    // No positive evidence within lookback — never guess a terminal state.
+    // No positive evidence within the searched window — never guess a terminal state.
     return {
       kind: 'pending',
-      reason: 'nonce consumed but matching transfer not found within lookback',
+      reason: 'nonce consumed but matching transfer not found within searched window',
     };
   }
 
@@ -789,16 +866,46 @@ async function detectCrashOrphansForTreasury(
   dependencies: ReconcileWalletsDependencies,
   input: {
     readonly treasury: Treasury;
-    readonly lookbackBlocks: bigint;
+    readonly maxBlocksPerRun: bigint;
   },
 ): Promise<{
   readonly scanStatus: 'complete' | 'incomplete';
   readonly unexplained: readonly ReconciliationFinding[];
   readonly findings: readonly ReconciliationFinding[];
+  readonly pendingAdvance: { readonly treasuryId: string; readonly scannedToBlock: bigint } | undefined;
 }> {
-  const scan = await dependencies.outgoingScanner.listRecentOutgoingTransfers({
+  const tipResult = await dependencies.outgoingScanner.getLatestBlockNumber();
+  if (tipResult.kind === 'unavailable') {
+    const finding: ReconciliationFinding = {
+      kind: 'outgoing_scan_incomplete',
+      severity: 'critical',
+      treasuryId: input.treasury.id,
+      errorCode: tipResult.errorCode,
+      reason: tipResult.reason,
+    };
+    // Positive-evidence discipline: leave the watermark unchanged.
+    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
+  }
+
+  const plan = planOutgoingScanWindow({
+    tip: tipResult.blockNumber,
+    lastScannedBlock: input.treasury.lastOutgoingScanBlock,
+    maxBlocksPerRun: input.maxBlocksPerRun,
+  });
+
+  if (plan.kind === 'empty') {
+    return {
+      scanStatus: 'complete',
+      unexplained: [],
+      findings: [],
+      pendingAdvance: undefined,
+    };
+  }
+
+  const scan = await dependencies.outgoingScanner.listOutgoingTransfers({
     fromAddress: input.treasury.addressDisplay,
-    lookbackBlocks: input.lookbackBlocks,
+    fromBlock: plan.fromBlock,
+    toBlock: plan.toBlock,
   });
 
   if (scan.kind === 'incomplete') {
@@ -809,7 +916,26 @@ async function detectCrashOrphansForTreasury(
       errorCode: scan.errorCode,
       reason: scan.reason,
     };
-    return { scanStatus: 'incomplete', unexplained: [], findings: [finding] };
+    // Partial / failed scan must not advance the marker (C14 / TX.9).
+    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
+  }
+
+  const findings: ReconciliationFinding[] = [];
+  if (plan.isCoverageBehind) {
+    // Invariant: first-run plans never set isCoverageBehind.
+    const markerBefore = plan.lastScannedBlock ?? plan.fromBlock - 1n;
+    findings.push({
+      kind: 'outgoing_scan_coverage_behind',
+      severity: 'warning',
+      treasuryId: input.treasury.id,
+      lastScannedBlock: markerBefore.toString(),
+      scannedFromBlock: plan.fromBlock.toString(),
+      scannedToBlock: plan.toBlock.toString(),
+      tip: plan.tip.toString(),
+      blocksRemaining: plan.blocksRemaining.toString(),
+      reason:
+        'Outgoing scan backlog exceeds the per-run cap; advanced forward-contiguously and coverage remains behind the tip.',
+    });
   }
 
   const recorded = await dependencies.reconciliationFunding.listRecordedTransactionHashesByTreasury(
@@ -833,8 +959,22 @@ async function detectCrashOrphansForTreasury(
       });
     }
   }
+  findings.push(...unexplained);
 
-  return { scanStatus: 'complete', unexplained, findings: unexplained };
+  // Planned advance only — flushed after markFinished so findings are durable first.
+  const pendingAdvance = {
+    treasuryId: input.treasury.id,
+    scannedToBlock: plan.advanceMarkerTo,
+  };
+
+  // Backlog remaining ⇒ incomplete: the row must not read clean while coverage
+  // is behind. C15 does not page on incomplete alone.
+  return {
+    scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+    unexplained,
+    findings,
+    pendingAdvance,
+  };
 }
 
 function requireFundingPolicy(wallet: ManagedWallet): FundingPolicy {

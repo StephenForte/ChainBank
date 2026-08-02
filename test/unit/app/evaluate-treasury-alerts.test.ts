@@ -38,6 +38,8 @@ const treasury: Treasury = {
   lastObservedAt: new Date('2026-07-29T12:00:00.000Z'),
   lastCheckedAt: new Date('2026-07-29T12:00:00.000Z'),
   lastCheckErrorCode: undefined,
+  lastOutgoingScanBlock: undefined,
+  lastOutgoingScanAt: undefined,
   enabled: true,
 };
 

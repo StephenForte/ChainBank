@@ -29,6 +29,8 @@ const treasury: Treasury = {
   lastObservedAt: undefined,
   lastCheckedAt: undefined,
   lastCheckErrorCode: undefined,
+  lastOutgoingScanBlock: undefined,
+  lastOutgoingScanAt: undefined,
   enabled: true,
 };
 
@@ -42,6 +44,7 @@ function buildRepository(overrides: Partial<TreasuryRepository> = {}): TreasuryR
     ),
     recordCheckSuccess: vi.fn(),
     recordCheckFailure: vi.fn(),
+    recordOutgoingScanComplete: vi.fn(),
     ...overrides,
   };
 }

@@ -103,6 +103,8 @@ function buildTreasury(): Treasury {
     lastObservedAt: now,
     lastCheckedAt: now,
     lastCheckErrorCode: undefined,
+    lastOutgoingScanBlock: undefined,
+    lastOutgoingScanAt: undefined,
     enabled: true,
   };
 }
@@ -347,6 +349,7 @@ function buildDeps(options?: {
     setEnabled: vi.fn(),
     recordCheckSuccess: vi.fn(),
     recordCheckFailure: vi.fn(),
+    recordOutgoingScanComplete: vi.fn(),
   };
 
   let n = 0;

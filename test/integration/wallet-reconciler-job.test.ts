@@ -207,7 +207,7 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
       requestedBy: 'wallet-reconciler',
       startedAt: new Date('2026-07-01T00:00:00.000Z'),
       finishedAt: null,
-      // Default outgoing_scan_status is 'complete' — must not be read as clean.
+      // finished_at IS NULL is authoritative — never treat an aborted row as clean.
     });
 
     const abortedCount = await logAbortedReconciliationRuns(container, `corr-${randomUUID()}`);

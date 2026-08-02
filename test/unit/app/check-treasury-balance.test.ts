@@ -33,6 +33,8 @@ const treasury: Treasury = {
   lastObservedAt: undefined,
   lastCheckedAt: undefined,
   lastCheckErrorCode: undefined,
+  lastOutgoingScanBlock: undefined,
+  lastOutgoingScanAt: undefined,
   enabled: true,
 };
 
@@ -68,6 +70,7 @@ function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalan
       recordCheckFailure: vi.fn(() =>
         Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' }),
       ),
+      recordOutgoingScanComplete: vi.fn(),
     },
     balanceObservations: {
       record: vi.fn(() => Promise.resolve(undefined)),

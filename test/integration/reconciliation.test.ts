@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { registerConfiguredTreasury } from '../../src/app/bootstrap/register-configured-treasury.js';
 import { reconcileWallets } from '../../src/app/reconciliation/reconcile-wallets.js';
 import { ensureWalletFunded } from '../../src/app/funding/ensure-wallet-funded.js';
 import type { BalanceReader, TreasurySigner } from '../../src/app/ports.js';
@@ -8,6 +9,7 @@ import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-d
 import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from '../../src/infrastructure/db/repositories/balance-observation-repository.js';
+import { createChainRepository } from '../../src/infrastructure/db/repositories/chain-repository.js';
 import { createCredentialScopeRepository } from '../../src/infrastructure/db/repositories/credential-scope-repository.js';
 import { createFundingOperationRepository } from '../../src/infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingTransactionRepository } from '../../src/infrastructure/db/repositories/funding-transaction-repository.js';
@@ -22,6 +24,8 @@ import {
   fundingTransactions,
   managedWallets,
   projects,
+  reconciliationRuns,
+  treasuries,
 } from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
@@ -407,6 +411,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
   it('flags a seeded on-chain-only transfer as a crash-orphan critical finding', async () => {
     const orphanHash = `0x${'cd'.repeat(32)}`;
     const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 100n,
       transfers: [
         {
           transactionHash: orphanHash,
@@ -452,10 +457,119 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
     expect(txs.every((tx) => tx.transactionHash !== orphanHash)).toBe(true);
   });
 
+  it('persists an incremental outgoing-scan watermark and does not clobber it on boot upsert', async () => {
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: 20n * ONE_ETH,
+        [WALLET_A_ADDRESS]: ONE_ETH,
+      },
+    });
+    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 5_000n });
+
+    const first = await reconcileWallets(
+      buildReconcileDeps({
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        balanceReader,
+        outgoingScanner: scanner,
+        outgoingLookbackBlocks: 1_000n,
+      }),
+      {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-mark-1-${randomUUID()}`,
+      },
+    );
+    expect(first.outgoingScanStatus).toBe('complete');
+    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 4_000n, toBlock: 5_000n });
+
+    const treasuryRepo = createTreasuryRepository(handle.db);
+    const afterFirst = await treasuryRepo.findById(seed.treasuryId);
+    expect(afterFirst?.lastOutgoingScanBlock).toBe(5_000n);
+    expect(afterFirst?.lastOutgoingScanAt).toBeTruthy();
+
+    // Boot upsert must not reset the watermark (C14 / TX.9).
+    await registerConfiguredTreasury(
+      { chains: createChainRepository(handle.db), treasuries: treasuryRepo },
+      {
+        chain: {
+          slug: 'sepolia',
+          chainId: 11_155_111,
+          displayName: 'Sepolia',
+          nativeSymbol: 'ETH',
+          explorerBaseUrl: 'https://sepolia.etherscan.io',
+        },
+        treasuryAddress: TREASURY_ADDRESS.toLowerCase(),
+        treasuryAddressDisplay: TREASURY_ADDRESS,
+        thresholds: {
+          warningBalanceWei: ONE_ETH,
+          criticalBalanceWei: ONE_ETH / 4n,
+          recoveryBalanceWei: 2n * ONE_ETH,
+          minimumReserveWei: ONE_ETH / 10n,
+        },
+      },
+    );
+    const afterUpsert = await treasuryRepo.findById(seed.treasuryId);
+    expect(afterUpsert?.lastOutgoingScanBlock).toBe(5_000n);
+
+    scanner.setLatestBlockNumber(5_050n);
+    scanner.listCalls.length = 0;
+    await reconcileWallets(
+      buildReconcileDeps({
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        balanceReader,
+        outgoingScanner: scanner,
+        outgoingLookbackBlocks: 1_000n,
+      }),
+      {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-mark-2-${randomUUID()}`,
+      },
+    );
+    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 5_001n, toBlock: 5_050n });
+
+    const afterSecond = await treasuryRepo.findById(seed.treasuryId);
+    expect(afterSecond?.lastOutgoingScanBlock).toBe(5_050n);
+
+    const [row] = await handle.db.select().from(treasuries).where(eq(treasuries.id, seed.treasuryId));
+    expect(row?.lastOutgoingScanBlock).toBe('5050');
+  });
+
+  it('records not-run scan status for a policy-disabled early exit', async () => {
+    const result = await reconcileWallets(
+      {
+        ...buildReconcileDeps({
+          signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+          balanceReader: createFakeBalanceReader({
+            balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: ONE_ETH },
+          }),
+        }),
+        isFundingEnabled: false,
+      },
+      {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-not-run-${randomUUID()}`,
+      },
+    );
+
+    expect(result.outgoingScanStatus).toBe('not-run');
+    expect(result.run.errorCode).toBe('FUNDING_DISABLED');
+    const [row] = await handle.db
+      .select()
+      .from(reconciliationRuns)
+      .where(eq(reconciliationRuns.id, result.run.id));
+    expect(row?.outgoingScanStatus).toBe('not-run');
+  });
+
   function buildReconcileDeps(options: {
     readonly signer: TreasurySigner;
     readonly balanceReader: BalanceReader;
     readonly outgoingScanner?: ReturnType<typeof createFakeOutgoingScanner>;
+    readonly outgoingLookbackBlocks?: bigint;
   }) {
     const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
     const clock = createFixedClock();
@@ -489,6 +603,9 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       dashboardBaseUrl: 'http://localhost:3000',
       environment: 'test',
       reconcileFailureAlertThreshold: 3,
+      ...(options.outgoingLookbackBlocks === undefined
+        ? {}
+        : { outgoingLookbackBlocks: options.outgoingLookbackBlocks }),
     };
   }
 
