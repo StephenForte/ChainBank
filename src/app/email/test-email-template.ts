@@ -1,4 +1,5 @@
 import type { EmailMessage } from '../ports.js';
+import { escapeHtml } from './email-template-helpers.js';
 
 export interface TestEmailContext {
   readonly environment: string;
@@ -56,13 +57,4 @@ function row(label: string, value: string): string {
     `<tr><td style="padding:4px 16px 4px 0;color:#666;">${escapeHtml(label)}</td>` +
     `<td style="padding:4px 0;font-family:ui-monospace,monospace;">${escapeHtml(value)}</td></tr>`
   );
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
