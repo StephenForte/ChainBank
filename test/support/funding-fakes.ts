@@ -334,20 +334,47 @@ export function createFakeBalanceReader(options?: {
   };
 }
 
+/**
+ * Controllable treasury signer for unit/integration tests.
+ *
+ * When `rejectReusedNonce` is true, a nonce that has already been used throws a
+ * NONCE_CONFLICT-shaped error (duck-typed `{ code: 'NONCE_CONFLICT' }`) instead
+ * of silently succeeding — recovering the node-level reuse rejection a mocked
+ * chain otherwise loses (C16 / D6 final). Default remains false so every
+ * existing caller is unaffected.
+ */
 export function createFakeSigner(overrides: {
   readonly send?: TreasurySigner['sendNativeTransfer'];
   readonly chainMatches?: boolean;
   readonly nonce?: number;
   readonly estimatedCostWei?: bigint;
   readonly address?: string;
-}): TreasurySigner & { readonly sendCalls: number } {
-  const state = { sendCalls: 0 };
-  const signer: TreasurySigner & { readonly sendCalls: number } = {
+  /** When true, reject a nonce that has already been used (C16). Default false. */
+  readonly rejectReusedNonce?: boolean;
+}): TreasurySigner & {
+  readonly sendCalls: number;
+  readonly nonces: number[];
+  /** How many times send was refused for a reused nonce (C16). */
+  readonly nonceConflictCount: number;
+} {
+  const state = { sendCalls: 0, nonces: [] as number[], nonceConflictCount: 0 };
+  const usedNonces = new Set<number>();
+  const signer: TreasurySigner & {
+    readonly sendCalls: number;
+    readonly nonces: number[];
+    readonly nonceConflictCount: number;
+  } = {
     get address() {
       return overrides.address ?? '0x1111111111111111111111111111111111111111';
     },
     get sendCalls() {
       return state.sendCalls;
+    },
+    get nonces() {
+      return state.nonces;
+    },
+    get nonceConflictCount() {
+      return state.nonceConflictCount;
     },
     verifyChainId() {
       return Promise.resolve({
@@ -356,12 +383,25 @@ export function createFakeSigner(overrides: {
       });
     },
     getTransactionCount() {
+      // With reuse rejection enabled, mirror a node: next nonce is the count of
+      // successful sends (or the explicit override seed when provided).
+      if (overrides.rejectReusedNonce === true && overrides.nonce === undefined) {
+        return Promise.resolve(state.sendCalls);
+      }
       return Promise.resolve(overrides.nonce ?? 7);
     },
     estimateTransferCostWei() {
       return Promise.resolve(overrides.estimatedCostWei ?? 21_000n);
     },
     sendNativeTransfer(input) {
+      if (overrides.rejectReusedNonce === true && usedNonces.has(input.nonce)) {
+        state.nonceConflictCount += 1;
+        throw createNonceConflictError(input.nonce);
+      }
+      state.nonces.push(input.nonce);
+      if (overrides.rejectReusedNonce === true) {
+        usedNonces.add(input.nonce);
+      }
       state.sendCalls += 1;
       if (overrides.send !== undefined) {
         return overrides.send(input);
@@ -372,6 +412,16 @@ export function createFakeSigner(overrides: {
     },
   };
   return signer;
+}
+
+/** Duck-typed ChainBank NONCE_CONFLICT error for the nonce-rejecting signer fake (C16). */
+export function createNonceConflictError(nonce: number): Error & { readonly code: 'NONCE_CONFLICT' } {
+  const error = new Error(`Nonce ${String(nonce)} has already been used`) as Error & {
+    code: 'NONCE_CONFLICT';
+  };
+  error.name = 'ChainBankError';
+  error.code = 'NONCE_CONFLICT';
+  return error;
 }
 
 export function createFakeReceiptTracker(

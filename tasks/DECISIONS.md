@@ -860,6 +860,39 @@ Local design choices (T4.3, 2026-08-01):
   `config.alerts.reconcileFailureAlertThreshold` into `ReconcileWalletsDependencies`
   (alerts / emailSender / auditEvents already required for C10 reserve notify).
 
+### C16 — Cron-vs-API concurrency harness (owner: T4.4)
+
+```ts
+// test/support/funding-fakes.ts (additive)
+createFakeSigner({
+  address,
+  // NEW: reject a nonce that has already been used, the way a real node does.
+  rejectReusedNonce?: boolean,   // default false — existing callers unaffected
+})
+// Reusing a nonce throws a ChainBank NONCE_CONFLICT-shaped error rather than
+// silently succeeding, so a duplicate-nonce dispatch fails the test loudly.
+
+// test/support/concurrency-harness.ts (new)
+runRacing<T>(tasks: ReadonlyArray<() => Promise<T>>): Promise<PromiseSettledResult<T>[]>;
+// Starts every task, settles all, never rejects — so a race that fails one side
+// is asserted on, not thrown away.
+```
+
+Local design choices (T4.4, 2026-08-02):
+
+- **Tests only:** P4-US2 proof lives in `test/integration/cron-vs-api-concurrency.test.ts`.
+  No `src/` changes. Real Postgres advisory locks + mocked JSON-RPC (D6 final);
+  CI runs the suite via `npm run test:integration`.
+- **Racers:** `reconcileWallets` (C14, `cron-reconciler`) vs `ensureEnvironmentReady`
+  (C11, API role) on the same treasury. Covers the cron-vs-API axis that T1.9's
+  API-vs-API tests do not.
+- **Nonce-rejecting fake:** recovers the property a real node has (reject reused
+  nonce) so a serialization defect fails loudly instead of passing silently.
+- **Crash mid-dispatch:** the `pg_terminate_backend` pattern still exposes the
+  open crash-after-broadcast gap (in-lock rows roll back; no `submission_unknown`
+  gate). That case is `.skip`-ped with the defect named — not softened — pending
+  a planner-dispatched cross-cutting fix.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -915,3 +948,4 @@ Local design choices (T4.3, 2026-08-01):
 - 2026-08-02 — Planner review of TX.9 (PR #44) round 1: changes requested. Gate re-run clean and migration `0005` proved forward from `0004` on populated data, but marker advancement was inverted for gap > cap (a window was skipped, the marker advanced past it, and the run still recorded `outgoing_scan_status: 'complete'`), `findOutgoingByNonce` still cost one `getBlock` per block so defect 1 was half-fixed, and the watermark was written before findings were durable.
 - 2026-08-02 — TX.9 round 2 (PR #44 review): forward-contiguous gap>cap windows + `incomplete` while behind; bisect nonce hunt; defer watermark until after `markFinished`; stated reorg limitation.
 - 2026-08-02 — **TX.9 merged (PR #44)** after planner re-review. Verified by re-running the round-1 probes: the crash-orphan at block 5 000 that the tip-facing plan silently abandoned is now reported, successive windows tile contiguously with no gap, and the aged-row nonce hunt dropped from 20 001 RPC round trips to 17. `main` at 428 unit / 77 integration. C14 carries the final TX.9 amendment; "advance only on a genuinely complete scan" is now stated consistently.
+- 2026-08-02 — T4.4 published C16: cron-vs-API concurrency harness (`runRacing`, `createFakeSigner({ rejectReusedNonce })`) and integration coverage racing `reconcileWallets` against `ensureEnvironmentReady` (one transfer, nonce strict increase, reserve under race, watermark forward-contiguous / incomplete backlog, interrupted-sweep watermark durability). Crash-mid-dispatch `submission_unknown` assertion skipped — names the open crash-after-broadcast gap.
