@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { ensureEnvironmentReady } from '../../src/app/funding/ensure-environment-ready.js';
-import { reconcileWallets } from '../../src/app/reconciliation/reconcile-wallets.js';
+import {
+  ensureEnvironmentReady,
+  type EnsureEnvironmentReadyResult,
+} from '../../src/app/funding/ensure-environment-ready.js';
+import {
+  reconcileWallets,
+  type ReconcileWalletsResult,
+} from '../../src/app/reconciliation/reconcile-wallets.js';
 import type { BalanceReader, TreasurySigner } from '../../src/app/ports.js';
 import { isChainBankError } from '../../src/domain/errors.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
@@ -141,7 +147,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     const reconcileDeps = buildReconcileDeps({ signer, balanceReader });
     const readyDeps = buildEnsureReadyDeps({ signer, balanceReader });
 
-    const settled = await runRacing([
+    const settled = await runRacing<unknown>([
       () =>
         reconcileWallets(reconcileDeps, {
           role: 'cron-reconciler',
@@ -193,7 +199,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     const reconcileDeps = buildReconcileDeps({ signer, balanceReader });
     const readyDeps = buildEnsureReadyDeps({ signer, balanceReader });
 
-    const settled = await runRacing([
+    const settled = await runRacing<unknown>([
       () =>
         reconcileWallets(reconcileDeps, {
           role: 'cron-reconciler',
@@ -217,16 +223,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     expect(signer.nonceConflictCount).toBe(0);
     for (const result of settled) {
       if (result.status === 'rejected') {
-        const reason = result.reason;
-        const code = isChainBankError(reason)
-          ? reason.code
-          : typeof reason === 'object' &&
-              reason !== null &&
-              'code' in reason &&
-              typeof Reflect.get(reason, 'code') === 'string'
-            ? String(Reflect.get(reason, 'code'))
-            : undefined;
-        expect(code).not.toBe('NONCE_CONFLICT');
+        expect(readErrorCode(result.reason)).not.toBe('NONCE_CONFLICT');
       }
     }
 
@@ -313,7 +310,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       receiptTracker: pendingTracker,
     };
 
-    const settled = await runRacing([
+    const settled = await runRacing<unknown>([
       () =>
         reconcileWallets(reconcileDeps, {
           role: 'cron-reconciler',
@@ -347,18 +344,20 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     expect(reconcileResult?.status).toBe('fulfilled');
     expect(readyResult?.status).toBe('fulfilled');
 
+    let reconcileBlocked = 0;
     if (reconcileResult?.status === 'fulfilled') {
-      expect(reconcileResult.value.counters.blocked).toBeGreaterThanOrEqual(1);
+      const reconcile = reconcileResult.value as ReconcileWalletsResult;
+      reconcileBlocked = reconcile.counters.blocked;
+      expect(reconcileBlocked).toBeGreaterThanOrEqual(1);
     }
     if (readyResult?.status === 'fulfilled') {
-      const refused = readyResult.value.wallets.filter(
+      const ready = readyResult.value as EnsureEnvironmentReadyResult;
+      const refused = ready.wallets.filter(
         (wallet) =>
           (wallet.status === 'blocked' || wallet.status === 'warning') &&
           wallet.reasonCode === 'FUNDING_BLOCKED_RESERVE',
       );
       // At least one path must surface reserve refusal as blocked/warning — not silence.
-      const reconcileBlocked =
-        reconcileResult?.status === 'fulfilled' ? reconcileResult.value.counters.blocked : 0;
       expect(refused.length + reconcileBlocked).toBeGreaterThanOrEqual(1);
     }
   });
@@ -431,7 +430,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
 
     sendHold.resolve();
 
-    const settled = await runRacing([() => reconcilePromise, () => readyPromise]);
+    const settled = await runRacing<unknown>([() => reconcilePromise, () => readyPromise]);
     void settled;
 
     const txs = await handle.db.select().from(fundingTransactions);
@@ -483,7 +482,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     });
     const readyDeps = buildEnsureReadyDeps({ signer, balanceReader });
 
-    const settled = await runRacing([
+    const settled = await runRacing<unknown>([
       () =>
         reconcileWallets(reconcileDeps, {
           role: 'cron-reconciler',
@@ -514,7 +513,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
 
     const reconcileResult = settled[0];
     if (reconcileResult?.status === 'fulfilled') {
-      expect(reconcileResult.value.outgoingScanStatus).toBe('complete');
+      expect((reconcileResult.value as ReconcileWalletsResult).outgoingScanStatus).toBe('complete');
     }
 
     // Exactly one durable advance (one finished run that scanned).
@@ -656,7 +655,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       .toEqual([]);
 
     sendHold.resolve();
-    await runRacing([() => reconcilePromise, () => readyPromise]);
+    await runRacing<unknown>([() => reconcilePromise, () => readyPromise]);
 
     const treasuryRepo = createTreasuryRepository(handle.db);
     const after = await treasuryRepo.findById(seed.treasuryId);
@@ -671,6 +670,17 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       expect(after?.lastOutgoingScanBlock).toBe(tip);
     }
   });
+
+  function readErrorCode(reason: unknown): string | undefined {
+    if (isChainBankError(reason)) {
+      return reason.code;
+    }
+    if (typeof reason === 'object' && reason !== null && 'code' in reason) {
+      const code = (reason as { readonly code: unknown }).code;
+      return typeof code === 'string' ? code : undefined;
+    }
+    return undefined;
+  }
 
   function buildReconcileDeps(options: {
     readonly signer: TreasurySigner;

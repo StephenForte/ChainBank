@@ -3,8 +3,11 @@
  *
  * Starts every task, settles all, and never rejects — so a race that fails one
  * side is asserted on via PromiseSettledResult, not thrown away by Promise.all.
+ *
+ * Default `T` is `unknown` so heterogeneous racers (cron + API) type-check
+ * without forcing a shared result shape at the call site.
  */
-export async function runRacing<T>(
+export async function runRacing<T = unknown>(
   tasks: ReadonlyArray<() => Promise<T>>,
 ): Promise<PromiseSettledResult<T>[]> {
   return Promise.allSettled(tasks.map((task) => task()));
