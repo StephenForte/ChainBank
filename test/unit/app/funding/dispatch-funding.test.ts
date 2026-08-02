@@ -414,6 +414,31 @@ describe('dispatchFunding', () => {
     expect(txs[0]?.transactionHash).toBeUndefined();
     // Nonce is retained so reconciliation can identify the in-flight transfer.
     expect(txs[0]?.nonce).toBe(7);
+    // TX.10: intent is written before send; ambiguous failure leaves that row.
+    expect(txs[0]?.errorCode).toBe('BROADCAST_INTENT');
+  });
+
+  it('commits a durable broadcast intent before invoking the signer', async () => {
+    // TX.10: the gate row must exist before sendNativeTransfer so a crash
+    // mid-send cannot erase it with the advisory-lock transaction.
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({
+      send: () => {
+        const intents = [...stores.txsById.values()].filter(
+          (tx) => tx.status === 'submission_unknown' && tx.errorCode === 'BROADCAST_INTENT',
+        );
+        expect(intents).toHaveLength(1);
+        expect(intents[0]?.nonce).toBe(7);
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+    const { dependencies } = deps({ signer, stores });
+    const result = await dispatchFunding(dependencies, baseInput({ idempotencyKey: 'intent-before-send' }));
+    expect(result.kind).toBe('submitted');
+    if (result.kind === 'submitted') {
+      expect(result.transaction.status).toBe('submitted');
+      expect(result.transaction.nonce).toBe(7);
+    }
   });
 
   it('keeps the duplicate-funding gate closed after an ambiguous submission', async () => {
@@ -455,8 +480,8 @@ describe('dispatchFunding', () => {
 
   it('treats an in-lock balance-read RPC_UNAVAILABLE as terminal pre-broadcast failure', async () => {
     // BalanceReader uses RPC_UNAVAILABLE for read failures; the same code after
-    // sendNativeTransfer means submission_unknown. In-lock reads happen before
-    // insertCreated, so they must never create a transaction row.
+    // sendNativeTransfer leaves the durable intent as submission_unknown.
+    // In-lock reads happen before intent insert, so they must never create a row.
     const balanceReader = createFakeBalanceReader({
       balances: {
         [TREASURY_ADDRESS.toLowerCase()]: 10n * ONE_ETH,
