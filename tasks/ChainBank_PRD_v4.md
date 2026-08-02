@@ -1091,7 +1091,8 @@ Honest accounting of where the current state falls short of §20:
 
 Closed since the 2026-07-29 refresh:
 
-- **Runbooks (§19)** — all ten operational runbooks exist under `docs/runbooks/`.
+- **Runbooks (§19)** — all ten operational runbooks exist under `docs/runbooks/`, plus
+  `enable-wallet-reconciliation.md` added 2026-08-02 for the first live sweep.
 - **Concurrent crash-induced duplicate transfers** — T4.4 measured two transfers
   broadcast against one recorded row under the cron-vs-API race; TX.10 closed it
   with a durable pre-broadcast intent committed outside the advisory-lock
