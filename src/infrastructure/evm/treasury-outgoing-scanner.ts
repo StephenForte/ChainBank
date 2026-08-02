@@ -118,6 +118,51 @@ export function createTreasuryOutgoingScanner(
       }
     },
 
+    async getTransactionCountAtBlock(input: {
+      readonly address: string;
+      readonly blockNumber: bigint;
+    }): Promise<ConfirmedNonceResult> {
+      if (!isAddress(input.address, { strict: false })) {
+        throw new ChainBankError('INVALID_ADDRESS', `"${input.address}" is not a valid EVM address`, {
+          publicMessage: 'The supplied address is not a valid EVM address.',
+        });
+      }
+      if (input.blockNumber < 0n) {
+        throw new ChainBankError('INVALID_CONFIGURATION', 'Block number must be non-negative');
+      }
+
+      try {
+        const chainCheck = await verifyConfiguredChain(publicClient, options.chain.chainId);
+        if (!chainCheck.ok) {
+          return {
+            kind: 'unavailable',
+            errorCode: chainCheck.errorCode,
+            reason: chainCheck.reason,
+          };
+        }
+
+        const confirmedNonce = await publicClient.getTransactionCount({
+          address: getAddress(input.address),
+          blockNumber: input.blockNumber,
+        });
+        return { kind: 'ok', confirmedNonce };
+      } catch (error) {
+        options.logger.error(
+          {
+            detail: describeUnknownError(error),
+            address: input.address,
+            blockNumber: input.blockNumber.toString(),
+          },
+          'Failed to read transaction count at block',
+        );
+        return {
+          kind: 'unavailable',
+          errorCode: 'RPC_UNAVAILABLE',
+          reason: 'Transaction count at block could not be read from the RPC endpoint.',
+        };
+      }
+    },
+
     async findOutgoingByNonce(input: {
       readonly fromAddress: string;
       readonly nonce: number;
@@ -129,6 +174,14 @@ export function createTreasuryOutgoingScanner(
           'Outgoing lookback block count must be non-negative',
         );
       }
+      if (!Number.isInteger(input.nonce) || input.nonce < 0) {
+        throw new ChainBankError('INVALID_CONFIGURATION', 'Nonce must be a non-negative integer');
+      }
+      if (!isAddress(input.fromAddress, { strict: false })) {
+        throw new ChainBankError('INVALID_ADDRESS', `"${input.fromAddress}" is not a valid EVM address`, {
+          publicMessage: 'The supplied address is not a valid EVM address.',
+        });
+      }
 
       const tipResult = await this.getLatestBlockNumber();
       if (tipResult.kind === 'unavailable') {
@@ -139,23 +192,116 @@ export function createTreasuryOutgoingScanner(
         };
       }
 
-      const fromBlock =
-        tipResult.blockNumber > input.lookbackBlocks ? tipResult.blockNumber - input.lookbackBlocks : 0n;
-      const scan = await scanOutgoingWindow(publicClient, options, {
-        fromAddress: input.fromAddress,
-        fromBlock,
-        toBlock: tipResult.blockNumber,
-        nowMs,
-      });
-      if (scan.kind === 'incomplete') {
-        return scan;
+      const tip = tipResult.blockNumber;
+      const windowStart = tip > input.lookbackBlocks ? tip - input.lookbackBlocks : 0n;
+
+      // If the nonce was already consumed before the searched window, absence
+      // must leave the row pending — never invent a terminal state.
+      if (windowStart > 0n) {
+        const before = await this.getTransactionCountAtBlock({
+          address: input.fromAddress,
+          blockNumber: windowStart - 1n,
+        });
+        if (before.kind === 'unavailable') {
+          return {
+            kind: 'incomplete',
+            errorCode: before.errorCode,
+            reason: before.reason,
+          };
+        }
+        if (before.confirmedNonce >= input.nonce + 1) {
+          return { kind: 'not_found' };
+        }
       }
 
-      const match = scan.transfers.find((transfer) => transfer.nonce === input.nonce);
-      if (match === undefined) {
+      const tipCount = await this.getTransactionCountAtBlock({
+        address: input.fromAddress,
+        blockNumber: tip,
+      });
+      if (tipCount.kind === 'unavailable') {
+        return {
+          kind: 'incomplete',
+          errorCode: tipCount.errorCode,
+          reason: tipCount.reason,
+        };
+      }
+      if (tipCount.confirmedNonce < input.nonce + 1) {
         return { kind: 'not_found' };
       }
-      return { kind: 'found', transfer: match };
+
+      // Bisect for the first block B where count(B) >= nonce + 1 (~log₂ window).
+      let low = windowStart;
+      let high = tip;
+      while (low < high) {
+        const mid = low + (high - low) / 2n;
+        const atMid = await this.getTransactionCountAtBlock({
+          address: input.fromAddress,
+          blockNumber: mid,
+        });
+        if (atMid.kind === 'unavailable') {
+          return {
+            kind: 'incomplete',
+            errorCode: atMid.errorCode,
+            reason: atMid.reason,
+          };
+        }
+        if (atMid.confirmedNonce >= input.nonce + 1) {
+          high = mid;
+        } else {
+          low = mid + 1n;
+        }
+      }
+
+      const foundBlock = low;
+      try {
+        const block = await publicClient.getBlock({
+          blockNumber: foundBlock,
+          includeTransactions: true,
+        });
+        const fromNormalized = input.fromAddress.toLowerCase();
+        for (const tx of block.transactions) {
+          if (typeof tx === 'string') {
+            return {
+              kind: 'incomplete',
+              errorCode: 'RPC_UNAVAILABLE',
+              reason: 'RPC returned transaction hashes without bodies; nonce hunt incomplete.',
+            };
+          }
+          if (tx.from.toLowerCase() !== fromNormalized) {
+            continue;
+          }
+          if (tx.nonce !== input.nonce) {
+            continue;
+          }
+          return {
+            kind: 'found',
+            transfer: {
+              transactionHash: tx.hash,
+              fromAddress: getAddress(tx.from),
+              toAddress: tx.to === null || tx.to === undefined ? undefined : getAddress(tx.to),
+              valueWei: tx.value,
+              nonce: tx.nonce,
+              blockNumber: block.number,
+            },
+          };
+        }
+        return { kind: 'not_found' };
+      } catch (error) {
+        options.logger.error(
+          {
+            detail: describeUnknownError(error),
+            fromAddress: input.fromAddress,
+            nonce: input.nonce,
+            blockNumber: foundBlock.toString(),
+          },
+          'Failed to read block for nonce hunt',
+        );
+        return {
+          kind: 'incomplete',
+          errorCode: 'RPC_UNAVAILABLE',
+          reason: 'Block body for nonce hunt could not be read from the RPC endpoint.',
+        };
+      }
     },
 
     async listOutgoingTransfers(input: {

@@ -752,6 +752,14 @@ export type LatestBlockNumberResult =
 export interface TreasuryOutgoingScanner {
   getConfirmedTransactionCount(address: string): Promise<ConfirmedNonceResult>;
   getLatestBlockNumber(): Promise<LatestBlockNumberResult>;
+  /**
+   * Confirmed transaction count at a specific block (TX.9 bisect for nonce hunt).
+   * Same semantics as `eth_getTransactionCount(address, blockNumber)`.
+   */
+  getTransactionCountAtBlock(input: {
+    readonly address: string;
+    readonly blockNumber: bigint;
+  }): Promise<ConfirmedNonceResult>;
   findOutgoingByNonce(input: {
     readonly fromAddress: string;
     readonly nonce: number;
@@ -812,9 +820,13 @@ export type ReconciliationFinding =
       readonly kind: 'outgoing_scan_coverage_behind';
       readonly severity: 'warning';
       readonly treasuryId: string;
+      /** Watermark before this run. */
       readonly lastScannedBlock: string;
       readonly scannedFromBlock: string;
+      readonly scannedToBlock: string;
       readonly tip: string;
+      /** Blocks still outstanding after this run (`tip - scannedToBlock`). */
+      readonly blocksRemaining: string;
       readonly reason: string;
     }
   | {

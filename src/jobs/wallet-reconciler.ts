@@ -111,8 +111,10 @@ export function buildReconcileWalletsDependencies(
  * Surfaces rows left with `finished_at IS NULL` from a prior crash.
  *
  * Unfinished rows must never be read as a clean report (PR #40 / C14). TX.9
- * changed the insert default to `'not-run'`; older rows may still show
- * `'complete'` from the previous default — `finished_at IS NULL` is authoritative.
+ * changed the insert default to `'not-run'`. `finished_at IS NULL` is
+ * authoritative for aborted rows. Finished pre-`0005` rows may still read
+ * `'complete'` from the old default even when no scan ran (e.g. historical
+ * FUNDING_DISABLED exits) — migration `0005` deliberately does not backfill.
  */
 export async function logAbortedReconciliationRuns(
   container: Container,

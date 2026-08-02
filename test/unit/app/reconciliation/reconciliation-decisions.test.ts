@@ -224,6 +224,7 @@ describe('reconciliation decisions', () => {
         lastScannedBlock: undefined,
         isCoverageBehind: false,
         advanceMarkerTo: 50_000n,
+        blocksRemaining: 0n,
       });
     });
 
@@ -241,21 +242,25 @@ describe('reconciliation decisions', () => {
         lastScannedBlock: 1_000n,
         isCoverageBehind: false,
         advanceMarkerTo: 1_050n,
+        blocksRemaining: 0n,
       });
     });
 
-    it('scans the most recent cap-worth when the gap exceeds the cap', () => {
+    it('scans forward-contiguously when the gap exceeds the cap', () => {
       const plan = planOutgoingScanWindow({
         tip: 50_000n,
         lastScannedBlock: 1_000n,
         maxBlocksPerRun: 20_000n,
       });
-      expect(plan).toMatchObject({
+      expect(plan).toEqual({
         kind: 'scan',
-        fromBlock: 30_000n,
-        toBlock: 50_000n,
+        fromBlock: 1_001n,
+        toBlock: 21_000n,
+        tip: 50_000n,
+        lastScannedBlock: 1_000n,
         isCoverageBehind: true,
-        advanceMarkerTo: 50_000n,
+        advanceMarkerTo: 21_000n,
+        blocksRemaining: 29_000n,
       });
     });
 

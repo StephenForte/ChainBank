@@ -27,11 +27,26 @@ function collectLogs(): { stream: Writable; lines: () => Array<Record<string, un
   };
 }
 
+function chainConfig() {
+  return {
+    slug: 'ethereum-sepolia',
+    chainId: SEPOLIA_CHAIN_ID,
+    displayName: 'Ethereum Sepolia',
+    nativeSymbol: 'ETH',
+    rpcUrl: 'https://rpc.example.test/sepolia',
+    explorerBaseUrl: 'https://sepolia.etherscan.io',
+  };
+}
+
 function mockTransport(options: {
   readonly tip: bigint;
   readonly transfersByBlock?: ReadonlyMap<bigint, readonly unknown[]>;
   readonly failAtBlock?: bigint;
+  /** Monotonic account nonce as of each block (next nonce / tx count). */
+  readonly countAtBlock?: (blockNumber: bigint) => number;
+  readonly counters?: { getBlock: number; getTransactionCount: number };
 }): Transport {
+  const counters = options.counters ?? { getBlock: 0, getTransactionCount: 0 };
   return custom({
     request({ method, params }) {
       switch (method) {
@@ -39,7 +54,18 @@ function mockTransport(options: {
           return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
         case 'eth_blockNumber':
           return Promise.resolve(`0x${options.tip.toString(16)}`);
+        case 'eth_getTransactionCount': {
+          counters.getTransactionCount += 1;
+          const blockTag = (params as [string, string | undefined])[1];
+          let blockNumber = options.tip;
+          if (typeof blockTag === 'string' && blockTag.startsWith('0x')) {
+            blockNumber = BigInt(blockTag);
+          }
+          const count = options.countAtBlock?.(blockNumber) ?? 0;
+          return Promise.resolve(`0x${count.toString(16)}`);
+        }
         case 'eth_getBlockByNumber': {
+          counters.getBlock += 1;
           const raw = (params as [string, boolean])[0];
           const blockNumber = BigInt(raw);
           if (options.failAtBlock !== undefined && blockNumber === options.failAtBlock) {
@@ -99,14 +125,7 @@ describe('createTreasuryOutgoingScanner', () => {
     });
 
     const scanner = createTreasuryOutgoingScanner({
-      chain: {
-        slug: 'ethereum-sepolia',
-        chainId: SEPOLIA_CHAIN_ID,
-        displayName: 'Ethereum Sepolia',
-        nativeSymbol: 'ETH',
-        rpcUrl: 'https://rpc.example.test/sepolia',
-        explorerBaseUrl: 'https://sepolia.etherscan.io',
-      },
+      chain: chainConfig(),
       logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
       transport,
     });
@@ -128,14 +147,7 @@ describe('createTreasuryOutgoingScanner', () => {
 
   it('fails closed to incomplete on RPC error mid-window', async () => {
     const scanner = createTreasuryOutgoingScanner({
-      chain: {
-        slug: 'ethereum-sepolia',
-        chainId: SEPOLIA_CHAIN_ID,
-        displayName: 'Ethereum Sepolia',
-        nativeSymbol: 'ETH',
-        rpcUrl: 'https://rpc.example.test/sepolia',
-        explorerBaseUrl: 'https://sepolia.etherscan.io',
-      },
+      chain: chainConfig(),
       logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
       transport: mockTransport({ tip: 20n, failAtBlock: 12n }),
     });
@@ -152,14 +164,7 @@ describe('createTreasuryOutgoingScanner', () => {
     const sink = collectLogs();
     let now = 0;
     const scanner = createTreasuryOutgoingScanner({
-      chain: {
-        slug: 'ethereum-sepolia',
-        chainId: SEPOLIA_CHAIN_ID,
-        displayName: 'Ethereum Sepolia',
-        nativeSymbol: 'ETH',
-        rpcUrl: 'https://rpc.example.test/sepolia',
-        explorerBaseUrl: 'https://sepolia.etherscan.io',
-      },
+      chain: chainConfig(),
       logger: createLogger({
         level: 'info',
         serviceRole: 'test',
@@ -187,29 +192,49 @@ describe('createTreasuryOutgoingScanner', () => {
     expect(typeof progress[0]?.blocksRemaining).toBe('string');
   });
 
-  it('leaves findOutgoingByNonce as not_found when the nonce is outside the searched window', async () => {
+  it('leaves findOutgoingByNonce as not_found when the nonce predates the searched window', async () => {
+    // tip 100, lookback 20 ⇒ window [80, 100]. Nonce 7 already consumed by block 79.
     const scanner = createTreasuryOutgoingScanner({
-      chain: {
-        slug: 'ethereum-sepolia',
-        chainId: SEPOLIA_CHAIN_ID,
-        displayName: 'Ethereum Sepolia',
-        nativeSymbol: 'ETH',
-        rpcUrl: 'https://rpc.example.test/sepolia',
-        explorerBaseUrl: 'https://sepolia.etherscan.io',
-      },
+      chain: chainConfig(),
       logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
       transport: mockTransport({
         tip: 100n,
+        countAtBlock: () => 8,
+      }),
+    });
+
+    const result = await scanner.findOutgoingByNonce({
+      fromAddress: TREASURY,
+      nonce: 7,
+      lookbackBlocks: 20n,
+    });
+    expect(result).toEqual({ kind: 'not_found' });
+  });
+
+  it('bisects findOutgoingByNonce with a logarithmic number of RPC round trips', async () => {
+    const tip = 20_000n;
+    const foundBlock = 12_345n;
+    const nonce = 7;
+    const hash = `0x${'11'.repeat(32)}`;
+    const counters = { getBlock: 0, getTransactionCount: 0 };
+
+    const scanner = createTreasuryOutgoingScanner({
+      chain: chainConfig(),
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport: mockTransport({
+        tip,
+        counters,
+        countAtBlock: (blockNumber) => (blockNumber >= foundBlock ? nonce + 1 : nonce),
         transfersByBlock: new Map([
           [
-            10n,
+            foundBlock,
             [
               {
-                hash: `0x${'11'.repeat(32)}`,
+                hash,
                 from: TREASURY,
                 to: OTHER,
                 value: '0x1',
-                nonce: '0x7',
+                nonce: `0x${nonce.toString(16)}`,
                 type: '0x2',
               },
             ],
@@ -218,12 +243,48 @@ describe('createTreasuryOutgoingScanner', () => {
       }),
     });
 
-    // lookback 20 from tip 100 ⇒ window [80, 100]; nonce at block 10 is outside.
     const result = await scanner.findOutgoingByNonce({
       fromAddress: TREASURY,
-      nonce: 7,
-      lookbackBlocks: 20n,
+      nonce,
+      lookbackBlocks: 20_000n,
     });
-    expect(result).toEqual({ kind: 'not_found' });
+
+    expect(result).toMatchObject({
+      kind: 'found',
+      transfer: { transactionHash: hash, nonce, blockNumber: foundBlock },
+    });
+    // ~⌈log₂(20000)⌉ ≈ 15 bisect probes + before-window + tip probes, plus one getBlock.
+    // A sweep would be ~20001 getBlock calls — fail loudly if we regress.
+    expect(counters.getBlock).toBe(1);
+    expect(counters.getTransactionCount).toBeLessThanOrEqual(40);
+    expect(counters.getTransactionCount).toBeGreaterThan(0);
+  });
+
+  it('fails closed to incomplete when a bisect count probe errors', async () => {
+    const scanner = createTreasuryOutgoingScanner({
+      chain: chainConfig(),
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport: custom({
+        request({ method }) {
+          if (method === 'eth_chainId') {
+            return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
+          }
+          if (method === 'eth_blockNumber') {
+            return Promise.resolve('0x100');
+          }
+          if (method === 'eth_getTransactionCount') {
+            return Promise.reject(new Error('rpc down'));
+          }
+          return Promise.reject(new Error(`Unhandled ${method}`));
+        },
+      }),
+    });
+
+    const result = await scanner.findOutgoingByNonce({
+      fromAddress: TREASURY,
+      nonce: 1,
+      lookbackBlocks: 50n,
+    });
+    expect(result).toMatchObject({ kind: 'incomplete', errorCode: 'RPC_UNAVAILABLE' });
   });
 });

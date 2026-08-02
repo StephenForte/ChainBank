@@ -157,10 +157,15 @@ export type OutgoingScanWindowPlan =
       readonly toBlock: bigint;
       readonly tip: bigint;
       readonly lastScannedBlock: bigint | undefined;
-      /** True when the per-run cap forced a tip-facing window that skips ahead of the marker. */
+      /**
+       * True when this run cannot reach the tip under the per-run cap
+       * (`toBlock < tip`). Standing condition — not a one-shot skip flag.
+       */
       readonly isCoverageBehind: boolean;
       /** Inclusive end block to persist on success; never past what this plan scans. */
       readonly advanceMarkerTo: bigint;
+      /** Blocks still outstanding after this plan (`tip - toBlock`). */
+      readonly blocksRemaining: bigint;
     };
 
 /**
@@ -168,8 +173,8 @@ export type OutgoingScanWindowPlan =
  *
  * `maxBlocksPerRun` is a per-run cap (RECONCILE_OUTGOING_LOOKBACK_BLOCKS), not a
  * fixed "always scan this much" lookback. First run / no marker falls back to a
- * tip-relative capped window. When the gap from the marker exceeds the cap, the
- * plan scans the most recent cap-worth and flags coverage behind.
+ * tip-relative capped window. With a marker, windows are always
+ * forward-contiguous from `lastScannedBlock + 1` so no range is abandoned.
  */
 export function planOutgoingScanWindow(input: {
   readonly tip: bigint;
@@ -185,6 +190,8 @@ export function planOutgoingScanWindow(input: {
 
   const { tip, lastScannedBlock, maxBlocksPerRun } = input;
 
+  // Includes tip < marker (reorg / tip regression): idle until the chain catches
+  // up. Stated limitation in C14 TX.9 — no rescan of reorged-out marker blocks.
   if (lastScannedBlock !== undefined && lastScannedBlock >= tip) {
     return { kind: 'empty', tip, lastScannedBlock };
   }
@@ -199,35 +206,25 @@ export function planOutgoingScanWindow(input: {
       lastScannedBlock: undefined,
       isCoverageBehind: false,
       advanceMarkerTo: tip,
+      blocksRemaining: 0n,
     };
   }
 
-  const contiguousFrom = lastScannedBlock + 1n;
-  const gapBlocks = tip - lastScannedBlock;
-  if (gapBlocks <= maxBlocksPerRun) {
-    return {
-      kind: 'scan',
-      fromBlock: contiguousFrom,
-      toBlock: tip,
-      tip,
-      lastScannedBlock,
-      isCoverageBehind: false,
-      advanceMarkerTo: tip,
-    };
-  }
-
-  // Gap exceeds the per-run cap: scan the most recent cap-worth. Advancing the
-  // marker to `tip` (what we scanned) acknowledges the skipped region via a
-  // coverage-behind finding rather than claiming continuous history.
-  const fromBlock = tip - maxBlocksPerRun;
+  // Forward-contiguous: never skip past an unscanned block. Cap bounds how far
+  // this run advances; backlog drains over successive runs.
+  const fromBlock = lastScannedBlock + 1n;
+  const cappedTo = lastScannedBlock + maxBlocksPerRun;
+  const toBlock = cappedTo < tip ? cappedTo : tip;
+  const blocksRemaining = tip - toBlock;
   return {
     kind: 'scan',
     fromBlock,
-    toBlock: tip,
+    toBlock,
     tip,
     lastScannedBlock,
-    isCoverageBehind: true,
-    advanceMarkerTo: tip,
+    isCoverageBehind: blocksRemaining > 0n,
+    advanceMarkerTo: toBlock,
+    blocksRemaining,
   };
 }
 

@@ -677,6 +677,7 @@ function reconcileWallets(deps, input): Promise<ReconcileWalletsResult>;
 interface TreasuryOutgoingScanner {
   getConfirmedTransactionCount(address): Promise<ConfirmedNonceResult>;
   getLatestBlockNumber(): Promise<LatestBlockNumberResult>;
+  getTransactionCountAtBlock({ address, blockNumber }): Promise<ConfirmedNonceResult>;
   findOutgoingByNonce({ fromAddress, nonce, lookbackBlocks }): Promise<FindByNonceResult>;
   listOutgoingTransfers({ fromAddress, fromBlock, toBlock }): Promise<OutgoingScanResult>;
 }
@@ -752,23 +753,32 @@ TX.9 amendment (2026-08-02) — production-scale outgoing scan (no new contract 
   carries observed state (`last_observed_balance_wei`, `last_checked_at`).
   `registerConfiguredTreasury` / `treasuries.upsert` `onConflictDoUpdate` must
   **not** touch these columns (boot must not clobber the watermark).
-- **Advance only on a genuinely complete scan.** Partial / failed scans leave the
-  marker unchanged (same positive-evidence discipline as `submission_unknown`
-  settlement). `recordOutgoingScanComplete` is the sole writer.
+- **Advance only on a genuinely complete scan of the planned window.** Partial /
+  failed scans leave the marker unchanged (same positive-evidence discipline as
+  `submission_unknown` settlement). Planned advances are flushed only **after**
+  `markFinished` succeeds so a kill cannot advance the watermark while losing
+  findings. `recordOutgoingScanComplete` is the sole writer.
 - **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is a per-run cap**, not "always scan this
-  much". First run / no marker: tip-relative capped window. Gap ≤ cap: resume
-  from `last_outgoing_scan_block + 1`. Gap > cap: scan the most recent
-  cap-worth, advance the marker only to the scanned tip, and record finding
-  `outgoing_scan_coverage_behind`.
+  much". First run / no marker: tip-relative capped window. With a marker,
+  windows are **forward-contiguous**: `fromBlock = marker + 1`,
+  `toBlock = min(marker + cap, tip)`, `advanceMarkerTo = toBlock`. Gap > cap
+  leaves a backlog (`toBlock < tip`) that drains over successive runs — never
+  skip ahead. While a backlog remains, record
+  `outgoing_scan_status: 'incomplete'` and standing finding
+  `outgoing_scan_coverage_behind` (marker, scanned range, tip, blocks remaining).
+  Per C15, `incomplete` alone does not page.
 - **`findOutgoingByNonce` does not inherit the incremental window.** It bounds
   the hunt by the `submission_unknown` row's `createdAt` (age → blocks + margin,
-  capped at the per-run max). Not found within the searched window ⇒ leave
-  **pending** — never settle on absence.
+  capped at the per-run max), then **bisects** via
+  `getTransactionCountAtBlock` (~⌈log₂(window)⌉ probes + one `getBlock`) instead
+  of sweeping full bodies. Not found within the searched window ⇒ leave
+  **pending** — never settle on absence. RPC failure at any probe ⇒ `incomplete`
+  ⇒ pending.
 - **`outgoing_scan_status`:** `'complete' | 'incomplete' | 'not-run'`. Initialise
-  / default to `'not-run'`; every early-exit path (policy, missing signer, etc.)
-  persists `'not-run'`. A run row must never assert a check that did not happen.
-  Scan status still does **not** feed C15 `classifyReconciliationRun` — alerting
-  unchanged.
+  / default to `'not-run'`; every early-exit path (policy, missing signer, zero
+  enabled treasuries, etc.) persists `'not-run'`. A run row must never assert a
+  check that did not happen. Scan status still does **not** feed C15
+  `classifyReconciliationRun` — alerting unchanged.
 - **Policy logging:** `FUNDING_DISABLED` logs at `warn` under
   `reconciliation.run.policy_disabled`; reserve `reconciliation.run.failed`
   (`error`) for genuine malfunction. Exit-code classification from T4.2 /
@@ -776,6 +786,10 @@ TX.9 amendment (2026-08-02) — production-scale outgoing scan (no new contract 
 - **Progress logs:** long scans emit periodic
   `reconciliation.outgoing_scan.progress` (blocks scanned / remaining / elapsed),
   not per block.
+- **Limitation (reorgs):** if `tip < last_outgoing_scan_block` the plan returns
+  empty and the scan idles until the chain catches up; a transfer in a
+  reorged-out marker block is not rescanned. Acceptable for a Sepolia
+  funding-ops service; not silent.
 
 ### C15 — Reconciliation failure alert (owner: T4.3)
 
@@ -897,3 +911,4 @@ Local design choices (T4.3, 2026-08-01):
 - 2026-08-01 — T4.2 wired `cron-reconciler` job + Render blueprint: signing-capable role, lookback/email config, exit semantics (policy vs malfunction), `wallet-reconciler` heartbeat; C14 amended in place (no new contract number).
 - 2026-08-01 — T4.3 published C15: reconciliation-failure critical alert after `RECONCILE_FAILURE_ALERT_THRESHOLD` consecutive failed runs (`error_code` set, policy refusals neutral), persist-then-send dedupe, resolve on next successful run without recovery email; consecutive count derived via `listRecent`.
 - 2026-08-02 — TX.9 amended C14 in place: incremental per-treasury outgoing-scan watermark (migration `0005`), per-run cap semantics for `RECONCILE_OUTGOING_LOOKBACK_BLOCKS`, `outgoing_scan_status='not-run'`, policy-refusal log level, scan progress logs.
+- 2026-08-02 — TX.9 round 2 (PR #44 review): forward-contiguous gap>cap windows + `incomplete` while behind; bisect nonce hunt; defer watermark until after `markFinished`; stated reorg limitation.

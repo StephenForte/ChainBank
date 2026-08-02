@@ -582,6 +582,12 @@ export function createFakeOutgoingScanner(options?: {
     getLatestBlockNumber() {
       return Promise.resolve({ kind: 'ok' as const, blockNumber: latestBlockNumber });
     },
+    getTransactionCountAtBlock() {
+      if (nonceOverride !== undefined) {
+        return Promise.resolve(nonceOverride);
+      }
+      return Promise.resolve({ kind: 'ok' as const, confirmedNonce });
+    },
     findOutgoingByNonce(input) {
       findByNonceCalls.push({
         fromAddress: input.fromAddress,

@@ -159,6 +159,13 @@ export async function reconcileWallets(
   let counters = emptySweepCounters();
   let runErrorCode: string | undefined;
   let runErrorSummary: string | undefined;
+  // Watermark advances are applied only after markFinished succeeds so a kill
+  // between scan classification and durable findings cannot orphan a critical
+  // finding above an advanced marker (TX.9 round 2).
+  const pendingWatermarkAdvances: Array<{
+    readonly treasuryId: string;
+    readonly scannedToBlock: bigint;
+  }> = [];
 
   try {
     assertFundingArmed(dependencies);
@@ -193,17 +200,24 @@ export async function reconcileWallets(
       const orphanScan = await detectCrashOrphansForTreasury(dependencies, {
         treasury,
         maxBlocksPerRun: lookbackBlocks,
-        correlationId: input.correlationId,
       });
       if (orphanScan.scanStatus === 'incomplete') {
         anyScanIncomplete = true;
       }
       unexplainedTransferCount += orphanScan.unexplained.length;
       findings.push(...orphanScan.findings);
+      if (orphanScan.pendingAdvance !== undefined) {
+        pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+      }
     }
 
-    // Scan phase executed (possibly over zero treasuries — vacuous complete).
-    outgoingScanStatus = anyScanIncomplete ? 'incomplete' : 'complete';
+    // Zero enabled treasuries: the scan loop body never ran — not-run, not a
+    // vacuous complete (TX.9 round 2 / same class as defect 2).
+    if (treasuries.length === 0) {
+      outgoingScanStatus = 'not-run';
+    } else {
+      outgoingScanStatus = anyScanIncomplete ? 'incomplete' : 'complete';
+    }
 
     const wallets = await listAllEligibleWallets(dependencies.managedWallets);
 
@@ -335,6 +349,26 @@ export async function reconcileWallets(
     errorCode: runErrorCode,
     errorSummary: runErrorSummary,
   });
+
+  // Findings are durable; now advance watermarks. A failure here leaves the
+  // next run re-scanning the same window (fail closed — duplicate findings
+  // beat a lost key-compromise signal).
+  for (const advance of pendingWatermarkAdvances) {
+    await dependencies.treasuries.recordOutgoingScanComplete({
+      treasuryId: advance.treasuryId,
+      scannedToBlock: advance.scannedToBlock,
+      scannedAt: dependencies.clock.now(),
+    });
+    dependencies.logger.info(
+      {
+        event: 'reconciliation.outgoing_scan.watermark_advanced',
+        correlationId: input.correlationId,
+        treasuryId: advance.treasuryId,
+        scannedToBlock: advance.scannedToBlock.toString(),
+      },
+      'Treasury outgoing-scan watermark advanced',
+    );
+  }
 
   await maybeNotifyReconciliationFailureAfterRun(dependencies, {
     run: finished,
@@ -833,12 +867,12 @@ async function detectCrashOrphansForTreasury(
   input: {
     readonly treasury: Treasury;
     readonly maxBlocksPerRun: bigint;
-    readonly correlationId: string;
   },
 ): Promise<{
   readonly scanStatus: 'complete' | 'incomplete';
   readonly unexplained: readonly ReconciliationFinding[];
   readonly findings: readonly ReconciliationFinding[];
+  readonly pendingAdvance: { readonly treasuryId: string; readonly scannedToBlock: bigint } | undefined;
 }> {
   const tipResult = await dependencies.outgoingScanner.getLatestBlockNumber();
   if (tipResult.kind === 'unavailable') {
@@ -850,7 +884,7 @@ async function detectCrashOrphansForTreasury(
       reason: tipResult.reason,
     };
     // Positive-evidence discipline: leave the watermark unchanged.
-    return { scanStatus: 'incomplete', unexplained: [], findings: [finding] };
+    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
   }
 
   const plan = planOutgoingScanWindow({
@@ -860,7 +894,12 @@ async function detectCrashOrphansForTreasury(
   });
 
   if (plan.kind === 'empty') {
-    return { scanStatus: 'complete', unexplained: [], findings: [] };
+    return {
+      scanStatus: 'complete',
+      unexplained: [],
+      findings: [],
+      pendingAdvance: undefined,
+    };
   }
 
   const scan = await dependencies.outgoingScanner.listOutgoingTransfers({
@@ -878,20 +917,24 @@ async function detectCrashOrphansForTreasury(
       reason: scan.reason,
     };
     // Partial / failed scan must not advance the marker (C14 / TX.9).
-    return { scanStatus: 'incomplete', unexplained: [], findings: [finding] };
+    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
   }
 
   const findings: ReconciliationFinding[] = [];
-  if (plan.isCoverageBehind && plan.lastScannedBlock !== undefined) {
+  if (plan.isCoverageBehind) {
+    // Invariant: first-run plans never set isCoverageBehind.
+    const markerBefore = plan.lastScannedBlock ?? plan.fromBlock - 1n;
     findings.push({
       kind: 'outgoing_scan_coverage_behind',
       severity: 'warning',
       treasuryId: input.treasury.id,
-      lastScannedBlock: plan.lastScannedBlock.toString(),
+      lastScannedBlock: markerBefore.toString(),
       scannedFromBlock: plan.fromBlock.toString(),
+      scannedToBlock: plan.toBlock.toString(),
       tip: plan.tip.toString(),
+      blocksRemaining: plan.blocksRemaining.toString(),
       reason:
-        'Outgoing scan gap exceeded the per-run cap; scanned the most recent window and skipped ahead of the prior watermark.',
+        'Outgoing scan backlog exceeds the per-run cap; advanced forward-contiguously and coverage remains behind the tip.',
     });
   }
 
@@ -918,25 +961,20 @@ async function detectCrashOrphansForTreasury(
   }
   findings.push(...unexplained);
 
-  // Advance only after a genuinely complete scan of the planned window.
-  await dependencies.treasuries.recordOutgoingScanComplete({
+  // Planned advance only — flushed after markFinished so findings are durable first.
+  const pendingAdvance = {
     treasuryId: input.treasury.id,
     scannedToBlock: plan.advanceMarkerTo,
-    scannedAt: dependencies.clock.now(),
-  });
+  };
 
-  dependencies.logger.info(
-    {
-      event: 'reconciliation.outgoing_scan.watermark_advanced',
-      correlationId: input.correlationId,
-      treasuryId: input.treasury.id,
-      scannedToBlock: plan.advanceMarkerTo.toString(),
-      isCoverageBehind: plan.isCoverageBehind,
-    },
-    'Treasury outgoing-scan watermark advanced',
-  );
-
-  return { scanStatus: 'complete', unexplained, findings };
+  // Backlog remaining ⇒ incomplete: the row must not read clean while coverage
+  // is behind. C15 does not page on incomplete alone.
+  return {
+    scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+    unexplained,
+    findings,
+    pendingAdvance,
+  };
 }
 
 function requireFundingPolicy(wallet: ManagedWallet): FundingPolicy {

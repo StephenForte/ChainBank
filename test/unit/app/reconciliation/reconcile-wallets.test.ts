@@ -332,7 +332,9 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     );
   });
 
-  it('records coverage-behind when the gap exceeds the cap and still advances only to the scanned tip', async () => {
+  it('scans forward-contiguously when the gap exceeds the cap and reports incomplete while behind', async () => {
+    // Rewritten (TX.9 round 2): tip-facing skip-ahead was fail-closed inverted —
+    // marker advanced past an unscanned window. Forward-contiguous is required.
     const stores = createInMemoryFundingStores();
     const scanner = createFakeOutgoingScanner({ latestBlockNumber: 50_000n });
     const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
@@ -347,11 +349,100 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
       runId: 'run-behind',
     });
 
-    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 30_000n, toBlock: 50_000n });
-    expect(result.findings.some((f) => f.kind === 'outgoing_scan_coverage_behind')).toBe(true);
+    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 1_001n, toBlock: 21_000n });
+    expect(result.outgoingScanStatus).toBe('incomplete');
+    const behind = result.findings.find((f) => f.kind === 'outgoing_scan_coverage_behind');
+    expect(behind).toMatchObject({
+      kind: 'outgoing_scan_coverage_behind',
+      lastScannedBlock: '1000',
+      scannedFromBlock: '1001',
+      scannedToBlock: '21000',
+      tip: '50000',
+      blocksRemaining: '29000',
+    });
     expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ scannedToBlock: 21_000n }),
+    );
+  });
+
+  it('reports an unexplained transfer inside the capped forward window (never abandons it)', async () => {
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'aa'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 50_000n,
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH / 2n,
+          nonce: 9,
+          blockNumber: 5_000n,
+        },
+      ],
+    });
+    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
+      outgoingScanner: scanner,
+      outgoingLookbackBlocks: 20_000n,
+    });
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-orphan-window',
+      runId: 'run-orphan-window',
+    });
+
+    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 1_001n, toBlock: 21_000n });
+    expect(result.unexplainedTransferCount).toBe(1);
+    expect(
+      result.findings.some(
+        (f) => f.kind === 'unexplained_outgoing_transfer' && f.transactionHash === orphanHash,
+      ),
+    ).toBe(true);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ scannedToBlock: 21_000n }),
+    );
+    // Marker must not jump past the unscanned tip-side backlog.
+    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalledWith(
       expect.objectContaining({ scannedToBlock: 50_000n }),
     );
+  });
+
+  it('does not advance the watermark when markFinished fails', async () => {
+    const stores = createInMemoryFundingStores();
+    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 1_050n });
+    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
+      outgoingScanner: scanner,
+    });
+    deps.reconciliationRuns.markFinished = () => Promise.reject(new Error('forced markFinished failure'));
+
+    await expect(
+      reconcileWallets(deps, {
+        role: 'cron-reconciler',
+        credentialId: 'cron-cred',
+        correlationId: 'corr-mark-fail',
+        runId: 'run-mark-fail',
+      }),
+    ).rejects.toThrow('forced markFinished failure');
+
+    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
+  });
+
+  it('records not-run when there are zero enabled treasuries', async () => {
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(stores, [], buildTreasury());
+    deps.treasuries.listEnabled = () => Promise.resolve([]);
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-zero-treasury',
+      runId: 'run-zero-treasury',
+    });
+
+    expect(result.outgoingScanStatus).toBe('not-run');
+    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
   });
 
   it('does not advance the marker when the scan fails', async () => {
