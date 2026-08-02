@@ -345,8 +345,14 @@ function buildDatabaseConfig(
 /**
  * Signing-capable roles must keep two pooled connections available for funding
  * dispatch: the advisory-lock transaction holds one while TX.10 commits the
- * broadcast intent on a second. `poolMax: 1` does not fail — it hangs while
- * holding `pg_advisory_xact_lock`, silently stopping all funding for that treasury.
+ * broadcast intent on a second.
+ *
+ * With `poolMax: 1` the intent insert waits for a connection that cannot be
+ * freed until the lock transaction ends, so every dispatch stalls for
+ * `connectionTimeoutMillis` (10s) — holding `pg_advisory_xact_lock` the whole
+ * time — and then fails closed with `DATABASE_UNAVAILABLE` before any
+ * broadcast. Measured: one dispatch rejected at ~10.0s with zero sends.
+ * This guard turns that per-request runtime stall into a startup failure.
  */
 function assertSigningPoolCapacity(serviceRole: ServiceRole, poolMax: number): void {
   if (!isSigningCapableRole(serviceRole)) {
@@ -357,8 +363,9 @@ function assertSigningPoolCapacity(serviceRole: ServiceRole, poolMax: number): v
       'INVALID_CONFIGURATION',
       `DATABASE_POOL_MAX must be at least ${String(SIGNING_ROLE_MIN_POOL_MAX)} for the ` +
         `${serviceRole} service. TX.10 commits the funding broadcast intent on a second ` +
-        'pool connection while the advisory-lock transaction holds the first; a pool of 1 ' +
-        'deadlocks dispatch without surfacing an error.',
+        'pool connection while the advisory-lock transaction holds the first; with a pool ' +
+        'of 1 every funding dispatch stalls for the 10s connection timeout while holding ' +
+        'the treasury advisory lock, then fails with DATABASE_UNAVAILABLE before broadcast.',
       { publicMessage: 'The service is misconfigured.' },
     );
   }
