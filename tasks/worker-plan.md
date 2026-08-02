@@ -9,60 +9,68 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-02, T4.4 merged — Phase 4 held open for TX.10)
+## Status (updated 2026-08-02 — Phase 4 code-complete, awaiting live evidence)
 
-`main` is at **428 unit tests plus 77 integration tests** (both counts re-run by the
-planner against `origin/main` on 2026-08-02 — the previously published 365/64 was
-stale), with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
-validation) green on every PR.
+`main` is at **430 unit tests plus 86 integration tests, 0 skipped** (both counts
+re-run by the planner against `origin/main` on 2026-08-02), with CI (format, lint,
+typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
-**Phase 4 is HELD OPEN until TX.10 lands** (operator decision, 2026-08-02).
+**No open PRs. Every planned Phase 1–4 task is merged. No known open defects.**
 
-T4.4 measured a real crash-induced duplicate transfer under the cron-vs-API race
-(`sendCalls=2`, one `funding_transactions` row) — the long-known
-crash-after-broadcast gap, detected by TX.9's scan but never prevented. P4-US2 is
-satisfied for lock serialization, nonce discipline, reserve behaviour under race,
-and watermark integrity; it is **not** satisfied for crash-induced duplicates.
+**Phase 4 is NOT yet exited, and the reason is evidence, not code.** The §20 exit
+criteria are three; two are demonstrably met and one has nothing behind it:
 
-The planner offered to exit Phase 4 with that caveat recorded, since the
-duplicate is reliably surfaced as a critical finding rather than lost silently.
-**The operator chose to hold the phase open instead** — P4-US2 says concurrent
-jobs and API calls must not issue duplicate transactions, and detection is not
-prevention. Phase 4 exits when **TX.10** closes it, not before.
+| §20 Phase 4 exit criterion                                                    | State                                                                                                                                   |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Long-running ForteL2 wallets remain above policy minimum during a test period | ❌ **No evidence.** No managed wallet has `reconciliation_enabled = true`, so every hosted sweep to date has assessed **zero** wallets. |
+| API and cron concurrency tests pass                                           | ✅ T4.4 (C16) + TX.10 — 86 integration tests, **0 skipped**.                                                                            |
+| Failure and recovery alerting works                                           | ✅ T4.3 (C15), covered by unit and integration tests.                                                                                   |
 
-| Task                                                         | Status      | Landed in                  |
-| ------------------------------------------------------------ | ----------- | -------------------------- |
-| T1.1 schema + migration `0001`                               | ✅ done     | PR #2                      |
-| T1.2 funding math domain                                     | ✅ done     | PR #2                      |
-| T1.3 wallet registration + policy APIs                       | ✅ done     | PR #7                      |
-| T1.4 signer infrastructure                                   | ✅ done     | PR #2                      |
-| T1.5 funding dispatch engine                                 | ✅ done     | PR #8                      |
-| T1.6 `ensure-funded` endpoint                                | ✅ done     | PR #13                     |
-| T1.7 funding history API + dashboard                         | ✅ done     | PR #11                     |
-| T1.8 reserve-exhaustion email                                | ✅ done     | PR #21                     |
-| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done     | PR #7                      |
-| T2.3 operation status + confirmation resume                  | ✅ done     | PR #10                     |
-| T2.4 dashboard project/environment/wallet/policy views       | ✅ done     | PR #20                     |
-| T3.1 alert state machine                                     | ✅ done     | PR #5                      |
-| T3.2 email templates                                         | ✅ done     | PR #6                      |
-| T3.3 alert persistence + cron/manual orchestration           | ✅ done     | PR #12                     |
-| T3.4 operational runbooks (PRD §19)                          | ✅ done     | PR #14                     |
-| TX.1 CI pipeline                                             | ✅ done     | PR #4, fixed in #9         |
-| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13           |
-| TX.4 credential list / disable / revoke / enable             | ✅ done     | PR #16, #17                |
-| TX.6 alert lookup filtered by alert type                     | ✅ done     | PR #15                     |
-| T1.9 concurrency integration tests                           | ✅ done     | PR #35                     |
-| T2.2 `ensure-ready` endpoint (contract C11)                  | ✅ done     | PR #33                     |
-| TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done     | PR #32                     |
-| TX.7 list-environments route (C13)                           | ✅ done     | PR #34                     |
-| TX.8 confirm-outside-lock race fix (C7 amendment)            | ✅ done     | PR #37                     |
-| TX.3 docs refresh (README + PRD §25)                         | ✅ done     | PR #39                     |
-| T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done     | PR #40                     |
-| T4.2 reconciler cron entry + Render blueprint                | ✅ done     | PR #41                     |
-| T4.3 reconciliation failure alerting (C15)                   | ✅ done     | PR #42                     |
-| TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done     | PR #44 (two review rounds) |
-| T4.4 cron-vs-API concurrency (C16)                           | ✅ done     | PR #46 (one case `.skip`)  |
-| TX.10 prevent crash-induced duplicate transfers              | not started | — Phase 4 exits with this  |
+The crash-induced duplicate that held the phase open is **closed by TX.10** (#48):
+T4.4 measured `sendCalls=2` with one DB row; the durable pre-broadcast intent now
+yields `sendCalls=1`, and the case that was `.skip`-ped is un-skipped and inverted.
+
+What remains is operational: enrol at least one wallet with
+`reconciliation_enabled = true` and observe it across several 6-hourly runs. Until
+then "the code is complete and tested" is true and "reconciliation demonstrably
+keeps wallets funded" is not — they are different claims and only the first is
+earned. **Operator decision needed:** run that observation window before declaring
+Phase 4 exited, or declare it exited on code completeness and carry the live
+verification into Phase 5.
+
+| Task                                                         | Status  | Landed in                  |
+| ------------------------------------------------------------ | ------- | -------------------------- |
+| T1.1 schema + migration `0001`                               | ✅ done | PR #2                      |
+| T1.2 funding math domain                                     | ✅ done | PR #2                      |
+| T1.3 wallet registration + policy APIs                       | ✅ done | PR #7                      |
+| T1.4 signer infrastructure                                   | ✅ done | PR #2                      |
+| T1.5 funding dispatch engine                                 | ✅ done | PR #8                      |
+| T1.6 `ensure-funded` endpoint                                | ✅ done | PR #13                     |
+| T1.7 funding history API + dashboard                         | ✅ done | PR #11                     |
+| T1.8 reserve-exhaustion email                                | ✅ done | PR #21                     |
+| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done | PR #7                      |
+| T2.3 operation status + confirmation resume                  | ✅ done | PR #10                     |
+| T2.4 dashboard project/environment/wallet/policy views       | ✅ done | PR #20                     |
+| T3.1 alert state machine                                     | ✅ done | PR #5                      |
+| T3.2 email templates                                         | ✅ done | PR #6                      |
+| T3.3 alert persistence + cron/manual orchestration           | ✅ done | PR #12                     |
+| T3.4 operational runbooks (PRD §19)                          | ✅ done | PR #14                     |
+| TX.1 CI pipeline                                             | ✅ done | PR #4, fixed in #9         |
+| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done | Phase 0 + PR #13           |
+| TX.4 credential list / disable / revoke / enable             | ✅ done | PR #16, #17                |
+| TX.6 alert lookup filtered by alert type                     | ✅ done | PR #15                     |
+| T1.9 concurrency integration tests                           | ✅ done | PR #35                     |
+| T2.2 `ensure-ready` endpoint (contract C11)                  | ✅ done | PR #33                     |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done | PR #32                     |
+| TX.7 list-environments route (C13)                           | ✅ done | PR #34                     |
+| TX.8 confirm-outside-lock race fix (C7 amendment)            | ✅ done | PR #37                     |
+| TX.3 docs refresh (README + PRD §25)                         | ✅ done | PR #39                     |
+| T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done | PR #40                     |
+| T4.2 reconciler cron entry + Render blueprint                | ✅ done | PR #41                     |
+| T4.3 reconciliation failure alerting (C15)                   | ✅ done | PR #42                     |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done | PR #44 (two review rounds) |
+| T4.4 cron-vs-API concurrency (C16)                           | ✅ done | PR #46 (one case `.skip`)  |
+| TX.10 crash-duplicate prevention (C7 amendment)              | ✅ done | PR #48 (two review rounds) |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -99,16 +107,27 @@ funding armed and serving. The emergency stop is
    re-reads wallet and treasury balances inside the lock and recomputes the
    top-up/reserve decision from the fresh values (C7 amendment). The accepted risk
    recorded at arming time is closed once this deploys.
-2. **Crash-after-broadcast gap — detection closed (T4.1/C14 + TX.9); prevention
-   open as TX.10.** A backend killed mid-send rolls back the in-lock rows: the
-   operation stays `pending`, the wallet is NOT wedged, and a transfer that
-   reached the network leaves no DB trace and no recorded nonce. Row-based
-   reconciliation cannot find it, so T4.1 compares on-chain treasury transactions
-   against expected state and TX.9 made that scan able to finish — an orphan is
-   now reliably surfaced as a critical `unexplained_outgoing_transfer`.
-   **T4.4 then measured the other half:** because nothing durable gates the next
-   racer, a waiting API request sends a _second_ transfer (`sendCalls=2`, one DB
-   row). Detection without prevention. See **TX.10**.
+2. ✅ **Crash-after-broadcast gap — CLOSED. Detection by T4.1/C14 + TX.9;
+   prevention by TX.10 (PR #48, merged 2026-08-02).** A backend killed mid-send
+   used to roll back the in-lock rows: the operation stayed `pending`, the wallet
+   was NOT wedged, and a transfer that reached the network left no DB trace and no
+   recorded nonce. Row-based reconciliation could not find it, so T4.1 compares
+   on-chain treasury transactions against expected state and TX.9 made that scan
+   able to finish — an orphan is reliably surfaced as a critical
+   `unexplained_outgoing_transfer`. **T4.4 then measured the other half:** because
+   nothing durable gated the next racer, a waiting API request sent a _second_
+   transfer (`sendCalls=2`, one DB row). TX.10 closed it with a durable
+   pre-broadcast intent committed outside the advisory-lock transaction — the same
+   scenario now yields `sendCalls=1`, and a different idempotency key is refused
+   with `PENDING_FUNDING_EXISTS` instead of submitting.
+
+   **Residual, stated rather than implied:** a crash between the intent commit and
+   the broadcast wedges that wallet (`submission_unknown` / `BROADCAST_INTENT`, no
+   hash) until reconciliation proves the nonce was never consumed. Fail closed by
+   design (AGENTS.md §7.5). On an otherwise idle treasury the nonce may not advance
+   on its own, so the wedge can persist — `docs/runbooks/recover-stuck-pending-nonce.md`
+   carries the identification query and the rule that the gate must never be cleared
+   by hand without positive on-chain evidence.
 
 ### Next wave
 
@@ -559,8 +578,8 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   `20000`. See the live-operation status note near the top for what to expect on
   the first runs afterwards.
 
-- **TX.10** 🔴 Prevent crash-induced duplicate transfers `[T1.5, TX.8, T4.4]`
-  — will amend contract **C7** (no new number; pre-assign at dispatch)
+- **TX.10** ✅ 🔴 Prevent crash-induced duplicate transfers `[T1.5, TX.8, T4.4]`
+  — DONE (PR #48, two review rounds); amended contract **C7** (no new number)
   **Quantified by T4.4 (PR #46) on 2026-08-02, in the exact race P4-US2 names.**
   This is the long-known crash-after-broadcast gap — T1.9 found it, T4.1/C14 and
   TX.9 addressed **detection** — but prevention was never closed, and T4.4 is the
@@ -623,6 +642,37 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
   **Do not weaken T4.4's other tests to make this pass** — update them to assert
   the new behaviour and call that out explicitly in the handoff.
+
+  **Delivered and merged (planner review, 2026-08-02 — two rounds).** Round 1
+  built the fix: `insertBroadcastIntent` commits a `submission_unknown` row with
+  the reserved nonce on the **outer** pool connection (not the advisory-lock unit
+  of work) before the signer is called, so terminating the lock-holder cannot
+  erase the gate. Verified against the branch, not the description — `uow.transactions`
+  is built on the transaction client while `dependencies.transactions` is built on
+  the pool. All three required tests landed and the skip count went to **zero**;
+  the crash case now asserts `sendCalls === 1`, and
+  `funding-crash-recovery.test.ts` flipped from asserting fail-open (`funded`, one
+  send) to `PENDING_FUNDING_EXISTS` with zero sends — a strengthening, correctly
+  disclosed.
+
+  Round 2 added a startup guard: signing-capable roles refuse to boot when
+  `DATABASE_POOL_MAX < 2`, because dispatch now needs a second pooled connection
+  while the lock holds the first. `cron-reconciler` default raised 2 → 3 for
+  headroom. `BROADCAST_INTENT` documented in
+  `docs/runbooks/recover-stuck-pending-nonce.md` with the field-value table, the
+  identification query, and the idle-treasury wedge.
+
+  **Planner error worth remembering.** The round-1 review claimed a pool of 1
+  produces an unbounded silent deadlock. The worker pushed back, citing the
+  pre-existing `connectionTimeoutMillis: 10_000`. Re-measured with a longer probe
+  window: the dispatch rejects with `DATABASE_UNAVAILABLE` at ~10.0s having made
+  **zero** send calls — bounded and fail-closed. The original probe's own 8s
+  timeout had fired first. The wrong mechanism had already been written into two
+  source comments and C7 (where it contradicted itself); the planner corrected all
+  three in `28a72b1`. The guard stands; only its justification changed, from
+  "prevents a silent deadlock" to "converts a per-request 10s stall into a startup
+  failure." **A worker that verifies a reviewer's claim instead of implementing
+  against it is behaving correctly.**
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
@@ -752,11 +802,15 @@ response or a routine rotation dependent on hand-written SQL.
 4. ✅ **Wave 5c (complete 2026-08-02):** TX.9 (#44, two review rounds).
 5. ✅ **Wave 5d (complete 2026-08-02):** T4.4 (#46, C16) — merged with its crash
    case `.skip`-ped; that case and two others move into TX.10.
-6. **Wave 6 (now):** TX.10 🔴 prevent crash-induced duplicate transfers — opened by
-   T4.4's measurement, amends **C7**. **Phase 4 exits here** (operator decision,
-   2026-08-02: detection is not prevention, and P4-US2 requires that concurrent
-   jobs and API calls do not issue duplicate transactions). Dispatch now — T4.4
-   has landed, so the case TX.10 must invert is already in the suite.
+6. ✅ **Wave 6 (complete 2026-08-02):** TX.10 (#48, C7 amendment) — durable
+   pre-broadcast intent. The duplicate T4.4 measured is closed and its test is
+   un-skipped and inverted.
+
+**All planned engineering work for Phases 1–4 is merged.** What is left before
+Phase 4 can honestly be called exited is a **live observation window**, not a task:
+enrol a wallet with `reconciliation_enabled = true` and watch it across several
+6-hourly runs. See the status section above for the operator decision that needs
+making.
 
 Merge-order cautions for Wave 5:
 
