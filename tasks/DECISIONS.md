@@ -509,6 +509,15 @@ TX.10 amendment (2026-08-02) — durable pre-broadcast intent (no new contract n
   `submission_unknown` row with the reserved nonce and `errorCode:
 'BROADCAST_INTENT'` via the **outer** repository connection (autocommit), not
   the advisory-lock unit of work. Intent-commit failure refuses to sign.
+- **Pool capacity is a hard precondition, not an intent-commit failure.** The
+  intent insert needs a **second** pooled connection while
+  `pg_advisory_xact_lock` holds the first. If none is available the acquire
+  waits indefinitely (holding the treasury lock) rather than rejecting — so
+  signing-capable roles refuse to start when `DATABASE_POOL_MAX < 2`. Default
+  `cron-reconciler` pool is **3** (one headroom beyond the minimum). Existing
+  `connectionTimeoutMillis` on the pool eventually surfaces exhaustion as
+  `DATABASE_UNAVAILABLE` (fail closed, pre-broadcast) when a mis-sized pool is
+  somehow reached at runtime.
 - **Post-broadcast writes stay on the outer repository** (`markSubmitted` /
   `markFailed`) so a killed lock txn cannot erase a successful broadcast's hash
   or a terminal pre-broadcast rejection of an already-committed intent.

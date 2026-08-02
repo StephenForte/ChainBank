@@ -127,12 +127,22 @@ export interface ChainBankConfig {
   readonly funding: FundingConfig;
 }
 
-/** Default pool ceilings. A short-lived cron needs far fewer connections than the API. */
+/**
+ * Default pool ceilings. A short-lived cron needs far fewer connections than the API.
+ *
+ * Signing-capable roles require at least 2 (see {@link assertSigningPoolCapacity}):
+ * TX.10 commits the broadcast intent on a second connection while the advisory-lock
+ * transaction holds the first. `cron-reconciler` defaults to 3 so one in-lock DB call
+ * beyond today's path still has headroom.
+ */
 const DEFAULT_POOL_MAX: Readonly<Record<ServiceRole, number>> = {
   web: 10,
   'treasury-monitor': 2,
-  'cron-reconciler': 2,
+  'cron-reconciler': 3,
 };
+
+/** Minimum pool size for roles that may enter funding dispatch (TX.10). */
+const SIGNING_ROLE_MIN_POOL_MAX = 2;
 
 export interface LoadConfigOptions {
   readonly serviceRole: ServiceRole;
@@ -321,12 +331,37 @@ function buildDatabaseConfig(
     );
   }
 
+  const poolMax = env.DATABASE_POOL_MAX ?? DEFAULT_POOL_MAX[serviceRole];
+  assertSigningPoolCapacity(serviceRole, poolMax);
+
   return {
     url: env.DATABASE_URL,
-    poolMax: env.DATABASE_POOL_MAX ?? DEFAULT_POOL_MAX[serviceRole],
+    poolMax,
     useSsl,
     sslCertificateAuthority,
   };
+}
+
+/**
+ * Signing-capable roles must keep two pooled connections available for funding
+ * dispatch: the advisory-lock transaction holds one while TX.10 commits the
+ * broadcast intent on a second. `poolMax: 1` does not fail — it hangs while
+ * holding `pg_advisory_xact_lock`, silently stopping all funding for that treasury.
+ */
+function assertSigningPoolCapacity(serviceRole: ServiceRole, poolMax: number): void {
+  if (!isSigningCapableRole(serviceRole)) {
+    return;
+  }
+  if (poolMax < SIGNING_ROLE_MIN_POOL_MAX) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      `DATABASE_POOL_MAX must be at least ${String(SIGNING_ROLE_MIN_POOL_MAX)} for the ` +
+        `${serviceRole} service. TX.10 commits the funding broadcast intent on a second ` +
+        'pool connection while the advisory-lock transaction holds the first; a pool of 1 ' +
+        'deadlocks dispatch without surfacing an error.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
 }
 
 function buildChainConfig(env: RawEnvironment): ChainConfig {

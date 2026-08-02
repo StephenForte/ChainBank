@@ -200,7 +200,9 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
       correlationId: 'corr-crash-replay',
       sourceIp: undefined,
     });
-    expect(replay.status === 'no-op' || replay.status === 'pending' || replay.status === 'funded').toBe(true);
+    // Same-key replay maps the durable in-flight intent to `pending` (not
+    // `funded` — nothing confirmed — and not `no-op`, which requires no tx row).
+    expect(replay.status).toBe('pending');
     expect(replaySigner.sendCalls).toBe(0);
 
     const recoverySigner = createControllableSigner({});

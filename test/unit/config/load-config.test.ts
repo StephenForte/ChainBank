@@ -228,4 +228,27 @@ describe('loadConfig', () => {
     expect(config.database.useSsl).toBe(true);
     expect(config.database.sslCertificateAuthority).toContain('BEGIN CERTIFICATE');
   });
+
+  it('rejects DATABASE_POOL_MAX < 2 for signing-capable roles (TX.10 dual-connection dispatch)', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({ DATABASE_POOL_MAX: '1' }),
+      }),
+    ).toThrow(/DATABASE_POOL_MAX must be at least 2/);
+
+    expect(() =>
+      loadConfig({
+        serviceRole: 'cron-reconciler',
+        env: validWebEnv({ DATABASE_POOL_MAX: '1' }),
+      }),
+    ).toThrow(/broadcast intent/);
+
+    // Non-signing roles may keep a pool of 1 — they never enter funding dispatch.
+    const monitor = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({ DATABASE_POOL_MAX: '1' }),
+    });
+    expect(monitor.database.poolMax).toBe(1);
+  });
 });

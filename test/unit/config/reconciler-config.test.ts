@@ -27,7 +27,7 @@ describe('cron-reconciler config wiring', () => {
     expect(config.email?.provider).toBe('log-only');
     expect(config.email?.operatorRecipients).toEqual(['operator@example.com']);
     expect(config.apiSecurity).toBeUndefined();
-    expect(config.database.poolMax).toBe(2);
+    expect(config.database.poolMax).toBe(3);
   });
 
   it('defaults RECONCILE_OUTGOING_LOOKBACK_BLOCKS to 20000', () => {
