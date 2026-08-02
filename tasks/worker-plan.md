@@ -91,6 +91,7 @@ this is a waiting game, and the run IDs above are the start of the record.
 | TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done | PR #44 (two review rounds) |
 | T4.4 cron-vs-API concurrency (C16)                           | ✅ done | PR #46 (one case `.skip`)  |
 | TX.10 crash-duplicate prevention (C7 amendment)              | ✅ done | PR #48 (two review rounds) |
+| TX.11 dashboard reconcile toggle + `weiTransferred` log      | ✅ done | PR #53                     |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -693,6 +694,47 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   "prevents a silent deadlock" to "converts a per-request 10s stall into a startup
   failure." **A worker that verifies a reviewer's claim instead of implementing
   against it is behaving correctly.**
+
+- **TX.11** 🟢 Dashboard reconciliation toggle + `weiTransferred` in the run log
+  `[T2.4, T4.2, TX.10]` — **no contract number** (publishes no interface)
+  Both gaps were hit operating the first live reconciliation rollout on 2026-08-02,
+  and neither is a defect.
+  1. **The dashboard shows `reconcile on/off` but cannot change it.** Enrolling a
+     wallet is a `curl PATCH` today, so it needs a terminal, an exported token and a
+     wallet UUID for what is conceptually a switch. `PATCH /v1/wallets/:id` already
+     accepts `reconciliationEnabled`; `dashboard/src/api.ts` already has the
+     identical `setWalletEnabled`, and the row already renders the flag. No `src/`
+     API change.
+  2. **The completion log omits the amount transferred.** It reports
+     `walletsFunded: 1` but not how much moved, so confirming the value means a
+     block explorer. `counters.weiTransferred` is a **bigint** — it must be
+     `.toString()`, since pino throws on raw bigints and would turn a successful
+     run into a crash on its final log line.
+
+  Test posture is the thing to get right: **no dashboard test harness exists**
+  (`test/unit/` has no dashboard directory, no component tests anywhere), and this
+  task must not build one — verify by hand and disclose exactly what was checked.
+  The log change _is_ unit-testable via `test/unit/jobs/wallet-reconciler-exit.test.ts`
+  and must assert `weiTransferred` serialises as a string, including `"0"`.
+
+  **Delivered and merged (planner review, 2026-08-02).** Gate re-run locally: 431
+  unit, 86 integration, 0 skipped; scope held (no `src/api`, no migration, no
+  contract number). The bigint hazard was handled better than specified — the log
+  fields were extracted into `buildReconcilerCompletionLogFields` with an explicit
+  `readonly weiTransferred: string` return type, so stringification is
+  **type-enforced** and a regression fails `typecheck` rather than production. The
+  test asserts `JSON.stringify({ weiTransferred: 0n })` **throws**, documenting why
+  the conversion exists rather than only that it happened. `weiTransferred` was also
+  added to the heartbeat `detail` (same JSONB bigint hazard), with the reasoning
+  stated rather than done silently. The enable confirm names the consequence — the
+  reconciler may fund the wallet automatically within 6 hours — which is what makes a
+  one-click control safe for someone not thinking about cron schedules.
+
+  **Known and accepted:** no dashboard component-test harness exists, so the toggle
+  is hand-verified only; the cancel-confirm path and `policyWallets` dual-table drift
+  under concurrent edits are not automatically exercised. Disclosed in the handoff
+  rather than implied. The `6 hours` string in the confirm dialog is hardcoded and
+  would go stale if the cron schedule changed.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
