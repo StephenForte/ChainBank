@@ -14,6 +14,7 @@ import {
   setProjectEnabled,
   setWalletEnabled,
   setWalletPolicy,
+  setWalletReconciliationEnabled,
   type EnvironmentResource,
   type FundingTransactionResource,
   type ManagedWalletResource,
@@ -532,6 +533,34 @@ export function App() {
       setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setMessage(`Wallet ${updated.role} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
+    } catch (caught) {
+      setWalletsError(formatError(caught));
+    } finally {
+      setWalletBusyId(undefined);
+    }
+  }
+
+  async function onToggleWalletReconciliation(wallet: ManagedWalletResource): Promise<void> {
+    const nextEnabled = !wallet.reconciliationEnabled;
+    const short = shortAddress(wallet.address);
+    const confirmed = nextEnabled
+      ? window.confirm(
+          `Enable reconciliation for ${wallet.role} (${short})? The reconciler may fund this wallet automatically within 6 hours when its balance is below minimum.`,
+        )
+      : window.confirm(`Disable reconciliation for ${wallet.role} (${short})?`);
+    if (!confirmed) {
+      return;
+    }
+    setWalletBusyId(wallet.id);
+    setWalletsError(undefined);
+    setMessage(undefined);
+    try {
+      const updated = await setWalletReconciliationEnabled(token, wallet.id, nextEnabled);
+      setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
+      setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
+      setMessage(
+        `Reconciliation for wallet ${updated.role} is now ${updated.reconciliationEnabled ? 'on' : 'off'}.`,
+      );
     } catch (caught) {
       setWalletsError(formatError(caught));
     } finally {
@@ -1085,6 +1114,13 @@ export function App() {
                               onClick={() => void onToggleWallet(wallet)}
                             >
                               {wallet.enabled ? 'Disable' : 'Enable'}
+                            </button>{' '}
+                            <button
+                              type="button"
+                              disabled={walletBusyId === wallet.id}
+                              onClick={() => void onToggleWalletReconciliation(wallet)}
+                            >
+                              {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
                             </button>
                           </td>
                         </tr>

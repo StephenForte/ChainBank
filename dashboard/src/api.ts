@@ -441,6 +441,18 @@ export async function setWalletEnabled(
   return (body as { data: ManagedWalletResource }).data;
 }
 
+export async function setWalletReconciliationEnabled(
+  token: string,
+  walletId: string,
+  reconciliationEnabled: boolean,
+): Promise<ManagedWalletResource> {
+  const body = await authorizedJson(token, `/v1/wallets/${walletId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ reconciliationEnabled }),
+  });
+  return (body as { data: ManagedWalletResource }).data;
+}
+
 export async function setWalletPolicy(
   token: string,
   walletId: string,

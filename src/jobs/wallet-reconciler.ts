@@ -225,6 +225,8 @@ export async function runWalletReconciler(
         walletsAssessed: reconcileResult.counters.assessed,
         walletsFunded: reconcileResult.counters.funded,
         walletsFailed: reconcileResult.counters.failed,
+        // Stringify: heartbeat detail is JSONB; raw bigint cannot be serialized.
+        weiTransferred: reconcileResult.counters.weiTransferred.toString(),
         outgoingScanStatus: reconcileResult.outgoingScanStatus,
       },
     },
@@ -235,13 +237,30 @@ export async function runWalletReconciler(
   return { exitKind, exitCode, reconcileResult };
 }
 
-function logRunOutcome(
-  logger: Logger,
+/**
+ * Completion-log fields for a finished reconciler run.
+ *
+ * `weiTransferred` is always a decimal string (including `"0"`) so Pino /
+ * `JSON.stringify` never see a raw bigint.
+ */
+export function buildReconcilerCompletionLogFields(
   correlationId: string,
   exitKind: ReconcilerExitKind,
   result: ReconcileWalletsResult,
-): void {
-  const base = {
+): {
+  readonly correlationId: string;
+  readonly runId: string;
+  readonly exitKind: ReconcilerExitKind;
+  readonly errorCode: string | undefined;
+  readonly walletsAssessed: number;
+  readonly walletsFunded: number;
+  readonly walletsNoop: number;
+  readonly walletsBlocked: number;
+  readonly walletsFailed: number;
+  readonly weiTransferred: string;
+  readonly outgoingScanStatus: ReconcileWalletsResult['outgoingScanStatus'];
+} {
+  return {
     correlationId,
     runId: result.run.runId,
     exitKind,
@@ -251,8 +270,18 @@ function logRunOutcome(
     walletsNoop: result.counters.noop,
     walletsBlocked: result.counters.blocked,
     walletsFailed: result.counters.failed,
+    weiTransferred: result.counters.weiTransferred.toString(),
     outgoingScanStatus: result.outgoingScanStatus,
   };
+}
+
+export function logRunOutcome(
+  logger: Logger,
+  correlationId: string,
+  exitKind: ReconcilerExitKind,
+  result: ReconcileWalletsResult,
+): void {
+  const base = buildReconcilerCompletionLogFields(correlationId, exitKind, result);
 
   if (exitKind === 'policy-disabled') {
     logger.info(
