@@ -38,6 +38,29 @@ threshold value changes —
 
 ## Steps — wallet reconciler
 
+> **Gotchas confirmed operating this cron live (2026-08-02). Read before
+> concluding a green run means anything.**
+>
+> - **Adding a cron service to the Blueprint does not materialize its
+>   `sync: false` variables.** When `chainbank-wallet-reconciler` was added,
+>   Render synced the service but left all eight `sync: false` vars unset; they
+>   had to be entered by hand (copy the values from `chainbank-web`, except
+>   `TREASURY_PRIVATE_KEY`, which belongs on web + reconciler and **never** on
+>   `chainbank-treasury-monitor`). A service that boots and exits non-zero
+>   immediately after a Blueprint sync is almost always this.
+> - **`reconciliation_enabled` defaults to `false` on every managed wallet**, so
+>   a sweep assesses **zero** wallets until one is deliberately registered with
+>   it true. A successful run over an empty set is not evidence that
+>   reconciliation works — check `wallets_assessed` on the run row, not just the
+>   exit code.
+> - **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is manually lowered in hosted config
+>   pending TX.9.** At the default (20000) the outgoing scan issues one
+>   `getBlock` per block and cannot finish; runs exceeded 5–10 minutes and were
+>   cancelled. Do not restore the default until TX.9 has landed and a run has
+>   written a scan watermark. A short lookback means a missed run leaves an
+>   unscanned gap, and `submission_unknown` rows older than the window correctly
+>   stay pending rather than settling.
+
 1. Confirm schedule and recent runs: Render → **`chainbank-wallet-reconciler`** →
    **Logs** / run history.
 
@@ -56,8 +79,12 @@ threshold value changes —
 
    - `Wallet reconciler run started`
    - `Prior reconciliation runs aborted before finish` (only if any
-     `finished_at IS NULL` rows exist — treat those as aborted, not clean;
-     `outgoing_scan_status` defaults to `complete`)
+     `finished_at IS NULL` rows exist — treat those as aborted, not clean.
+     `outgoing_scan_status` currently defaults to `complete`, so an aborted row
+     reads clean and `finished_at IS NULL` is the authoritative signal. TX.9
+     changes that default to `not-run`; once it lands, rows written _before_ it
+     may still show a stale `complete` and stay misleading, so keep using
+     `finished_at`.)
    - `Wallet reconciler run completed` **or**
      `…skipped by funding policy…; exiting zero`
    - `Wallet reconciler run finished` with `exitCode: 0`
@@ -133,15 +160,18 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq '.data[].la
 
 ## Rollback / if this goes wrong
 
-| Symptom                                          | Likely cause                                                                                   |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Cron never starts                                | Suspended cron, Blueprint mis-sync, or build failure (`npm ci --include=dev && npm run build`) |
-| TLS / DB errors on boot                          | Stale `DATABASE_SSL_CA` — [`deploy-render-phase0.md`](./deploy-render-phase0.md)               |
-| Monitor: balance unread / non-zero exit          | `RPC_UNAVAILABLE` / bad `CHAIN_RPC_URL`                                                        |
-| Reconciler: `SIGNER_UNAVAILABLE` / non-zero exit | `FUNDING_ENABLED=true` without valid `TREASURY_PRIVATE_KEY` on **reconciler** (not monitor)    |
-| Reconciler: exit 0 with `FUNDING_DISABLED`       | Expected when funding off or kill switch on — not a platform failure                           |
-| Heartbeat missing after “success”                | Looking at wrong DB, or web pointing at a different database than cron                         |
-| Email missing but monitor observation ok         | Resend / `EMAIL_*` vars on the **monitor** service; alert transition was `none`                |
+| Symptom                                              | Likely cause                                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Cron never starts                                    | Suspended cron, Blueprint mis-sync, or build failure (`npm ci --include=dev && npm run build`)   |
+| Newly added cron exits non-zero straight away        | `sync: false` vars not materialized by the Blueprint sync — enter all eight by hand              |
+| Reconciler: run succeeds but `wallets_assessed` is 0 | No wallet has `reconciliation_enabled = true` — not a platform failure, and not a success either |
+| Reconciler: run never finishes / cancelled           | Outgoing scan at too high a `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` (TX.9) — lower it               |
+| TLS / DB errors on boot                              | Stale `DATABASE_SSL_CA` — [`deploy-render-phase0.md`](./deploy-render-phase0.md)                 |
+| Monitor: balance unread / non-zero exit              | `RPC_UNAVAILABLE` / bad `CHAIN_RPC_URL`                                                          |
+| Reconciler: `SIGNER_UNAVAILABLE` / non-zero exit     | `FUNDING_ENABLED=true` without valid `TREASURY_PRIVATE_KEY` on **reconciler** (not monitor)      |
+| Reconciler: exit 0 with `FUNDING_DISABLED`           | Expected when funding off or kill switch on — not a platform failure                             |
+| Heartbeat missing after “success”                    | Looking at wrong DB, or web pointing at a different database than cron                           |
+| Email missing but monitor observation ok             | Resend / `EMAIL_*` vars on the **monitor** service; alert transition was `none`                  |
 
 There is nothing to “roll back” for a verification check. Fix env / RPC / TLS
 and Trigger Run again.
