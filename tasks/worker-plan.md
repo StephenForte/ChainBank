@@ -41,7 +41,10 @@ No open PRs, no stale branches.
 | TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done   | PR #32             |
 | TX.7 list-environments route (C13)                           | ✅ done   | PR #34             |
 | TX.8 confirm-outside-lock race fix (C7 amendment)            | ✅ done   | PR #37             |
-| Remaining: T4.1–T4.4, TX.3 refresh                           | in flight | —                  |
+| TX.3 docs refresh (README + PRD §25)                         | ✅ done   | PR #39             |
+| T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done   | PR #40             |
+| T4.2 reconciler cron entry + Render blueprint                | ✅ done   | PR #41             |
+| Remaining: T4.3 (in review), TX.9, T4.4                      | in flight | —                  |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -87,14 +90,19 @@ funding armed and serving. The emergency stop is
 
 ### Next wave
 
-**Wave 5a (in progress):** ✅ **TX.8** merged first (PR #37). Still in flight:
-**T4.1** 🔴 reconciliation use case (scope widened — see entry; must rebase over
-TX.8's C7 amendment and re-run its gate), **TX.3** 🟢 docs refresh (README +
-PRD §25 appendix to merged state).
-**Wave 5b (after T4.1):** T4.2 🟢 reconciler cron entry, T4.3 🟢 reconciliation
-failure alerting.
-**Wave 5c (after T4.2 + TX.8):** T4.4 🔴 cron-vs-API concurrency e2e — reconfirm
-D6 (Anvil, provisional) before starting.
+✅ **Wave 5a complete:** TX.8 (#37), T4.1 (#40, C14), TX.3 (#39).
+✅ **Wave 5b:** T4.2 (#41) merged — the reconciler cron is deployed on Render and
+has completed live runs. T4.3 🟢 failure alerting is in review.
+**Wave 5c (now):** **TX.9** 🔴 make the outgoing scan usable in production —
+four defects found operating the cron live (see the entry under Cross-cutting);
+defect 1 blocks the feature at its own default setting. Then **T4.4** 🔴
+cron-vs-API concurrency e2e — reconfirm D6 (Anvil, provisional) before starting.
+
+**Live-operation status (2026-08-02):** the reconciler runs on Render every 6
+hours with the signing key, and reaches the funding gate correctly. It has **not
+yet completed a run with `FUNDING_ENABLED=true`** — runs at the default lookback
+exceed practical runtime and were cancelled (TX.9 defect 1). Lower
+`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` before trusting the schedule.
 
 ## Commit and merge contract
 
@@ -358,6 +366,55 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   post-broadcast meaning (C4). The previously-impossible test now passes:
   parallel distinct keys with an instant-confirm tracker → exactly one transfer.
 
+- **TX.9** 🔴 Make the treasury outgoing scan usable in production `[T4.1, T4.2]`
+  — amends contract **C14** (no new number)
+  Found operating the reconciler live on 2026-08-01/02, after T4.2 wired the
+  cron. Four defects, all in the crash-orphan / `submission_unknown` scan path.
+  **The first is the blocker: the feature as shipped cannot complete a run at
+  its own default setting.**
+  1. **The scan is O(lookback) RPC round trips.** `scanOutgoingWindow`
+     (`src/infrastructure/evm/treasury-outgoing-scanner.ts`) walks the window one
+     block at a time via `getBlock({ includeTransactions: true })`, 8 concurrent.
+     At the default `RECONCILE_OUTGOING_LOOKBACK_BLOCKS=20000` that is 2,500
+     sequential batches pulling full transaction bodies; observed live, runs
+     exceeded 5–10 minutes and had to be cancelled. Public RPC rate limiting plus
+     the built-in retries make it worse. Fix: scan **incrementally from the last
+     successfully-scanned block** (persist it on `reconciliation_runs`; needs a
+     migration) so coverage is continuous and cost is proportional to elapsed
+     time, not to a guessed constant. A fixed lookback is only a fallback for the
+     first run or after a gap.
+  2. **`outgoingScanStatus` reports `'complete'` when no scan ran.** It
+     initialises to `'complete'` (`reconcile-wallets.ts` ~line 141) and is
+     persisted unchanged when the run exits early — a policy-disabled run
+     recorded a complete scan it never performed. Any early-exit path must
+     record `'not-run'` (new value, or reuse `'incomplete'`) so a run row never
+     asserts a check that did not happen. This is the "silence looks like
+     success" failure the scan exists to prevent.
+  3. **A deliberate policy stop logs as an error.** `reconcile-wallets.ts` ~line
+     265 catches `FUNDING_DISABLED` and emits `level: error`,
+     `event: reconciliation.run.failed`, `msg: "Reconciliation run failed"` —
+     while the job correctly classifies it `policy-disabled` and exits 0. Flipping
+     the kill switch therefore produces an ERROR line claiming failure every six
+     hours, and AGENTS.md §11 mandates alerting on repeated cron failures. Log
+     policy refusals at `info`/`warn` with a distinct event name; reserve
+     `reconciliation.run.failed` for genuine malfunction. Keep the exit-code
+     classification T4.2 built — it is already correct.
+  4. **A long scan emits no progress output.** Operating it live, there was no
+     way to distinguish "scanning" from "hung" — the run logs nothing between
+     start and finish. Log periodic progress (blocks scanned / window remaining)
+     so an operator can tell the difference.
+     Deliver 1 and 2 together (both touch scan bookkeeping); 3 and 4 are small and
+     independent. Cover with tests: incremental resume from a stored block, first-run
+     fallback, gap after a missed run, early-exit scan status, policy-refusal log
+     level, and that a scan failure still fails closed to `incomplete` (never a clean
+     empty report). **Do not weaken the fail-closed rules T4.1 established** — an
+     unexplained on-chain transfer stays a critical finding.
+     **Operator note:** until this lands, set `RECONCILE_OUTGOING_LOOKBACK_BLOCKS`
+     low enough to finish (~2500 covers one 6-hour interval on Sepolia with margin;
+     lower still for smoke tests). A short lookback means a missed or failed run
+     leaves an unscanned gap, and `submission_unknown` rows older than the window
+     correctly stay pending rather than settling.
+
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
   - integration tests against a Postgres service container. Actions pinned by SHA.
@@ -481,21 +538,21 @@ response or a routine rotation dependent on hand-written SQL.
 
 1. ✅ **Wave 4 (complete 2026-08-01):** TX.7 (#34) → TX.5 (#32) → T2.2 (#33) →
    T1.9 (#35). Funding armed in production at wave close.
-2. **Wave 5a (in progress):** ✅ TX.8 (#37, merged first as planned) → T4.1 🔴
-   reconciliation use case → TX.3 🟢 docs refresh last, so it records what landed.
-3. **Wave 5b (after T4.1):** T4.2 🟢 cron entry + Render blueprint, T4.3 🟢
-   failure alerting.
-4. **Wave 5c (after T4.2):** T4.4 🔴 cron-vs-API e2e (TX.8 prerequisite already
-   merged).
+2. ✅ **Wave 5a (complete 2026-08-01):** TX.8 (#37) → T4.1 (#40) → TX.3 (#39).
+3. **Wave 5b:** ✅ T4.2 (#41) merged; T4.3 🟢 failure alerting in review.
+4. **Wave 5c (now):** TX.9 🔴 outgoing-scan fixes → T4.4 🔴 cron-vs-API e2e.
 
 Merge-order cautions for Wave 5:
 
-- **T4.1 must rebase over TX.8's C7 amendment** (`dispatchFunding` now requires
-  `balanceReader` and `treasury.address`) and re-run its full gate before merge;
-  expect the interface-extension typecheck breakage pattern from Wave 4 (three
-  occurrences).
-- T4.2 and T4.3 are parallel after T4.1 publishes C14; they share the reconciler
-  use case but own disjoint files (cron entry + blueprint vs. alert wiring).
+- **TX.9 before T4.4.** TX.9 changes how the scan bounds its window (incremental
+  from a stored block, likely a migration) and how early-exit runs record scan
+  status; T4.4's e2e should assert the fixed behavior rather than encode the
+  current one — the same reason T4.4 waited on TX.8.
+- **TX.9 and T4.3 both edit `reconcile-wallets.ts`.** T4.3 (in review) adds an
+  additive alert hook; TX.9 changes scan bookkeeping and the run-failure logging
+  T4.3's alerting classifies. Land T4.3 first, then TX.9 rebases over it — TX.9's
+  defect 3 (policy stop logged as error) must not contradict whatever run
+  classification T4.3 publishes in C15.
 - T4.4 waits for TX.8 so the e2e asserts the fixed behavior, and needs D6
   reconfirmed (Anvil, provisional since 2026-07-29).
 - TX.3 is docs-only and safe at any time; merge it last in 5a so it can record
