@@ -653,752 +653,764 @@ export function App() {
 
   return (
     <div className="page">
-      <header className="hero">
-        <p className="eyebrow">Operator console</p>
-        <h1>ChainBank</h1>
-        <p className="lede">
-          Observe the Sepolia treasury, manage projects, environments, wallets, and funding policies, and
-          review funding history. Never paste a private key or seed phrase here.
-        </p>
+      <header className="top-band">
+        <div className="top-band-inner">
+          <p className="eyebrow">Operator console</p>
+          <h1 className="page-title">ChainBank</h1>
+          <p className="lede">
+            Observe the Sepolia treasury, manage projects, environments, wallets, and funding policies, and
+            review funding history. Never paste a private key or seed phrase here.
+          </p>
+        </div>
       </header>
 
-      <section className="panel">
-        <h2>Session</h2>
-        <form className="token-form" onSubmit={onSaveToken}>
-          <label htmlFor="token">Operator bearer token</label>
-          <input
-            id="token"
-            name="token"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="cb_…"
-            value={tokenInput}
-            onChange={(event) => setTokenInput(event.target.value)}
-          />
-          <div className="row">
-            <button type="submit" disabled={sessionBusy}>
-              Save for this tab
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={sessionBusy}
-              onClick={() => {
-                refreshAll(token);
-              }}
-            >
-              Refresh all
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              disabled={sessionBusy || token === ''}
-              onClick={() => void onTestEmail()}
-            >
-              Send test email
-            </button>
-          </div>
-          <p className="hint">Stored in sessionStorage only. Never put a private key here.</p>
-          {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
-        </form>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Service readiness</h2>
-          <button type="button" className="secondary" onClick={() => void loadReadiness()}>
-            Reload
-          </button>
-        </div>
-        {readinessState === 'loading' || readinessState === 'idle' ? <p className="muted">Loading…</p> : null}
-        {readinessState === 'error' ? <p className="error-inline">{readinessError}</p> : null}
-        {readinessState === 'ready' && readiness !== undefined ? (
-          <>
-            <p>
-              Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
-              <span className="muted"> · checked {new Date(readiness.checkedAt).toLocaleString()}</span>
-            </p>
-            <ul className="plain">
-              {readiness.components.map((component) => (
-                <li key={component.name}>
-                  <span className={statusClass(component.status)}>{component.status}</span> {component.name}
-                  {component.detail !== null ? <span className="muted"> — {component.detail}</span> : null}
-                </li>
-              ))}
-            </ul>
-            <h3>Heartbeats</h3>
-            {readiness.heartbeats.length === 0 ? (
-              <p className="muted">No heartbeats recorded yet.</p>
-            ) : (
-              <ul className="plain">
-                {readiness.heartbeats.map((heartbeat) => (
-                  <li key={heartbeat.serviceRole}>
-                    <code>{heartbeat.serviceRole}</code>
-                    <span className="muted"> · {new Date(heartbeat.lastSeenAt).toLocaleString()}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Treasuries</h2>
-          <button type="button" className="secondary" onClick={() => void loadTreasuries(token)}>
-            Reload
-          </button>
-        </div>
-        {token === '' ? <p className="muted">Paste an operator token to load treasuries.</p> : null}
-        {token !== '' && treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
-        {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
-        {treasuriesState === 'empty' ? <p className="muted">No enabled treasuries returned.</p> : null}
-        {treasuriesState === 'ready' ? (
-          <div className="treasury-list">
-            {treasuries.map((treasury) => (
-              <article key={treasury.id} className="treasury">
-                <div className="treasury-head">
-                  <span className={statusClass(treasury.status)}>{treasury.status}</span>
-                  <h3>{treasury.chain.displayName}</h3>
-                </div>
-                <p className="mono">
-                  <a href={treasury.explorerUrl} target="_blank" rel="noreferrer">
-                    {treasury.address}
-                  </a>
-                </p>
-                <dl className="facts">
-                  <div>
-                    <dt>Balance</dt>
-                    <dd className="mono">
-                      {treasury.balance.ether === null
-                        ? 'unavailable'
-                        : `${treasury.balance.ether} ${treasury.chain.nativeSymbol}`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Spendable</dt>
-                    <dd className="mono">
-                      {treasury.spendable.ether === null
-                        ? '—'
-                        : `${treasury.spendable.ether} ${treasury.chain.nativeSymbol}`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Last checked</dt>
-                    <dd>
-                      {treasury.lastCheckedAt === null
-                        ? 'never'
-                        : new Date(treasury.lastCheckedAt).toLocaleString()}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Thresholds</dt>
-                    <dd className="mono">
-                      warn {treasury.thresholds.warningEther} · crit {treasury.thresholds.criticalEther} ·
-                      reserve {treasury.thresholds.minimumReserveEther}
-                    </dd>
-                  </div>
-                </dl>
-                {treasury.lastCheckErrorCode !== null ? (
-                  <p className="error-inline">Last error: {treasury.lastCheckErrorCode}</p>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={treasuryBusyId === treasury.id}
-                  onClick={() => void onCheck(treasury.id)}
-                >
-                  Check now
-                </button>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Projects</h2>
-          <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
-            Reload
-          </button>
-        </div>
-        {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
-        {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
-        {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
-        {projectsState === 'empty' ? (
-          <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
-        ) : null}
-        {projectsState === 'ready' ? (
-          <>
-            <p className="muted">
-              Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to scope
-              environments and funding policy.
-            </p>
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Slug</th>
-                    <th>Name</th>
-                    <th>Enabled</th>
-                    <th>Select</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((project) => (
-                    <tr
-                      key={project.id}
-                      className={selectedProjectId === project.id ? 'row-selected' : undefined}
-                    >
-                      <td className="mono">{project.slug}</td>
-                      <td>{project.name}</td>
-                      <td>
-                        <span className={enabledBadge(project.enabled)}>
-                          {project.enabled ? 'enabled' : 'disabled'}
-                        </span>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => {
-                            setSelectedProjectId(project.id);
-                          }}
-                        >
-                          {selectedProjectId === project.id ? 'Selected' : 'Select'}
-                        </button>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          disabled={projectBusyId === project.id}
-                          onClick={() => void onToggleProject(project)}
-                        >
-                          {project.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Environments</h2>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              void loadProjectEnvironments(token, selectedProjectId);
-              if (envLookupId.trim() !== '') {
-                void loadEnvironmentDetail(token, envLookupId);
-              }
-            }}
-          >
-            Reload
-          </button>
-        </div>
-        {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
-        {token !== '' && selectedProjectId === '' ? (
-          <p className="muted">Select a project above to list its environments.</p>
-        ) : null}
-        {token !== '' && selectedProjectId !== '' ? (
-          <>
-            <p className="hint">Load any environment by UUID below for full detail and enable/disable.</p>
-            {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
-            {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
-            {envListState === 'empty' ? (
-              <p className="muted">No environments registered for this project yet.</p>
-            ) : null}
-            {envListState === 'ready' ? (
-              <ul className="plain env-list">
-                {projectEnvironments.map((environment) => (
-                  <li key={environment.id}>
-                    <button
-                      type="button"
-                      className="linkish"
-                      onClick={() => {
-                        setEnvLookupId(environment.id);
-                        void loadEnvironmentDetail(token, environment.id);
-                      }}
-                    >
-                      <code>{environment.slug}</code>
-                    </button>{' '}
-                    <span className={enabledBadge(environment.enabled)}>
-                      {environment.enabled ? 'enabled' : 'disabled'}
-                    </span>
-                    <span className="muted"> — {environment.name}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-
-            <form
-              className="filters row"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void loadEnvironmentDetail(token, envLookupId);
-              }}
-            >
-              <label htmlFor="environment-id">Environment ID</label>
-              <input
-                id="environment-id"
-                name="environment-id"
-                type="text"
-                spellCheck={false}
-                placeholder="UUID"
-                value={envLookupId}
-                onChange={(event) => setEnvLookupId(event.target.value)}
-              />
-              <button type="submit">Load detail</button>
-            </form>
-
-            {environmentState === 'loading' ? <p className="muted">Loading environment detail…</p> : null}
-            {environmentState === 'error' ? <p className="error-inline">{environmentError}</p> : null}
-            {environmentState === 'ready' && environmentDetail !== undefined ? (
-              <article className="treasury">
-                <div className="treasury-head">
-                  <span className={enabledBadge(environmentDetail.enabled)}>
-                    {environmentDetail.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                  <h3>
-                    {environmentDetail.slug} <span className="muted">· {environmentDetail.name}</span>
-                  </h3>
-                </div>
-                <dl className="facts">
-                  <div>
-                    <dt>ID</dt>
-                    <dd className="mono">{environmentDetail.id}</dd>
-                  </div>
-                  <div>
-                    <dt>Project ID</dt>
-                    <dd className="mono">{environmentDetail.projectId}</dd>
-                  </div>
-                  <div>
-                    <dt>Created</dt>
-                    <dd>{formatTimestamp(environmentDetail.createdAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>Updated</dt>
-                    <dd>{formatTimestamp(environmentDetail.updatedAt)}</dd>
-                  </div>
-                </dl>
-                <button
-                  type="button"
-                  disabled={environmentBusy}
-                  onClick={() => void onToggleEnvironment(environmentDetail)}
-                >
-                  {environmentDetail.enabled ? 'Disable' : 'Enable'}
-                </button>
-              </article>
-            ) : null}
-          </>
-        ) : null}
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Managed wallets</h2>
-          <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
-            Reload
-          </button>
-        </div>
-        {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
-        {token !== '' ? (
-          <>
-            <div className="filters row">
-              <label htmlFor="wallet-project">Project ID</label>
-              <input
-                id="wallet-project"
-                name="wallet-project"
-                type="text"
-                spellCheck={false}
-                placeholder="UUID (optional)"
-                value={walletProjectFilter}
-                onChange={(event) => setWalletProjectFilter(event.target.value)}
-              />
-              <label htmlFor="wallet-environment">Environment ID</label>
-              <input
-                id="wallet-environment"
-                name="wallet-environment"
-                type="text"
-                spellCheck={false}
-                placeholder="UUID (optional)"
-                value={walletEnvironmentFilter}
-                onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
-              />
-              <label htmlFor="wallet-enabled">Enabled</label>
-              <select
-                id="wallet-enabled"
-                name="wallet-enabled"
-                value={walletEnabledFilter}
-                onChange={(event) => setWalletEnabledFilter(event.target.value)}
-              >
-                <option value="">All</option>
-                <option value="true">enabled</option>
-                <option value="false">disabled</option>
-              </select>
+      <main className="page-body">
+        <section className="panel">
+          <h2 className="section-title">Session</h2>
+          <form className="token-form" onSubmit={onSaveToken}>
+            <label htmlFor="token">Operator bearer token</label>
+            <input
+              id="token"
+              name="token"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="cb_…"
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+            />
+            <div className="row">
+              <button type="submit" disabled={sessionBusy}>
+                Save for this tab
+              </button>
               <button
                 type="button"
                 className="secondary"
+                disabled={sessionBusy}
                 onClick={() => {
-                  if (selectedProjectId !== '') {
-                    setWalletProjectFilter(selectedProjectId);
-                  }
+                  refreshAll(token);
                 }}
               >
-                Use selected project
+                Refresh all
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={sessionBusy || token === ''}
+                onClick={() => void onTestEmail()}
+              >
+                Send test email
               </button>
             </div>
-            {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
-            {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
-            {walletsState === 'empty' ? (
-              <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
-            ) : null}
-            {walletsState === 'ready' ? (
-              <>
-                <p className="muted">
-                  Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
-                </p>
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Project / env</th>
-                        <th>Role</th>
-                        <th>Address</th>
-                        <th>Flags</th>
-                        <th>Enabled</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {wallets.map((wallet) => (
-                        <tr key={wallet.id}>
-                          <td>
-                            <strong>{wallet.project.slug}</strong>
-                            <span className="muted"> / {wallet.environment.slug}</span>
-                          </td>
-                          <td>{wallet.role}</td>
-                          <td className="mono">
-                            <a
-                              href={wallet.explorerUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={wallet.address}
-                            >
-                              {shortAddress(wallet.address)}
-                            </a>
-                          </td>
-                          <td className="muted">
-                            startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
-                            <br />
-                            reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
-                          </td>
-                          <td>
-                            <span className={enabledBadge(wallet.enabled)}>
-                              {wallet.enabled ? 'enabled' : 'disabled'}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              disabled={walletBusyId === wallet.id}
-                              onClick={() => void onToggleWallet(wallet)}
-                            >
-                              {wallet.enabled ? 'Disable' : 'Enable'}
-                            </button>{' '}
-                            <button
-                              type="button"
-                              disabled={walletBusyId === wallet.id}
-                              onClick={() => void onToggleWalletReconciliation(wallet)}
-                            >
-                              {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : null}
-          </>
-        ) : null}
-      </section>
+            <p className="hint">Stored in sessionStorage only. Never put a private key here.</p>
+            {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
+          </form>
+        </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Funding policy</h2>
-          <button type="button" className="secondary" onClick={() => void loadPolicyPanel(token)}>
-            Reload
-          </button>
-        </div>
-        {token === '' ? <p className="muted">Paste an operator token to load funding policies.</p> : null}
-        {token !== '' ? (
-          <>
-            <p className="hint">
-              Amounts are entered in ETH and converted once to exact decimal wei strings before submit.
-              Confirm shows the wei values the API will receive.
-              {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
-            </p>
-            {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
-            {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
-            {policyState === 'empty' ? (
-              <p className="muted">
-                No wallets returned for policy view ({String(policyWalletsTotal)} total).
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Service readiness</h2>
+            <button type="button" className="secondary" onClick={() => void loadReadiness()}>
+              Reload
+            </button>
+          </div>
+          {readinessState === 'loading' || readinessState === 'idle' ? (
+            <p className="muted">Loading…</p>
+          ) : null}
+          {readinessState === 'error' ? <p className="error-inline">{readinessError}</p> : null}
+          {readinessState === 'ready' && readiness !== undefined ? (
+            <>
+              <p>
+                Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
+                <span className="muted"> · checked {new Date(readiness.checkedAt).toLocaleString()}</span>
               </p>
-            ) : null}
-            {policyState === 'ready' ? (
-              <div className="policy-list">
-                {policyWallets.map((wallet) => {
-                  const isEditing = editingWalletId === wallet.id;
-                  return (
-                    <article key={wallet.id} className="treasury">
-                      <div className="treasury-head">
-                        <h3>
-                          {wallet.role}{' '}
-                          <span className="muted">
-                            · {wallet.project.slug}/{wallet.environment.slug}
-                          </span>
-                        </h3>
-                      </div>
-                      <p className="mono">
-                        <a href={wallet.explorerUrl} target="_blank" rel="noreferrer">
-                          {wallet.address}
-                        </a>
-                      </p>
-                      {wallet.policy === null ? (
-                        <p className="muted">No funding policy set.</p>
-                      ) : (
-                        <dl className="facts">
-                          <div>
-                            <dt>Minimum</dt>
-                            <dd className="mono">
-                              {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
-                              <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Target</dt>
-                            <dd className="mono">
-                              {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
-                              <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Maximum top-up</dt>
-                            <dd className="mono">
-                              {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
-                              <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Version</dt>
-                            <dd>
-                              v{String(wallet.policy.version)} · updated{' '}
-                              {formatTimestamp(wallet.policy.updatedAt)}
-                            </dd>
-                          </div>
-                        </dl>
-                      )}
-                      {!isEditing ? (
-                        <button type="button" className="secondary" onClick={() => beginEditPolicy(wallet)}>
-                          Edit policy
-                        </button>
-                      ) : (
-                        <div className="policy-form">
-                          <div className="filters row">
-                            <label htmlFor={`min-${wallet.id}`}>Minimum (ETH)</label>
-                            <input
-                              id={`min-${wallet.id}`}
-                              type="text"
-                              inputMode="decimal"
-                              spellCheck={false}
-                              value={minimumEtherInput}
-                              onChange={(event) => {
-                                setMinimumEtherInput(event.target.value);
-                                setPolicyPreviewError(undefined);
-                              }}
-                            />
-                            <label htmlFor={`target-${wallet.id}`}>Target (ETH)</label>
-                            <input
-                              id={`target-${wallet.id}`}
-                              type="text"
-                              inputMode="decimal"
-                              spellCheck={false}
-                              value={targetEtherInput}
-                              onChange={(event) => {
-                                setTargetEtherInput(event.target.value);
-                                setPolicyPreviewError(undefined);
-                              }}
-                            />
-                            <label htmlFor={`max-${wallet.id}`}>Max top-up (ETH)</label>
-                            <input
-                              id={`max-${wallet.id}`}
-                              type="text"
-                              inputMode="decimal"
-                              spellCheck={false}
-                              value={maximumEtherInput}
-                              onChange={(event) => {
-                                setMaximumEtherInput(event.target.value);
-                                setPolicyPreviewError(undefined);
-                              }}
-                            />
-                          </div>
-                          {policyPreview !== undefined && policyPreview.ok ? (
-                            <pre className="wei-preview">
-                              {`minimumBalanceWei: ${policyPreview.minimumBalanceWei}\ntargetBalanceWei: ${policyPreview.targetBalanceWei}\nmaximumTopUpWei: ${policyPreview.maximumTopUpWei}`}
-                            </pre>
-                          ) : null}
-                          {policyPreviewError !== undefined ? (
-                            <p className="error-inline">{policyPreviewError}</p>
-                          ) : null}
-                          {policyPreview !== undefined && !policyPreview.ok ? (
-                            <p className="error-inline">{policyPreview.message}</p>
-                          ) : null}
-                          <div className="row">
-                            <button
-                              type="button"
-                              disabled={policyBusyId === wallet.id}
-                              onClick={() => void onSavePolicy(wallet)}
-                            >
-                              Save policy
-                            </button>
-                            <button
-                              type="button"
-                              className="secondary"
-                              disabled={policyBusyId === wallet.id}
-                              onClick={() => {
-                                setEditingWalletId(undefined);
-                                setPolicyPreviewError(undefined);
-                              }}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </section>
+              <ul className="plain">
+                {readiness.components.map((component) => (
+                  <li key={component.name}>
+                    <span className={statusClass(component.status)}>{component.status}</span> {component.name}
+                    {component.detail !== null ? <span className="muted"> — {component.detail}</span> : null}
+                  </li>
+                ))}
+              </ul>
+              <h3>Heartbeats</h3>
+              {readiness.heartbeats.length === 0 ? (
+                <p className="muted">No heartbeats recorded yet.</p>
+              ) : (
+                <ul className="plain">
+                  {readiness.heartbeats.map((heartbeat) => (
+                    <li key={heartbeat.serviceRole}>
+                      <code>{heartbeat.serviceRole}</code>
+                      <span className="muted"> · {new Date(heartbeat.lastSeenAt).toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : null}
+        </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Funding history</h2>
-          <button type="button" className="secondary" onClick={() => void loadFundingHistory(token)}>
-            Reload
-          </button>
-        </div>
-        {token === '' ? (
-          <p className="muted">Paste an operator token to load funding history.</p>
-        ) : (
-          <>
-            <div className="filters row">
-              <label htmlFor="history-project">Project ID</label>
-              <input
-                id="history-project"
-                name="history-project"
-                type="text"
-                spellCheck={false}
-                placeholder="UUID (optional)"
-                value={historyProjectFilter}
-                onChange={(event) => setHistoryProjectFilter(event.target.value)}
-              />
-              <label htmlFor="history-status">Status</label>
-              <select
-                id="history-status"
-                name="history-status"
-                value={historyStatusFilter}
-                onChange={(event) => setHistoryStatusFilter(event.target.value)}
-              >
-                <option value="">All statuses</option>
-                <option value="confirmed">confirmed</option>
-                <option value="submitted">submitted</option>
-                <option value="submission_unknown">submission_unknown</option>
-                <option value="failed">failed</option>
-                <option value="reverted">reverted</option>
-                <option value="replaced">replaced</option>
-                <option value="dropped">dropped</option>
-                <option value="created">created</option>
-              </select>
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Treasuries</h2>
+            <button type="button" className="secondary" onClick={() => void loadTreasuries(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? <p className="muted">Paste an operator token to load treasuries.</p> : null}
+          {token !== '' && treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
+          {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
+          {treasuriesState === 'empty' ? <p className="muted">No enabled treasuries returned.</p> : null}
+          {treasuriesState === 'ready' ? (
+            <div className="treasury-list">
+              {treasuries.map((treasury) => (
+                <article key={treasury.id} className="treasury">
+                  <div className="treasury-head">
+                    <span className={statusClass(treasury.status)}>{treasury.status}</span>
+                    <h3>{treasury.chain.displayName}</h3>
+                  </div>
+                  <p className="mono">
+                    <a href={treasury.explorerUrl} target="_blank" rel="noreferrer">
+                      {treasury.address}
+                    </a>
+                  </p>
+                  <dl className="facts">
+                    <div>
+                      <dt>Balance</dt>
+                      <dd className="mono">
+                        {treasury.balance.ether === null
+                          ? 'unavailable'
+                          : `${treasury.balance.ether} ${treasury.chain.nativeSymbol}`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Spendable</dt>
+                      <dd className="mono">
+                        {treasury.spendable.ether === null
+                          ? '—'
+                          : `${treasury.spendable.ether} ${treasury.chain.nativeSymbol}`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Last checked</dt>
+                      <dd>
+                        {treasury.lastCheckedAt === null
+                          ? 'never'
+                          : new Date(treasury.lastCheckedAt).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Thresholds</dt>
+                      <dd className="mono">
+                        warn {treasury.thresholds.warningEther} · crit {treasury.thresholds.criticalEther} ·
+                        reserve {treasury.thresholds.minimumReserveEther}
+                      </dd>
+                    </div>
+                  </dl>
+                  {treasury.lastCheckErrorCode !== null ? (
+                    <p className="error-inline">Last error: {treasury.lastCheckErrorCode}</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={treasuryBusyId === treasury.id}
+                    onClick={() => void onCheck(treasury.id)}
+                  >
+                    Check now
+                  </button>
+                </article>
+              ))}
             </div>
-            {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
-            {fundingHistoryState === 'error' ? <p className="error-inline">{fundingHistoryError}</p> : null}
-            {fundingHistoryState === 'empty' ? (
-              <p className="muted">No funding transactions returned ({String(fundingHistoryTotal)} total).</p>
-            ) : null}
-            {fundingHistoryState === 'ready' ? (
-              <>
-                <p className="muted">
-                  Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions
-                  (newest first).
-                </p>
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Project / env</th>
-                        <th>Wallet</th>
-                        <th>Amount</th>
-                        <th>Status</th>
-                        <th>Transaction</th>
-                        <th>Created</th>
-                        <th>Confirmed</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fundingHistory.map((row) => (
-                        <tr key={row.id}>
-                          <td>
-                            <strong>{row.project.slug}</strong>
-                            <span className="muted"> / {row.environment.slug}</span>
-                          </td>
-                          <td className="mono">
-                            {row.wallet.role}{' '}
-                            <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
-                          </td>
-                          <td className="mono">
-                            {row.amountEther} {row.chain.nativeSymbol}
-                          </td>
-                          <td>
-                            <span className={statusClass(row.status)}>{row.status}</span>
-                          </td>
-                          <td className="mono">
-                            {row.explorerUrl === null ? (
-                              '—'
-                            ) : (
-                              <a href={row.explorerUrl} target="_blank" rel="noreferrer">
-                                {shortAddress(row.transactionHash ?? '')}
-                              </a>
-                            )}
-                          </td>
-                          <td>{formatTimestamp(row.createdAt)}</td>
-                          <td>{formatTimestamp(row.confirmedAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : null}
-          </>
-        )}
-      </section>
+          ) : null}
+        </section>
 
-      {message !== undefined ? <p className="toast ok">{message}</p> : null}
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Projects</h2>
+            <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
+          {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
+          {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
+          {projectsState === 'empty' ? (
+            <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
+          ) : null}
+          {projectsState === 'ready' ? (
+            <>
+              <p className="muted">
+                Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to scope
+                environments and funding policy.
+              </p>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Slug</th>
+                      <th>Name</th>
+                      <th>Enabled</th>
+                      <th>Select</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projects.map((project) => (
+                      <tr
+                        key={project.id}
+                        className={selectedProjectId === project.id ? 'row-selected' : undefined}
+                      >
+                        <td className="mono">{project.slug}</td>
+                        <td>{project.name}</td>
+                        <td>
+                          <span className={enabledBadge(project.enabled)}>
+                            {project.enabled ? 'enabled' : 'disabled'}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => {
+                              setSelectedProjectId(project.id);
+                            }}
+                          >
+                            {selectedProjectId === project.id ? 'Selected' : 'Select'}
+                          </button>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={project.enabled ? 'danger' : undefined}
+                            disabled={projectBusyId === project.id}
+                            onClick={() => void onToggleProject(project)}
+                          >
+                            {project.enabled ? 'Disable' : 'Enable'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Environments</h2>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                void loadProjectEnvironments(token, selectedProjectId);
+                if (envLookupId.trim() !== '') {
+                  void loadEnvironmentDetail(token, envLookupId);
+                }
+              }}
+            >
+              Reload
+            </button>
+          </div>
+          {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
+          {token !== '' && selectedProjectId === '' ? (
+            <p className="muted">Select a project above to list its environments.</p>
+          ) : null}
+          {token !== '' && selectedProjectId !== '' ? (
+            <>
+              <p className="hint">Load any environment by UUID below for full detail and enable/disable.</p>
+              {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
+              {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
+              {envListState === 'empty' ? (
+                <p className="muted">No environments registered for this project yet.</p>
+              ) : null}
+              {envListState === 'ready' ? (
+                <ul className="plain env-list">
+                  {projectEnvironments.map((environment) => (
+                    <li key={environment.id}>
+                      <button
+                        type="button"
+                        className="linkish"
+                        onClick={() => {
+                          setEnvLookupId(environment.id);
+                          void loadEnvironmentDetail(token, environment.id);
+                        }}
+                      >
+                        <code>{environment.slug}</code>
+                      </button>{' '}
+                      <span className={enabledBadge(environment.enabled)}>
+                        {environment.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                      <span className="muted"> — {environment.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <form
+                className="filters row"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void loadEnvironmentDetail(token, envLookupId);
+                }}
+              >
+                <label htmlFor="environment-id">Environment ID</label>
+                <input
+                  id="environment-id"
+                  name="environment-id"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="UUID"
+                  value={envLookupId}
+                  onChange={(event) => setEnvLookupId(event.target.value)}
+                />
+                <button type="submit">Load detail</button>
+              </form>
+
+              {environmentState === 'loading' ? <p className="muted">Loading environment detail…</p> : null}
+              {environmentState === 'error' ? <p className="error-inline">{environmentError}</p> : null}
+              {environmentState === 'ready' && environmentDetail !== undefined ? (
+                <article className="treasury">
+                  <div className="treasury-head">
+                    <span className={enabledBadge(environmentDetail.enabled)}>
+                      {environmentDetail.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                    <h3>
+                      {environmentDetail.slug} <span className="muted">· {environmentDetail.name}</span>
+                    </h3>
+                  </div>
+                  <dl className="facts">
+                    <div>
+                      <dt>ID</dt>
+                      <dd className="mono">{environmentDetail.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Project ID</dt>
+                      <dd className="mono">{environmentDetail.projectId}</dd>
+                    </div>
+                    <div>
+                      <dt>Created</dt>
+                      <dd>{formatTimestamp(environmentDetail.createdAt)}</dd>
+                    </div>
+                    <div>
+                      <dt>Updated</dt>
+                      <dd>{formatTimestamp(environmentDetail.updatedAt)}</dd>
+                    </div>
+                  </dl>
+                  <button
+                    type="button"
+                    className={environmentDetail.enabled ? 'danger' : undefined}
+                    disabled={environmentBusy}
+                    onClick={() => void onToggleEnvironment(environmentDetail)}
+                  >
+                    {environmentDetail.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                </article>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Managed wallets</h2>
+            <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
+          {token !== '' ? (
+            <>
+              <div className="filters row">
+                <label htmlFor="wallet-project">Project ID</label>
+                <input
+                  id="wallet-project"
+                  name="wallet-project"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="UUID (optional)"
+                  value={walletProjectFilter}
+                  onChange={(event) => setWalletProjectFilter(event.target.value)}
+                />
+                <label htmlFor="wallet-environment">Environment ID</label>
+                <input
+                  id="wallet-environment"
+                  name="wallet-environment"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="UUID (optional)"
+                  value={walletEnvironmentFilter}
+                  onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
+                />
+                <label htmlFor="wallet-enabled">Enabled</label>
+                <select
+                  id="wallet-enabled"
+                  name="wallet-enabled"
+                  value={walletEnabledFilter}
+                  onChange={(event) => setWalletEnabledFilter(event.target.value)}
+                >
+                  <option value="">All</option>
+                  <option value="true">enabled</option>
+                  <option value="false">disabled</option>
+                </select>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    if (selectedProjectId !== '') {
+                      setWalletProjectFilter(selectedProjectId);
+                    }
+                  }}
+                >
+                  Use selected project
+                </button>
+              </div>
+              {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
+              {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
+              {walletsState === 'empty' ? (
+                <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
+              ) : null}
+              {walletsState === 'ready' ? (
+                <>
+                  <p className="muted">
+                    Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
+                  </p>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Project / env</th>
+                          <th>Role</th>
+                          <th>Address</th>
+                          <th>Flags</th>
+                          <th>Enabled</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wallets.map((wallet) => (
+                          <tr key={wallet.id}>
+                            <td>
+                              <strong>{wallet.project.slug}</strong>
+                              <span className="muted"> / {wallet.environment.slug}</span>
+                            </td>
+                            <td>{wallet.role}</td>
+                            <td className="mono">
+                              <a
+                                href={wallet.explorerUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={wallet.address}
+                              >
+                                {shortAddress(wallet.address)}
+                              </a>
+                            </td>
+                            <td className="muted">
+                              startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
+                              <br />
+                              reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
+                            </td>
+                            <td>
+                              <span className={enabledBadge(wallet.enabled)}>
+                                {wallet.enabled ? 'enabled' : 'disabled'}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className={wallet.enabled ? 'danger' : undefined}
+                                disabled={walletBusyId === wallet.id}
+                                onClick={() => void onToggleWallet(wallet)}
+                              >
+                                {wallet.enabled ? 'Disable' : 'Enable'}
+                              </button>{' '}
+                              <button
+                                type="button"
+                                className={wallet.reconciliationEnabled ? 'danger' : undefined}
+                                disabled={walletBusyId === wallet.id}
+                                onClick={() => void onToggleWalletReconciliation(wallet)}
+                              >
+                                {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Funding policy</h2>
+            <button type="button" className="secondary" onClick={() => void loadPolicyPanel(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? <p className="muted">Paste an operator token to load funding policies.</p> : null}
+          {token !== '' ? (
+            <>
+              <p className="hint">
+                Amounts are entered in ETH and converted once to exact decimal wei strings before submit.
+                Confirm shows the wei values the API will receive.
+                {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
+              </p>
+              {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
+              {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
+              {policyState === 'empty' ? (
+                <p className="muted">
+                  No wallets returned for policy view ({String(policyWalletsTotal)} total).
+                </p>
+              ) : null}
+              {policyState === 'ready' ? (
+                <div className="policy-list">
+                  {policyWallets.map((wallet) => {
+                    const isEditing = editingWalletId === wallet.id;
+                    return (
+                      <article key={wallet.id} className="treasury">
+                        <div className="treasury-head">
+                          <h3>
+                            {wallet.role}{' '}
+                            <span className="muted">
+                              · {wallet.project.slug}/{wallet.environment.slug}
+                            </span>
+                          </h3>
+                        </div>
+                        <p className="mono">
+                          <a href={wallet.explorerUrl} target="_blank" rel="noreferrer">
+                            {wallet.address}
+                          </a>
+                        </p>
+                        {wallet.policy === null ? (
+                          <p className="muted">No funding policy set.</p>
+                        ) : (
+                          <dl className="facts">
+                            <div>
+                              <dt>Minimum</dt>
+                              <dd className="mono">
+                                {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
+                                <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Target</dt>
+                              <dd className="mono">
+                                {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
+                                <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Maximum top-up</dt>
+                              <dd className="mono">
+                                {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
+                                <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Version</dt>
+                              <dd>
+                                v{String(wallet.policy.version)} · updated{' '}
+                                {formatTimestamp(wallet.policy.updatedAt)}
+                              </dd>
+                            </div>
+                          </dl>
+                        )}
+                        {!isEditing ? (
+                          <button type="button" className="secondary" onClick={() => beginEditPolicy(wallet)}>
+                            Edit policy
+                          </button>
+                        ) : (
+                          <div className="policy-form">
+                            <div className="filters row">
+                              <label htmlFor={`min-${wallet.id}`}>Minimum (ETH)</label>
+                              <input
+                                id={`min-${wallet.id}`}
+                                type="text"
+                                inputMode="decimal"
+                                spellCheck={false}
+                                value={minimumEtherInput}
+                                onChange={(event) => {
+                                  setMinimumEtherInput(event.target.value);
+                                  setPolicyPreviewError(undefined);
+                                }}
+                              />
+                              <label htmlFor={`target-${wallet.id}`}>Target (ETH)</label>
+                              <input
+                                id={`target-${wallet.id}`}
+                                type="text"
+                                inputMode="decimal"
+                                spellCheck={false}
+                                value={targetEtherInput}
+                                onChange={(event) => {
+                                  setTargetEtherInput(event.target.value);
+                                  setPolicyPreviewError(undefined);
+                                }}
+                              />
+                              <label htmlFor={`max-${wallet.id}`}>Max top-up (ETH)</label>
+                              <input
+                                id={`max-${wallet.id}`}
+                                type="text"
+                                inputMode="decimal"
+                                spellCheck={false}
+                                value={maximumEtherInput}
+                                onChange={(event) => {
+                                  setMaximumEtherInput(event.target.value);
+                                  setPolicyPreviewError(undefined);
+                                }}
+                              />
+                            </div>
+                            {policyPreview !== undefined && policyPreview.ok ? (
+                              <pre className="wei-preview">
+                                {`minimumBalanceWei: ${policyPreview.minimumBalanceWei}\ntargetBalanceWei: ${policyPreview.targetBalanceWei}\nmaximumTopUpWei: ${policyPreview.maximumTopUpWei}`}
+                              </pre>
+                            ) : null}
+                            {policyPreviewError !== undefined ? (
+                              <p className="error-inline">{policyPreviewError}</p>
+                            ) : null}
+                            {policyPreview !== undefined && !policyPreview.ok ? (
+                              <p className="error-inline">{policyPreview.message}</p>
+                            ) : null}
+                            <div className="row">
+                              <button
+                                type="button"
+                                disabled={policyBusyId === wallet.id}
+                                onClick={() => void onSavePolicy(wallet)}
+                              >
+                                Save policy
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary"
+                                disabled={policyBusyId === wallet.id}
+                                onClick={() => {
+                                  setEditingWalletId(undefined);
+                                  setPolicyPreviewError(undefined);
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Funding history</h2>
+            <button type="button" className="secondary" onClick={() => void loadFundingHistory(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? (
+            <p className="muted">Paste an operator token to load funding history.</p>
+          ) : (
+            <>
+              <div className="filters row">
+                <label htmlFor="history-project">Project ID</label>
+                <input
+                  id="history-project"
+                  name="history-project"
+                  type="text"
+                  spellCheck={false}
+                  placeholder="UUID (optional)"
+                  value={historyProjectFilter}
+                  onChange={(event) => setHistoryProjectFilter(event.target.value)}
+                />
+                <label htmlFor="history-status">Status</label>
+                <select
+                  id="history-status"
+                  name="history-status"
+                  value={historyStatusFilter}
+                  onChange={(event) => setHistoryStatusFilter(event.target.value)}
+                >
+                  <option value="">All statuses</option>
+                  <option value="confirmed">confirmed</option>
+                  <option value="submitted">submitted</option>
+                  <option value="submission_unknown">submission_unknown</option>
+                  <option value="failed">failed</option>
+                  <option value="reverted">reverted</option>
+                  <option value="replaced">replaced</option>
+                  <option value="dropped">dropped</option>
+                  <option value="created">created</option>
+                </select>
+              </div>
+              {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
+              {fundingHistoryState === 'error' ? <p className="error-inline">{fundingHistoryError}</p> : null}
+              {fundingHistoryState === 'empty' ? (
+                <p className="muted">
+                  No funding transactions returned ({String(fundingHistoryTotal)} total).
+                </p>
+              ) : null}
+              {fundingHistoryState === 'ready' ? (
+                <>
+                  <p className="muted">
+                    Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions
+                    (newest first).
+                  </p>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Project / env</th>
+                          <th>Wallet</th>
+                          <th>Amount</th>
+                          <th>Status</th>
+                          <th>Transaction</th>
+                          <th>Created</th>
+                          <th>Confirmed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fundingHistory.map((row) => (
+                          <tr key={row.id}>
+                            <td>
+                              <strong>{row.project.slug}</strong>
+                              <span className="muted"> / {row.environment.slug}</span>
+                            </td>
+                            <td className="mono">
+                              {row.wallet.role}{' '}
+                              <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                            </td>
+                            <td className="mono">
+                              {row.amountEther} {row.chain.nativeSymbol}
+                            </td>
+                            <td>
+                              <span className={statusClass(row.status)}>{row.status}</span>
+                            </td>
+                            <td className="mono">
+                              {row.explorerUrl === null ? (
+                                '—'
+                              ) : (
+                                <a href={row.explorerUrl} target="_blank" rel="noreferrer">
+                                  {shortAddress(row.transactionHash ?? '')}
+                                </a>
+                              )}
+                            </td>
+                            <td>{formatTimestamp(row.createdAt)}</td>
+                            <td>{formatTimestamp(row.confirmedAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : null}
+            </>
+          )}
+        </section>
+
+        {message !== undefined ? <p className="toast ok">{message}</p> : null}
+      </main>
     </div>
   );
 }
