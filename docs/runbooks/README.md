@@ -19,6 +19,7 @@ Phase 0 deploy checklist (Blueprint, TLS pin, first credential):
 | [`disable-compromised-project-credential.md`](./disable-compromised-project-credential.md) | A project-service (or other) credential may be leaked and must stop authenticating immediately.              |
 | [`disable-all-automated-funding.md`](./disable-all-automated-funding.md)                   | Emergency stop — halt every signing path now while keeping read-only monitoring up.                          |
 | [`restore-database.md`](./restore-database.md)                                             | Postgres must be restored from a Render backup after data loss or corruption.                                |
+| [`enable-wallet-reconciliation.md`](./enable-wallet-reconciliation.md)                     | Wallets must be registered for scheduled reconciliation, or `reconciliation_enabled` turned on.              |
 | [`verify-cron-execution.md`](./verify-cron-execution.md)                                   | You need to confirm the treasury-monitor or wallet-reconciler cron ran (or diagnose a missed / failed run).  |
 | [`verify-hosted-deployment.md`](./verify-hosted-deployment.md)                             | You need to confirm a Render deployment actually works — after a deploy, or before arming funding (PRD §20). |
 | [`change-thresholds-safely.md`](./change-thresholds-safely.md)                             | Warning / critical / recovery / reserve ETH thresholds must change without editing the database.             |
