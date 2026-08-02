@@ -107,14 +107,21 @@ type LockOutcome = DispatchFundingResult | { readonly kind: 'throw'; readonly er
  * 3. Under pg_advisory_xact_lock(treasury, chain): re-resolve the destination
  *    wallet, re-verify chain ID, re-read wallet and treasury balances, re-run
  *    reserve/policy math on those fresh values, refuse if a pending tx exists
- *    for the wallet, fetch nonce, submit, and persist the transaction hash
- *    before releasing the lock.
+ *    for the wallet, fetch nonce, then:
+ *    a. Commit a durable broadcast-intent row (`submission_unknown` + nonce) on
+ *       a connection *outside* the lock transaction (TX.10) so a killed backend
+ *       cannot erase the gate;
+ *    b. Call the signer;
+ *    c. Persist the hash (also outside the lock txn) or leave the intent as
+ *       `submission_unknown` on ambiguous failure.
  *
  * Database unavailability prevents signing entirely — the lock/UoW acquisition
- * fails before `sendNativeTransfer` is called.
+ * fails before `sendNativeTransfer` is called. Intent-commit failure also
+ * prevents signing (fail closed).
  *
- * Status writes for expected failures must commit with the lock transaction;
- * throwing inside the lock would roll them back.
+ * Pre-broadcast business status writes (no-op / blocked / pending-gate) still
+ * commit with the lock transaction; throwing inside the lock would roll them
+ * back. Post-intent transaction writes must not rely on that transaction.
  */
 export async function dispatchFunding(
   dependencies: DispatchFundingDependencies,
@@ -333,19 +340,36 @@ async function dispatchUnderLock(
     return { kind: 'blocked', operation: failed, reason: decision.reason };
   }
 
-  const createdAt = dependencies.clock.now();
-  const created = await uow.transactions.insertCreated({
+  // Nonce is obtained inside the advisory lock so concurrent dispatchers
+  // cannot allocate the same nonce for this treasury.
+  const nonce = await dependencies.signer.getTransactionCount();
+
+  // TX.10: commit the intent on the outer repository (autocommit connection),
+  // not `uow.transactions`. A `pg_terminate_backend` of the lock-holder rolls
+  // back only the advisory-lock transaction; this row must survive so the next
+  // racer sees a pending gate exactly as C4 treats `submission_unknown`.
+  const intentAt = dependencies.clock.now();
+  const intent = await dependencies.transactions.insertBroadcastIntent({
     id: dependencies.idGenerator.next(),
     operationId: operation.id,
     treasuryId: input.treasury.id,
     managedWalletId: lockedWallet.id,
     amountWei: decision.amountWei,
-    createdAt,
+    nonce,
+    createdAt: intentAt,
   });
-
-  // Nonce is obtained inside the advisory lock so concurrent dispatchers
-  // cannot allocate the same nonce for this treasury.
-  const nonce = await dependencies.signer.getTransactionCount();
+  dependencies.logger.info(
+    {
+      correlationId: input.correlationId,
+      operationId: operation.id,
+      transactionId: intent.id,
+      managedWalletId: lockedWallet.id,
+      treasuryId: input.treasury.id,
+      amountWei: decision.amountWei.toString(),
+      nonce,
+    },
+    'Funding broadcast intent committed; invoking signer',
+  );
 
   let transactionHash: string;
   try {
@@ -361,8 +385,9 @@ async function dispatchUnderLock(
 
     if (isProvablyBeforeBroadcast(errorCode)) {
       // The node rejected the request before it could enter the mempool, so no
-      // transfer exists and the row is safely terminal.
-      await uow.transactions.markFailed(created.id, errorCode);
+      // transfer exists and the durable intent may be closed as terminal.
+      // Use the outer repository: the intent was never in the lock transaction.
+      await dependencies.transactions.markFailed(intent.id, errorCode);
       await uow.operations.markFailed(
         operation.id,
         errorCode,
@@ -370,15 +395,13 @@ async function dispatchUnderLock(
         completedAt,
       );
     } else {
-      // Ambiguous: a timeout or transport failure can follow a successful
-      // broadcast. Record a non-terminal state so the wallet's duplicate gate
-      // stays closed and reconciliation can resolve the real outcome.
-      await uow.transactions.markSubmissionUnknown(created.id, { nonce, errorCode });
+      // Ambiguous: intent already gates the wallet as `submission_unknown`.
+      // Do not attempt a same-status transition; reconciliation settles by nonce.
       dependencies.logger.error(
         {
           correlationId: input.correlationId,
           operationId: operation.id,
-          transactionId: created.id,
+          transactionId: intent.id,
           managedWalletId: lockedWallet.id,
           nonce,
           errorCode,
@@ -399,7 +422,9 @@ async function dispatchUnderLock(
   }
 
   const submittedAt = dependencies.clock.now();
-  const transaction = await uow.transactions.markSubmitted(created.id, {
+  // Hash persistence is also outside the lock txn: a crash after broadcast must
+  // still leave either `submitted` or the prior `submission_unknown` intent.
+  const transaction = await dependencies.transactions.markSubmitted(intent.id, {
     transactionHash,
     nonce,
     submittedAt,
@@ -516,10 +541,11 @@ function assertFundingGates(
  * BalanceReader unavailable codes are `RPC_UNAVAILABLE` | `CHAIN_ID_MISMATCH`.
  * `CHAIN_ID_MISMATCH` is listed here for defense in depth, but in-lock balance
  * read failures are handled by {@link readBalanceInsideLock} *before*
- * `insertCreated` / `sendNativeTransfer` — they mark the operation failed and
- * never create a transaction row. `RPC_UNAVAILABLE` must NOT be added to this
- * set: after `sendNativeTransfer` it remains the ambiguous post-broadcast
- * signal that produces non-terminal `submission_unknown` (C4).
+ * broadcast-intent insert / `sendNativeTransfer` — they mark the operation
+ * failed and never create a transaction row. `RPC_UNAVAILABLE` must NOT be
+ * added to this set: after `sendNativeTransfer` it remains the ambiguous
+ * post-broadcast signal that leaves the durable intent as non-terminal
+ * `submission_unknown` (C4 / TX.10).
  */
 const PRE_BROADCAST_ERROR_CODES: ReadonlySet<string> = new Set([
   'SIGNER_UNAVAILABLE',
@@ -542,8 +568,8 @@ function isProvablyBeforeBroadcast(errorCode: string): boolean {
  *
  * On `unavailable`, commits a terminal operation failure and returns a throw
  * outcome. Never creates a `funding_transactions` row, so an `RPC_UNAVAILABLE`
- * balance-read failure cannot be misfiled as `submission_unknown` (which only
- * applies after `sendNativeTransfer`).
+ * balance-read failure cannot be misfiled as `submission_unknown` (which is
+ * reserved for durable broadcast intent / post-send ambiguity — TX.10 / C4).
  */
 async function readBalanceInsideLock(
   dependencies: DispatchFundingDependencies,

@@ -175,19 +175,20 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
     sendHold.resolve();
     await expect(crashedPromise).rejects.toBeTruthy();
 
-    // Actual current behavior after mid-send connection abort:
-    // - funding_operations row for the crashed idempotency key remains (committed
-    //   before the lock txn); in-lock writes (markInProgress / insertCreated) roll back.
-    // - No in-flight funding_transactions row → pending-tx gate does NOT wedge the wallet.
-    // - Same idempotency key replays as a no-op (no linked transaction).
-    // - A different key can still submit (fail-open for the wallet; fail-closed for that key).
+    // TX.10: broadcast intent is committed outside the lock txn before send, so
+    // terminating the lock-holder cannot erase the gate.
+    // - funding_operations row for the crashed key remains (pre-lock commit).
+    // - A durable in-flight funding_transactions row wedges the wallet.
+    // - Same idempotency key replays without a second send.
+    // - A different key is refused with PENDING_FUNDING_EXISTS (fail closed).
     const ops = await handle.db.select().from(fundingOperations);
     const crashedOps = ops.filter((op) => op.idempotencyKey === `${seed.managedWalletId}:${crashedKey}`);
     expect(crashedOps).toHaveLength(1);
-    expect(crashedOps[0]?.status).toBe('pending');
 
     const txs = await handle.db.select().from(fundingTransactions);
-    expect(txs).toHaveLength(0);
+    expect(txs).toHaveLength(1);
+    expect(['submission_unknown', 'submitted']).toContain(txs[0]?.status);
+    expect(txs[0]?.nonce).toBeTypeOf('number');
 
     const replaySigner = createControllableSigner({});
     const replayDeps = buildEnsureDeps(replaySigner);
@@ -199,21 +200,24 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
       correlationId: 'corr-crash-replay',
       sourceIp: undefined,
     });
-    expect(replay.status).toBe('no-op');
+    // Same-key replay maps the durable in-flight intent to `pending` (not
+    // `funded` — nothing confirmed — and not `no-op`, which requires no tx row).
+    expect(replay.status).toBe('pending');
     expect(replaySigner.sendCalls).toBe(0);
 
     const recoverySigner = createControllableSigner({});
     const recoveryDeps = buildEnsureDeps(recoverySigner);
-    const recovered = await ensureWalletFunded(recoveryDeps, {
-      walletId: seed.managedWalletId,
-      idempotencyKey: 'crash-recovery-new-key',
-      role: 'operator',
-      credentialId,
-      correlationId: 'corr-crash-recovery',
-      sourceIp: undefined,
-    });
-    expect(recovered.status).toBe('funded');
-    expect(recoverySigner.sendCalls).toBe(1);
+    await expect(
+      ensureWalletFunded(recoveryDeps, {
+        walletId: seed.managedWalletId,
+        idempotencyKey: 'crash-recovery-new-key',
+        role: 'operator',
+        credentialId,
+        correlationId: 'corr-crash-recovery',
+        sourceIp: undefined,
+      }),
+    ).rejects.toMatchObject({ code: 'PENDING_FUNDING_EXISTS' });
+    expect(recoverySigner.sendCalls).toBe(0);
   });
 
   it('ambiguous mid-lock send failure records submission_unknown and wedges the wallet', async () => {

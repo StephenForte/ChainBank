@@ -7,6 +7,7 @@ import type {
   FundingTransactionListPage,
   FundingTransactionRepository,
   FundingTransactionScopeFilter,
+  InsertBroadcastIntentInput,
   InsertFundingTransactionInput,
 } from '../../../app/ports.js';
 import { ChainBankError } from '../../../domain/errors.js';
@@ -106,6 +107,35 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
 
         if (row === undefined) {
           throw new ChainBankError('DATABASE_UNAVAILABLE', 'Funding transaction insert returned no row');
+        }
+        return toFundingTransaction(row);
+      });
+    },
+
+    async insertBroadcastIntent(input: InsertBroadcastIntentInput): Promise<FundingTransaction> {
+      return withDatabaseErrors('funding_transactions.insertBroadcastIntent', async () => {
+        // Non-terminal from insert: a crash after this commit and before / during
+        // broadcast must keep the per-wallet duplicate gate closed (TX.10 / C4).
+        const [row] = await db
+          .insert(fundingTransactions)
+          .values({
+            id: input.id,
+            operationId: input.operationId,
+            treasuryId: input.treasuryId,
+            managedWalletId: input.managedWalletId,
+            amountWei: weiToDatabaseNumeric(input.amountWei, 'amountWei'),
+            nonce: input.nonce,
+            status: 'submission_unknown',
+            errorCode: 'BROADCAST_INTENT',
+            createdAt: input.createdAt,
+          })
+          .returning();
+
+        if (row === undefined) {
+          throw new ChainBankError(
+            'DATABASE_UNAVAILABLE',
+            'Funding transaction broadcast-intent insert returned no row',
+          );
         }
         return toFundingTransaction(row);
       });

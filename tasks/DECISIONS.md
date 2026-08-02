@@ -498,6 +498,41 @@ TX.8 amendment (2026-08-01) — in-lock balance re-read before top-up / reserve 
   `PRE_BROADCAST_ERROR_CODES` so post-`sendNativeTransfer` ambiguity still
   yields non-terminal `submission_unknown` (C4).
 
+TX.10 amendment (2026-08-02) — durable pre-broadcast intent (no new contract number):
+
+- **Root cause closed:** a `pg_terminate_backend` of the lock-holding connection
+  rolls back in-lock `funding_transactions` writes. Without a durable marker the
+  waiter re-reads a not-yet-mined balance, recomputes the same top-up, and
+  broadcasts a second transfer (measured by T4.4: `sendCalls=2`, one DB row).
+- **`FundingTransactionRepository.insertBroadcastIntent`:** after in-lock nonce
+  allocation and before `sendNativeTransfer`, dispatch inserts a
+  `submission_unknown` row with the reserved nonce and `errorCode:
+'BROADCAST_INTENT'` via the **outer** repository connection (autocommit), not
+  the advisory-lock unit of work. Intent-commit failure refuses to sign.
+- **Pool capacity is a hard precondition, not an intent-commit failure.** The
+  intent insert needs a **second** pooled connection while
+  `pg_advisory_xact_lock` holds the first. With a pool of 1 that connection can
+  never be freed while the lock transaction runs, so each dispatch stalls for
+  the pool's `connectionTimeoutMillis` (10s) — holding the treasury lock — and
+  then fails closed with `DATABASE_UNAVAILABLE` **before** any broadcast
+  (measured: rejected at ~10.0s, zero sends). Signing-capable roles therefore
+  refuse to start when `DATABASE_POOL_MAX < 2`, turning a per-request runtime
+  stall into an immediate startup failure. Default `cron-reconciler` pool is
+  **3** (one call of headroom beyond the minimum).
+- **Post-broadcast writes stay on the outer repository** (`markSubmitted` /
+  `markFailed`) so a killed lock txn cannot erase a successful broadcast's hash
+  or a terminal pre-broadcast rejection of an already-committed intent.
+- **Ambiguous send failures** leave the intent row as `submission_unknown` (no
+  same-status transition). The per-wallet pending gate and in-flight reserve
+  sum already include that status (C4); reconciliation settles by nonce (C14 /
+  TX.9) unchanged.
+- **TX.8 in-lock balance re-read, reserve math, enable gates, and C4 status
+  meanings are unchanged.** Detection of true orphans (no intent row at all)
+  remains the outgoing scan's job — prevention must not disable it.
+- **Residual:** a crash between intent commit and broadcast still wedges the
+  wallet until reconciliation proves the nonce was never consumed. Fail closed
+  by design (AGENTS.md §7.5).
+
 ### C8 — Funding operation status resume (owner: T2.3)
 
 ```ts
@@ -949,3 +984,4 @@ Local design choices (T4.4, 2026-08-02):
 - 2026-08-02 — TX.9 round 2 (PR #44 review): forward-contiguous gap>cap windows + `incomplete` while behind; bisect nonce hunt; defer watermark until after `markFinished`; stated reorg limitation.
 - 2026-08-02 — **TX.9 merged (PR #44)** after planner re-review. Verified by re-running the round-1 probes: the crash-orphan at block 5 000 that the tip-facing plan silently abandoned is now reported, successive windows tile contiguously with no gap, and the aged-row nonce hunt dropped from 20 001 RPC round trips to 17. `main` at 428 unit / 77 integration. C14 carries the final TX.9 amendment; "advance only on a genuinely complete scan" is now stated consistently.
 - 2026-08-02 — T4.4 published C16: cron-vs-API concurrency harness (`runRacing`, `createFakeSigner({ rejectReusedNonce })`) and integration coverage racing `reconcileWallets` against `ensureEnvironmentReady` (one transfer, nonce strict increase, reserve under race, watermark forward-contiguous / incomplete backlog, interrupted-sweep watermark durability). Crash-mid-dispatch `submission_unknown` assertion skipped — names the open crash-after-broadcast gap.
+- 2026-08-02 — TX.10 amended C7: durable pre-broadcast `insertBroadcastIntent` (`submission_unknown` + nonce, committed outside the advisory-lock txn) closes the crash-induced duplicate measured by T4.4; C16 crash case inverted; detection of intent-less orphans and ambiguous `RPC_UNAVAILABLE` under race remain covered.

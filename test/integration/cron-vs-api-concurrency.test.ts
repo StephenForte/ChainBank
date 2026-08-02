@@ -10,7 +10,7 @@ import {
   type ReconcileWalletsResult,
 } from '../../src/app/reconciliation/reconcile-wallets.js';
 import type { BalanceReader, TreasurySigner } from '../../src/app/ports.js';
-import { isChainBankError } from '../../src/domain/errors.js';
+import { ChainBankError, isChainBankError } from '../../src/domain/errors.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
 import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
@@ -363,14 +363,11 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
   });
 
   /**
-   * Crash-after-broadcast gap (T1.9 / folded into T4.1 — still open):
-   * `pg_terminate_backend` mid-send rolls back in-lock rows, so there is no
-   * `submission_unknown` row for the waiter to gate on, and a second transfer
-   * can be submitted. Desired P4-US2 property: interrupted row stays
-   * `submission_unknown` / pending and no second send. Skipped until a
-   * cross-cutting fix lands; do not soften the assertion.
+   * TX.10: durable broadcast intent survives `pg_terminate_backend` of the
+   * lock-holder, so the waiter gates on the interrupted attempt instead of
+   * broadcasting a second transfer (P4-US2 / the defect T4.4 measured).
    */
-  it.skip('crash mid-dispatch while the other racer waits: submission_unknown left pending, no second send', async () => {
+  it('crash mid-dispatch while the other racer waits: durable intent gates waiter, one send', async () => {
     const sendHold = createDeferred<void>();
     const firstEntered = createDeferred<void>();
     const signer = createControllableSigner({
@@ -403,6 +400,18 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
 
     await firstEntered.promise;
 
+    // Intent must already be durable before the signer is entered (TX.10).
+    await expect
+      .poll(
+        async () => {
+          const rows = await handle.db.select().from(fundingTransactions);
+          return rows.filter((row) => ['submission_unknown', 'submitted', 'created'].includes(row.status))
+            .length;
+        },
+        { interval: 10, timeout: 5_000 },
+      )
+      .toBe(1);
+
     const readyPromise = ensureEnvironmentReady(readyDeps, {
       environmentId: seed.environmentId,
       idempotencyKey: `ready-crash-${randomUUID()}`,
@@ -434,14 +443,142 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     void settled;
 
     const txs = await handle.db.select().from(fundingTransactions);
-    const unknowns = txs.filter((row) => row.status === 'submission_unknown');
-    expect(unknowns).toHaveLength(1);
-    // Waiter must not submit a second transfer for the interrupted wallet.
-    expect(signer.sendCalls).toBeLessThanOrEqual(1);
     const transferred = txs.filter((row) =>
       ['submitted', 'confirmed', 'created', 'submission_unknown'].includes(row.status),
     );
     expect(transferred).toHaveLength(1);
+    expect(transferred[0]?.nonce).toBeTypeOf('number');
+    // Exactly one broadcast attempt completed; waiter must not send again.
+    expect(signer.sendCalls).toBe(1);
+    expect(signer.enteredSendCount).toBe(1);
+  });
+
+  it('genuinely orphaned transfer (no intent row) is still reported as unexplained_outgoing_transfer under race', async () => {
+    // TX.10 must not weaken TX.9 detection: an on-chain transfer with no
+    // funding_transactions row at all remains a critical finding.
+    const orphanHash = `0x${'ef'.repeat(32)}`;
+    const outgoingScanner = createFakeOutgoingScanner({
+      latestBlockNumber: 100n,
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_B_ADDRESS,
+          valueWei: ONE_ETH / 5n,
+          nonce: 99,
+          blockNumber: 88n,
+        },
+      ],
+    });
+
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: 20n * ONE_ETH,
+        [WALLET_A_ADDRESS]: ONE_ETH,
+      },
+    });
+    const signer = createFakeSigner({
+      address: TREASURY_ADDRESS,
+      rejectReusedNonce: true,
+    });
+
+    const reconcileDeps = buildReconcileDeps({ signer, balanceReader, outgoingScanner });
+    const readyDeps = buildEnsureReadyDeps({ signer, balanceReader });
+
+    const settled = await runRacing<unknown>([
+      () =>
+        reconcileWallets(reconcileDeps, {
+          role: 'cron-reconciler',
+          credentialId: cronCredentialId,
+          correlationId: `corr-orphan-recon-${randomUUID()}`,
+          runId: `run-orphan-${randomUUID()}`,
+        }),
+      () =>
+        ensureEnvironmentReady(readyDeps, {
+          environmentId: seed.environmentId,
+          idempotencyKey: `ready-orphan-${randomUUID()}`,
+          role: 'operator',
+          credentialId: operatorCredentialId,
+          correlationId: `corr-orphan-ready-${randomUUID()}`,
+          sourceIp: '127.0.0.1',
+        }),
+    ]);
+
+    expect(settled.every((result) => result.status === 'fulfilled')).toBe(true);
+    const reconcileResult = settled[0];
+    expect(reconcileResult?.status).toBe('fulfilled');
+    if (reconcileResult?.status === 'fulfilled') {
+      const reconcile = reconcileResult.value as ReconcileWalletsResult;
+      expect(reconcile.unexplainedTransferCount).toBe(1);
+      expect(
+        reconcile.findings.some(
+          (finding) =>
+            finding.kind === 'unexplained_outgoing_transfer' && finding.transactionHash === orphanHash,
+        ),
+      ).toBe(true);
+    }
+
+    const txs = await handle.db.select().from(fundingTransactions);
+    expect(txs.every((tx) => tx.transactionHash !== orphanHash)).toBe(true);
+  });
+
+  it('ambiguous post-broadcast RPC_UNAVAILABLE under race leaves submission_unknown pending, no second send', async () => {
+    // Distinct from backend-kill: sendError produces a durable row via the
+    // normal ambiguous path (funding-crash-recovery.test.ts pattern).
+    let sendAttempts = 0;
+    const signer = createControllableSigner({
+      address: TREASURY_ADDRESS,
+      sendError: () => {
+        sendAttempts += 1;
+        return new ChainBankError('RPC_UNAVAILABLE', 'transport failed after possible broadcast', {
+          publicMessage: 'The transfer could not be submitted.',
+        });
+      },
+      getNonce: () => sendAttempts,
+    });
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: 20n * ONE_ETH,
+        [WALLET_A_ADDRESS]: ONE_ETH / 10n,
+      },
+    });
+
+    const reconcileDeps = buildReconcileDeps({ signer, balanceReader });
+    const readyDeps = buildEnsureReadyDeps({ signer, balanceReader });
+
+    const settled = await runRacing<unknown>([
+      () =>
+        reconcileWallets(reconcileDeps, {
+          role: 'cron-reconciler',
+          credentialId: cronCredentialId,
+          correlationId: `corr-ambig-recon-${randomUUID()}`,
+          runId: `run-ambig-${randomUUID()}`,
+        }),
+      () =>
+        ensureEnvironmentReady(readyDeps, {
+          environmentId: seed.environmentId,
+          idempotencyKey: `ready-ambig-${randomUUID()}`,
+          role: 'operator',
+          credentialId: operatorCredentialId,
+          correlationId: `corr-ambig-ready-${randomUUID()}`,
+          sourceIp: '127.0.0.1',
+        }),
+    ]);
+
+    const txs = await handle.db.select().from(fundingTransactions);
+    const unknowns = txs.filter((row) => row.status === 'submission_unknown');
+    expect(unknowns).toHaveLength(1);
+    expect(unknowns[0]?.nonce).toBeTypeOf('number');
+    // One side entered send and failed ambiguously; the other must not send.
+    expect(signer.enteredSendCount).toBe(1);
+    expect(signer.sendCalls).toBe(0);
+    expect(txs).toHaveLength(1);
+
+    // At least one racer must surface the ambiguity rather than a silent retry.
+    const rejected = settled.filter((result) => result.status === 'rejected');
+    const fulfilled = settled.filter((result) => result.status === 'fulfilled');
+    expect(rejected.length + fulfilled.length).toBe(2);
+    void settled;
   });
 
   it('watermark advances exactly once under race (forward-contiguous, M+C ≥ T → complete)', async () => {

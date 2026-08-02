@@ -9,6 +9,7 @@ import type {
   FundingTransaction,
   FundingTransactionListPage,
   FundingTransactionRepository,
+  InsertBroadcastIntentInput,
   InsertFundingOperationInput,
   InsertFundingTransactionInput,
   OutgoingScanResult,
@@ -143,6 +144,24 @@ export function createInMemoryFundingStores(): {
         nonce: undefined,
         status: 'created',
         errorCode: undefined,
+        createdAt: input.createdAt,
+        submittedAt: undefined,
+        confirmedAt: undefined,
+      };
+      txsById.set(tx.id, tx);
+      return Promise.resolve(tx);
+    },
+    insertBroadcastIntent(input: InsertBroadcastIntentInput) {
+      const tx: FundingTransaction = {
+        id: input.id,
+        operationId: input.operationId,
+        treasuryId: input.treasuryId,
+        managedWalletId: input.managedWalletId,
+        amountWei: input.amountWei,
+        transactionHash: undefined,
+        nonce: input.nonce,
+        status: 'submission_unknown',
+        errorCode: 'BROADCAST_INTENT',
         createdAt: input.createdAt,
         submittedAt: undefined,
         confirmedAt: undefined,

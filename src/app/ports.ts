@@ -605,6 +605,20 @@ export interface InsertFundingTransactionInput {
   readonly createdAt: Date;
 }
 
+/**
+ * Durable pre-broadcast intent (TX.10 / C7). Committed outside the advisory-lock
+ * transaction so a killed lock-holder still leaves a non-terminal gate row.
+ */
+export interface InsertBroadcastIntentInput {
+  readonly id: string;
+  readonly operationId: string;
+  readonly treasuryId: string;
+  readonly managedWalletId: string;
+  readonly amountWei: bigint;
+  readonly nonce: number;
+  readonly createdAt: Date;
+}
+
 export interface FundingOperationRepository {
   findById(id: string): Promise<FundingOperation | undefined>;
   findByIdempotencyKey(requestedBy: string, idempotencyKey: string): Promise<FundingOperation | undefined>;
@@ -641,6 +655,12 @@ export interface FundingTransactionRepository {
    */
   sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint>;
   insertCreated(input: InsertFundingTransactionInput): Promise<FundingTransaction>;
+  /**
+   * Inserts a non-terminal `submission_unknown` row with the reserved nonce
+   * *before* broadcast (TX.10). Must be called on a connection that commits
+   * independently of the advisory-lock unit of work.
+   */
+  insertBroadcastIntent(input: InsertBroadcastIntentInput): Promise<FundingTransaction>;
   markSubmitted(
     id: string,
     input: { readonly transactionHash: string; readonly nonce: number; readonly submittedAt: Date },
