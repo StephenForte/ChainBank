@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type {
   FinishReconciliationRunInput,
   InsertReconciliationRunInput,
@@ -71,6 +71,23 @@ export function createReconciliationRunRepository(db: Database): ReconciliationR
           where: eq(reconciliationRuns.id, id),
         });
         return row === undefined ? undefined : toReconciliationRun(row);
+      });
+    },
+
+    async listRecent(limit: number): Promise<readonly ReconciliationRun[]> {
+      return withDatabaseErrors('reconciliation_runs.listRecent', async () => {
+        if (!Number.isInteger(limit) || limit < 1) {
+          throw new ChainBankError(
+            'INVALID_REQUEST',
+            `listRecent limit must be a positive integer; got ${String(limit)}`,
+          );
+        }
+        const rows = await db
+          .select()
+          .from(reconciliationRuns)
+          .orderBy(desc(reconciliationRuns.startedAt))
+          .limit(limit);
+        return rows.map(toReconciliationRun);
       });
     },
   };

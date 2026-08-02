@@ -488,6 +488,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       operatorRecipients: ['ops@example.com'],
       dashboardBaseUrl: 'http://localhost:3000',
       environment: 'test',
+      reconcileFailureAlertThreshold: 3,
     };
   }
 

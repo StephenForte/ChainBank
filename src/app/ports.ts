@@ -822,6 +822,11 @@ export interface ReconciliationRunRepository {
   insertStarted(input: InsertReconciliationRunInput): Promise<ReconciliationRun>;
   markFinished(input: FinishReconciliationRunInput): Promise<ReconciliationRun>;
   findById(id: string): Promise<ReconciliationRun | undefined>;
+  /**
+   * Recent runs newest-first by `started_at` (C15). Used to derive consecutive
+   * failure counts without a separate counter column.
+   */
+  listRecent(limit: number): Promise<readonly ReconciliationRun[]>;
 }
 
 /**

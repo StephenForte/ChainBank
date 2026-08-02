@@ -232,6 +232,27 @@ describe('reconcileWallets sweep decisions', () => {
     expect(result.outgoingScanStatus).toBe('incomplete');
     expect(result.findings.some((f) => f.kind === 'outgoing_scan_incomplete')).toBe(true);
   });
+
+  it('keeps the run outcome when the reconciliation-failure alert hook throws', async () => {
+    const stores = createInMemoryFundingStores();
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury()),
+      signer: undefined,
+      reconcileFailureAlertThreshold: 1,
+    };
+    deps.alerts.findOpenByEntity = () => Promise.reject(new Error('alert store down'));
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-alert-iso',
+      runId: 'run-alert-iso',
+    });
+
+    expect(result.run.errorCode).toBe('SIGNER_UNAVAILABLE');
+    expect(result.run.finishedAt).toBeDefined();
+    expect(deps.alerts.insertOpen).not.toHaveBeenCalled();
+  });
 });
 
 function buildDeps(
@@ -320,5 +341,6 @@ function buildDeps(
     operatorRecipients: ['ops@example.com'],
     dashboardBaseUrl: 'http://localhost:3000',
     environment: 'test',
+    reconcileFailureAlertThreshold: 3,
   };
 }
