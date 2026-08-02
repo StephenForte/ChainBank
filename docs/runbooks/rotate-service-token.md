@@ -11,9 +11,21 @@ be under active attacker control.
 ## Preconditions
 
 - Ability to run `npm run credential:issue` against the **same database** the
-  hosted API uses (prefer laptop + Render External Database URL so the raw token
-  never appears in hosted logs — same pattern as
-  [`deploy-render-phase0.md`](./deploy-render-phase0.md)).
+  hosted API uses. Credentials live in whichever Postgres issued them, so a token
+  issued against your local database will fail on the hosted API with
+  `INVALID_CREDENTIAL` (that code means _no row matches the hash_ — a revoked or
+  disabled credential returns `CREDENTIAL_DISABLED` instead). Two routes:
+  - **Render web Shell on `chainbank-web` (simplest).** `DATABASE_URL`,
+    `DATABASE_SSL_CA` and the rest are already set there, and `npm ci --include=dev`
+    at build time leaves `tsx` on the filesystem, so `npm run credential:issue`
+    works with no further setup. The raw token appears in that interactive shell
+    session.
+  - **Laptop + Render External Database URL** keeps the token off hosted machines,
+    but the Blueprint sets `ipAllowList: []` on the database, so external
+    connections are refused until you temporarily add your IP under the database's
+    Access Control. Remove it afterwards. You also need `DATABASE_SSL=true` plus
+    `DATABASE_SSL_CA` (escaped `\n` PEM is accepted) and the chain/treasury
+    variables `loadConfig` requires.
 - An **operator** bearer token for the admin credential endpoints.
 - `api_credentials.name` is unique: the replacement credential needs a **new
   name** (or you must rename the old row in SQL before reusing a name).
