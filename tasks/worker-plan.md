@@ -9,42 +9,47 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-01, Wave 4 complete)
+## Status (updated 2026-08-02, TX.9 merged — T4.4 is all that remains)
 
-`main` is at 365 unit tests plus 64 integration tests, with CI (format, lint,
-typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
-No open PRs, no stale branches.
+`main` is at **428 unit tests plus 77 integration tests** (both counts re-run by the
+planner against `origin/main` on 2026-08-02 — the previously published 365/64 was
+stale), with CI (format, lint, typecheck, unit, build, audit, secret scan, migration
+validation) green on every PR.
 
-| Task                                                         | Status    | Landed in          |
-| ------------------------------------------------------------ | --------- | ------------------ |
-| T1.1 schema + migration `0001`                               | ✅ done   | PR #2              |
-| T1.2 funding math domain                                     | ✅ done   | PR #2              |
-| T1.3 wallet registration + policy APIs                       | ✅ done   | PR #7              |
-| T1.4 signer infrastructure                                   | ✅ done   | PR #2              |
-| T1.5 funding dispatch engine                                 | ✅ done   | PR #8              |
-| T1.6 `ensure-funded` endpoint                                | ✅ done   | PR #13             |
-| T1.7 funding history API + dashboard                         | ✅ done   | PR #11             |
-| T1.8 reserve-exhaustion email                                | ✅ done   | PR #21             |
-| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done   | PR #7              |
-| T2.3 operation status + confirmation resume                  | ✅ done   | PR #10             |
-| T2.4 dashboard project/environment/wallet/policy views       | ✅ done   | PR #20             |
-| T3.1 alert state machine                                     | ✅ done   | PR #5              |
-| T3.2 email templates                                         | ✅ done   | PR #6              |
-| T3.3 alert persistence + cron/manual orchestration           | ✅ done   | PR #12             |
-| T3.4 operational runbooks (PRD §19)                          | ✅ done   | PR #14             |
-| TX.1 CI pipeline                                             | ✅ done   | PR #4, fixed in #9 |
-| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done   | Phase 0 + PR #13   |
-| TX.4 credential list / disable / revoke / enable             | ✅ done   | PR #16, #17        |
-| TX.6 alert lookup filtered by alert type                     | ✅ done   | PR #15             |
-| T1.9 concurrency integration tests                           | ✅ done   | PR #35             |
-| T2.2 `ensure-ready` endpoint (contract C11)                  | ✅ done   | PR #33             |
-| TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done   | PR #32             |
-| TX.7 list-environments route (C13)                           | ✅ done   | PR #34             |
-| TX.8 confirm-outside-lock race fix (C7 amendment)            | ✅ done   | PR #37             |
-| TX.3 docs refresh (README + PRD §25)                         | ✅ done   | PR #39             |
-| T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done   | PR #40             |
-| T4.2 reconciler cron entry + Render blueprint                | ✅ done   | PR #41             |
-| Remaining: T4.3 (in review), TX.9, T4.4                      | in flight | —                  |
+**No open PRs, no stale branches.** Phase 4 is one task from exit: T4.4.
+
+| Task                                                         | Status      | Landed in                  |
+| ------------------------------------------------------------ | ----------- | -------------------------- |
+| T1.1 schema + migration `0001`                               | ✅ done     | PR #2                      |
+| T1.2 funding math domain                                     | ✅ done     | PR #2                      |
+| T1.3 wallet registration + policy APIs                       | ✅ done     | PR #7                      |
+| T1.4 signer infrastructure                                   | ✅ done     | PR #2                      |
+| T1.5 funding dispatch engine                                 | ✅ done     | PR #8                      |
+| T1.6 `ensure-funded` endpoint                                | ✅ done     | PR #13                     |
+| T1.7 funding history API + dashboard                         | ✅ done     | PR #11                     |
+| T1.8 reserve-exhaustion email                                | ✅ done     | PR #21                     |
+| T2.1 projects/environments + scoped authz (migration `0002`) | ✅ done     | PR #7                      |
+| T2.3 operation status + confirmation resume                  | ✅ done     | PR #10                     |
+| T2.4 dashboard project/environment/wallet/policy views       | ✅ done     | PR #20                     |
+| T3.1 alert state machine                                     | ✅ done     | PR #5                      |
+| T3.2 email templates                                         | ✅ done     | PR #6                      |
+| T3.3 alert persistence + cron/manual orchestration           | ✅ done     | PR #12                     |
+| T3.4 operational runbooks (PRD §19)                          | ✅ done     | PR #14                     |
+| TX.1 CI pipeline                                             | ✅ done     | PR #4, fixed in #9         |
+| TX.2 API hardening (helmet, CORS, rate limit)                | ✅ done     | Phase 0 + PR #13           |
+| TX.4 credential list / disable / revoke / enable             | ✅ done     | PR #16, #17                |
+| TX.6 alert lookup filtered by alert type                     | ✅ done     | PR #15                     |
+| T1.9 concurrency integration tests                           | ✅ done     | PR #35                     |
+| T2.2 `ensure-ready` endpoint (contract C11)                  | ✅ done     | PR #33                     |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)          | ✅ done     | PR #32                     |
+| TX.7 list-environments route (C13)                           | ✅ done     | PR #34                     |
+| TX.8 confirm-outside-lock race fix (C7 amendment)            | ✅ done     | PR #37                     |
+| TX.3 docs refresh (README + PRD §25)                         | ✅ done     | PR #39                     |
+| T4.1 reconciliation use case (C14, migration `0004`)         | ✅ done     | PR #40                     |
+| T4.2 reconciler cron entry + Render blueprint                | ✅ done     | PR #41                     |
+| T4.3 reconciliation failure alerting (C15)                   | ✅ done     | PR #42                     |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`) | ✅ done     | PR #44 (two review rounds) |
+| Remaining: T4.4 (last task in Phase 4, contract C16)         | not started | —                          |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -91,18 +96,29 @@ funding armed and serving. The emergency stop is
 ### Next wave
 
 ✅ **Wave 5a complete:** TX.8 (#37), T4.1 (#40, C14), TX.3 (#39).
-✅ **Wave 5b:** T4.2 (#41) merged — the reconciler cron is deployed on Render and
-has completed live runs. T4.3 🟢 failure alerting is in review.
-**Wave 5c (now):** **TX.9** 🔴 make the outgoing scan usable in production —
-four defects found operating the cron live (see the entry under Cross-cutting);
-defect 1 blocks the feature at its own default setting. Then **T4.4** 🔴
-cron-vs-API concurrency e2e — reconfirm D6 (Anvil, provisional) before starting.
+✅ **Wave 5b complete:** T4.2 (#41) and T4.3 (#42, C15) merged — the reconciler cron
+is deployed on Render and has completed live runs.
+✅ **Wave 5c:** **TX.9** merged (#44) after two review rounds — the outgoing scan is
+incremental and forward-contiguous, and the nonce hunt bisects. **Wave 5d (now):**
+**T4.4** 🔴 cron-vs-API concurrency (contract **C16**) is prompted and unblocked —
+dispatch it. **D6 was reconfirmed and superseded** (2026-08-02) — details in the
+T4.4 entry. Phase 4 exits with T4.4.
 
-**Live-operation status (2026-08-02):** the reconciler runs on Render every 6
-hours with the signing key, and reaches the funding gate correctly. It has **not
-yet completed a run with `FUNDING_ENABLED=true`** — runs at the default lookback
-exceed practical runtime and were cancelled (TX.9 defect 1). Lower
-`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` before trusting the schedule.
+**Live-operation status (2026-08-02, after TX.9):** the reconciler runs on Render
+every 6 hours with the signing key and reaches the funding gate correctly. Two
+things are still true and both must be cleared before Phase 4's exit criterion
+("long-running wallets remain above policy minimum during a test period") has any
+evidence behind it:
+
+- **No wallet has `reconciliation_enabled = true` yet**, so a sweep assesses zero
+  wallets. A green run over an empty set proves nothing — check `wallets_assessed`
+  on the run row, not the exit code.
+- **`RECONCILE_OUTGOING_LOOKBACK_BLOCKS` is still manually lowered in hosted
+  config.** TX.9 makes restoring it to `20000` safe (the nonce hunt bisects rather
+  than sweeps). Expect the first runs after restoring it to report
+  `outgoing_scan_status: 'incomplete'` with an `outgoing_scan_coverage_behind`
+  finding while the watermark drains its backlog at roughly 11× real time. **That
+  is the fix working, not a regression** — and per C15 it does not page.
 
 ## Commit and merge contract
 
@@ -347,11 +363,31 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 - **T4.3** 🟢 Reconciliation failure alerting `[T4.1, T3.1, T3.2]`
   Consecutive-failure threshold, affected wallets + error categories, recovery
   recorded after success. Template already exists.
-- **T4.4** 🔴 Cron-vs-API concurrency e2e `[T4.2, T2.2, TX.8]`
+- **T4.4** 🔴 Cron-vs-API concurrency tests `[T4.2, T2.2, TX.8, TX.9]` — contract
+  **C16** (pre-assigned). **Prompted 2026-08-02; unblocked — TX.9 merged (#44).
+  Ready to dispatch.**
   Reconciler and ensure-ready racing the same treasury: no duplicate transfers,
-  no nonce conflicts. Depends on TX.8 so the e2e locks in the fixed
-  read-inside-lock behavior rather than encoding the race. Reconfirm D6 (Anvil,
-  provisional) before starting.
+  no nonce conflicts. Depends on TX.8 so the tests lock in the fixed
+  read-inside-lock behavior rather than encoding the race, and on TX.9 so they
+  assert the corrected scan/watermark shape rather than the shipped one.
+  Test-only: the worker may not change `src/` — a defect it finds is reported and
+  becomes its own task, not fixed in scope.
+
+  **D6 reconfirmed and superseded (2026-08-02).** D6 provisionally chose Anvil
+  for e2e, "spawned only if present on `PATH`, suite skips otherwise," to be
+  reconfirmed when T4.4 started. It does not stand as written, for two verified
+  reasons: (1) `.github/workflows/ci.yml` runs `npm run test:integration` and
+  **never** `npm run test:e2e`, and `test/e2e/` holds only a placeholder — so an
+  Anvil suite would run nowhere in CI; (2) combined with the skip clause, the
+  Phase 4 exit criterion "API and cron concurrency tests pass" would be satisfied
+  by a suite that reports green by skipping — the same silence-looks-like-success
+  failure TX.9 exists to fix. T4.4 therefore lands in `test/integration/` against
+  real Postgres advisory locks (where the serialization actually happens) with a
+  mocked JSON-RPC chain, which CI does run. The one property a mock loses —
+  node-level rejection of a reused nonce — is bought back by a nonce-rejecting
+  signer fake (C16), so a duplicate-nonce dispatch fails loudly. A real-chain
+  Anvil harness is **deferred, not dropped**; schedule it if Phase 5 needs it.
+  D6's answer cell is updated in place — not renumbered, no D11.
 
 ### Cross-cutting
 
@@ -366,8 +402,8 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   post-broadcast meaning (C4). The previously-impossible test now passes:
   parallel distinct keys with an instant-confirm tracker → exactly one transfer.
 
-- **TX.9** 🔴 Make the treasury outgoing scan usable in production `[T4.1, T4.2]`
-  — amends contract **C14** (no new number)
+- **TX.9** ✅ 🔴 Make the treasury outgoing scan usable in production `[T4.1, T4.2]`
+  — DONE (PR #44, two review rounds); amends contract **C14** (no new number)
   Found operating the reconciler live on 2026-08-01/02, after T4.2 wired the
   cron. Four defects, all in the crash-orphan / `submission_unknown` scan path.
   **The first is the blocker: the feature as shipped cannot complete a run at
@@ -414,6 +450,79 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
      lower still for smoke tests). A short lookback means a missed or failed run
      leaves an unscanned gap, and `submission_unknown` rows older than the window
      correctly stay pending rather than settling.
+
+  **Review outcome (planner, 2026-08-02) — PR #44, changes requested.** Branch was
+  correctly based on current `origin/main` (no rebase needed — first time in four).
+  Full gate re-run locally and green: format/lint/typecheck/build, 423 unit, 77
+  integration against a scratch Postgres. Migration `0005` proved forward from
+  `0004` on **populated** data (seeded treasury + finished and aborted run rows);
+  a full `information_schema` dump of forward-from-`0004` is byte-identical to a
+  fresh apply. Defects 2, 3 and 4 are correctly fixed — and better than asked on
+  2, since `insertStarted` takes the new `'not-run'` column default, so even a
+  hard-killed run no longer leaves a false `'complete'`. Policy logging touched
+  neither exit codes nor C15's `FUNDING_DISABLED`-is-neutral rule; boot upsert
+  does not clobber the watermark (verified in code and integration test);
+  `findOutgoingByNonce` still leaves rows pending on a miss. Watermark on
+  `treasuries` rather than `reconciliation_runs` is a better call than this entry
+  specified — the scan is per-treasury — and is accepted.
+
+  Three things must change before merge:
+  1. **Blocking — marker advancement is inverted for gap > cap.**
+     `planOutgoingScanWindow` scans the most recent cap-worth and sets
+     `advanceMarkerTo: tip`, so `[marker+1, tip-cap-1]` is skipped and becomes
+     permanently unreachable, while the run still records
+     `outgoing_scan_status: 'complete'`. Proved with a probe: a crash-orphaned
+     transfer at block 5 000 (marker 1 000, tip 50 000, cap 20 000) is never
+     reported, in that run or any later one, and the run reads clean. The
+     `outgoing_scan_coverage_behind` finding fires exactly once at `warning` and
+     is then unreproducible, so nothing carries the signal forward. Fix:
+     forward-contiguous window `[M+1, min(M+C, T)]` advancing to `min(M+C, T)`,
+     and report `'incomplete'` while a backlog remains (C15 already makes
+     `incomplete` non-paging, so this adds no alert noise).
+  2. **Defect 1 is only half-fixed.** `findOutgoingByNonce` still walks one
+     full-body `getBlock` per block: measured 7 457 round trips for a 24h-old
+     `submission_unknown` row and 20 001 for an aged one — the exact window that
+     had to be cancelled live — and it runs per pending row, serially. So a single
+     aged row reintroduces the blocker, and this PR's operator note (restore
+     `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` to 20000) is what would trigger it. Fix:
+     bisect on `eth_getTransactionCount` at block height (monotonic, ~15 probes
+     instead of 20 001), or split it out as its own task and correct the operator
+     note.
+  3. **Watermark is advanced before findings are durable.**
+     `recordOutgoingScanComplete` runs inside the treasury loop; the findings it
+     produced are only persisted later by `markFinished`, after the whole wallet
+     sweep. A kill in between — the crash class this detection exists for —
+     durably advances the marker while losing a possible key-compromise finding.
+     Fix: flush watermark advances after `markFinished` succeeds.
+
+  Minor, also requested: zero enabled treasuries records a vacuous `'complete'`;
+  the `wallet-reconciler.ts` comment claims `finished_at IS NULL` is authoritative
+  but that misses finished pre-`0005` rows still reading `'complete'`; reorgs
+  (tip < marker) are unhandled and should be a stated C14 limitation.
+
+  **Round 2 accepted and merged (planner re-review, 2026-08-02).** All three
+  blockers fixed and all four minors addressed. Verified by re-running the round-1
+  probes rather than by reading the diff:
+
+  - The crash-orphan at block 5 000 that the tip-facing plan silently abandoned is
+    now **reported** — window `[1_001, 21_000]`, status `incomplete`, marker
+    advanced to `21_000`, never past an unscanned block.
+  - Successive runs tile contiguously with no gap
+    (`[1_001, 21_000] → [21_001, 41_000] → [41_001, 50_000]`), so a backlog drains
+    instead of being abandoned.
+  - The aged-row nonce hunt dropped from **20 001** RPC round trips to **17**
+    (16 bisect probes + 1 `getBlock`), and still fails closed on an RPC failure at
+    any probe.
+  - Watermark advances are flushed only after `markFinished`, so a kill re-scans
+    rather than skips.
+
+  Gate re-run locally: 428 unit, 77 integration; migration `0005` re-proved forward
+  from `0004` on populated data. C14's amendment no longer contradicts itself —
+  "advance only on a genuinely complete scan" is stated consistently. C15 untouched.
+
+  **Hosted follow-up:** `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` can now be restored to
+  `20000`. See the live-operation status note near the top for what to expect on
+  the first runs afterwards.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
@@ -539,22 +648,25 @@ response or a routine rotation dependent on hand-written SQL.
 1. ✅ **Wave 4 (complete 2026-08-01):** TX.7 (#34) → TX.5 (#32) → T2.2 (#33) →
    T1.9 (#35). Funding armed in production at wave close.
 2. ✅ **Wave 5a (complete 2026-08-01):** TX.8 (#37) → T4.1 (#40) → TX.3 (#39).
-3. **Wave 5b:** ✅ T4.2 (#41) merged; T4.3 🟢 failure alerting in review.
-4. **Wave 5c (now):** TX.9 🔴 outgoing-scan fixes → T4.4 🔴 cron-vs-API e2e.
+3. ✅ **Wave 5b (complete 2026-08-01):** T4.2 (#41) → T4.3 (#42, C15).
+4. ✅ **Wave 5c (complete 2026-08-02):** TX.9 (#44, two review rounds).
+5. **Wave 5d (now):** T4.4 🔴 cron-vs-API concurrency (C16) — prompted and
+   unblocked. **Phase 4 exits here.**
 
 Merge-order cautions for Wave 5:
 
-- **TX.9 before T4.4.** TX.9 changes how the scan bounds its window (incremental
-  from a stored block, likely a migration) and how early-exit runs record scan
-  status; T4.4's e2e should assert the fixed behavior rather than encode the
-  current one — the same reason T4.4 waited on TX.8.
-- **TX.9 and T4.3 both edit `reconcile-wallets.ts`.** T4.3 (in review) adds an
-  additive alert hook; TX.9 changes scan bookkeeping and the run-failure logging
-  T4.3's alerting classifies. Land T4.3 first, then TX.9 rebases over it — TX.9's
-  defect 3 (policy stop logged as error) must not contradict whatever run
-  classification T4.3 publishes in C15.
-- T4.4 waits for TX.8 so the e2e asserts the fixed behavior, and needs D6
-  reconfirmed (Anvil, provisional since 2026-07-29).
+- ✅ **TX.9 before T4.4 — satisfied.** `main` now has the corrected shape T4.4
+  asserts: windows `[M+1, min(M+C, T)]` advancing to `min(M+C, T)`, status
+  `'complete'` only when the window reaches the tip. The T4.4 prompt still tells
+  the worker to stop and report `blocked` on tip-facing windows; that guard is now
+  a no-op but is worth leaving in as a regression tripwire.
+- ✅ **TX.9 and T4.3 both edit `reconcile-wallets.ts`** — resolved as planned:
+  T4.3 landed first (#42) and TX.9 built on it. Verified at review that TX.9's
+  policy-logging change did not disturb C15's `FUNDING_DISABLED`-is-neutral rule
+  or the T4.2 exit-code classification.
+- **D6 is settled (2026-08-02) — no longer a T4.4 prerequisite.** Reconfirmed and
+  superseded: T4.4 goes in the integration suite, not Anvil e2e. Reasoning in the
+  T4.4 entry above; the deciding fact is that CI never runs `test:e2e`.
 - TX.3 is docs-only and safe at any time; merge it last in 5a so it can record
   whatever 5a lands.
 

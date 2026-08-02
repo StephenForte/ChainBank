@@ -932,11 +932,11 @@ that document, which remains the authority.
 | How many confirmations should startup require on Sepolia?                  | Resolved (D4) | One, via `FUNDING_CONFIRMATIONS`; timeout via `FUNDING_CONFIRMATION_TIMEOUT_MS` (60s). A timeout yields `pending`, never a false failure.                      |
 | SQLite locally and Postgres hosted, or Postgres everywhere without Docker? | Resolved (D5) | Locally installed Postgres everywhere. No SQLite path exists.                                                                                                  |
 
-One further question arose during delivery and remains open:
+One further question arose during delivery and is now closed:
 
-| Question                                                               | Status                        | Notes                                                                                                                                                                                           |
-| ---------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| End-to-end chain: a local node such as Anvil, or mocked JSON-RPC only? | **Decided, provisional (D6)** | Anvil, spawned only when present on `PATH` (suite skips otherwise); unit/integration stay on mocked JSON-RPC. Decided 2026-07-29; reconfirm when T4.4 (cron-versus-API concurrency e2e) starts. |
+| Question                                                               | Status                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| End-to-end chain: a local node such as Anvil, or mocked JSON-RPC only? | **Decided (D6, final)** | Reconfirmed at T4.4's start on 2026-08-02 and **changed**: mocked JSON-RPC in the integration suite, not Anvil e2e. CI runs `test:integration` and never `test:e2e`, so the provisional "skip when Anvil is absent" answer would have let the Phase 4 exit criterion be satisfied by a suite that runs nowhere. T4.4 uses real Postgres advisory locks plus a nonce-rejecting signer fake for node-level nonce rejection. A real-chain Anvil harness is deferred, not dropped. |
 
 ## 23. Render Implementation Notes
 
@@ -959,14 +959,14 @@ document a reader would otherwise be misled by.
 
 ### 25.1 Phase status
 
-| Phase                                  | Status                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0 — Bootstrap and read-only monitoring | Complete.                                                                                                                                                                                                                                                                                                                                                   |
-| 1 — Treasury MVP and on-demand funding | Complete. Reserve-exhaustion operator email (P1-US5 / [C10](./DECISIONS.md#c10--treasury-reserve-exhaustion-alert-owner-t18)) and concurrency integration tests (T1.9) are delivered.                                                                                                                                                                       |
-| 2 — Projects, environments, readiness  | Complete. Projects, environments, scoped credentials, operation status, expanded dashboard, `POST /v1/environments/{id}/ensure-ready` ([C11](./DECISIONS.md#c11--environment-ensure-ready-owner-t22)), and `GET /v1/projects/{id}/environments` ([C13](./DECISIONS.md#c13--list-environments-for-a-project-owner-tx7)) are delivered.                       |
-| 3 — Daily monitoring and email alerts  | Complete. Alert lifecycle, all templates, PRD §19 runbooks, and hosted verification (all four phases, 2026-08-01) are delivered.                                                                                                                                                                                                                            |
-| 4 — Managed-wallet reconciliation      | In progress. The reconciliation use case is merged ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41), migration `0004`): below-minimum sweep through the C7 dispatch engine, evidence-based `submission_unknown` settlement, and crash-orphan outgoing scan. The cron entry (T4.2), failure alerting (T4.3), and cron-vs-API e2e (T4.4) remain. |
-| 5–8                                    | Out of scope for this effort.                                                                                                                                                                                                                                                                                                                               |
+| Phase                                  | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Bootstrap and read-only monitoring | Complete.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1 — Treasury MVP and on-demand funding | Complete. Reserve-exhaustion operator email (P1-US5 / [C10](./DECISIONS.md#c10--treasury-reserve-exhaustion-alert-owner-t18)) and concurrency integration tests (T1.9) are delivered.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2 — Projects, environments, readiness  | Complete. Projects, environments, scoped credentials, operation status, expanded dashboard, `POST /v1/environments/{id}/ensure-ready` ([C11](./DECISIONS.md#c11--environment-ensure-ready-owner-t22)), and `GET /v1/projects/{id}/environments` ([C13](./DECISIONS.md#c13--list-environments-for-a-project-owner-tx7)) are delivered.                                                                                                                                                                                                                                                                                                                                                                                       |
+| 3 — Daily monitoring and email alerts  | Complete. Alert lifecycle, all templates, PRD §19 runbooks, and hosted verification (all four phases, 2026-08-01) are delivered.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 4 — Managed-wallet reconciliation      | In progress. Merged and deployed: the reconciliation use case ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41), migration `0004`) — below-minimum sweep through the C7 dispatch engine, evidence-based `submission_unknown` settlement, crash-orphan outgoing scan; the 6-hourly `chainbank-wallet-reconciler` cron (T4.2); and consecutive-failure alerting (T4.3, [C15](./DECISIONS.md#c15--reconciliation-failure-alert-owner-t43)). and the incremental outgoing scan (TX.9, migration `0005`) — forward-contiguous windows from a per-treasury watermark, with the `submission_unknown` nonce hunt bisecting on account nonce instead of sweeping blocks. Remaining: cron-vs-API concurrency (T4.4, C16). |
+| 5–8                                    | Out of scope for this effort.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 **Funding is armed in production** (2026-08-01). The hosted deployment passed all
 four verification phases (including a real Sepolia transfer, idempotent replay, and
@@ -1058,12 +1058,21 @@ The full registry is in `tasks/DECISIONS.md`.
 
 Honest accounting of where the current state falls short of §20:
 
-- **Scheduled reconciliation does not yet run in the hosted environment.** The
-  use case is merged (T4.1 / C14), but §20's cron-driven top-up waits on the
-  reconciler cron entry (T4.2) — until it lands, reconciliation exists in code
-  and tests only.
-- The **end-to-end suite is empty**; the local-chain decision (D6: Anvil,
-  decided provisionally 2026-07-29) is to be reconfirmed when T4.4 starts.
+- **Scheduled reconciliation runs in the hosted environment but has not yet
+  completed a full sweep with funding enabled over a non-empty wallet set.** T4.2
+  wired the 6-hourly `chainbank-wallet-reconciler` cron on Render with the signing
+  key, and it reaches the funding gate correctly. TX.9 removed the runtime blocker
+  (the scan is incremental and the nonce hunt bisects), so
+  `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` can be restored to its `20000` default.
+  §20's cron-driven top-up is therefore wired and now able to complete, but not
+  yet demonstrated end to end against real managed wallets on a live schedule.
+- `reconciliation_enabled` defaults to **false** on every managed wallet, so a
+  sweep assesses zero wallets until one is deliberately registered with it true.
+  A green run over an empty set is not evidence that reconciliation works.
+- The **end-to-end suite is empty and stays empty.** D6 was reconfirmed on
+  2026-08-02 and superseded: T4.4's concurrency coverage lands in the
+  integration suite (which CI runs) rather than an Anvil e2e suite (which it
+  does not). A real-chain harness is deferred, not dropped.
 
 Closed since the 2026-07-29 refresh:
 
@@ -1082,15 +1091,41 @@ Defects found during T1.9 concurrency testing (2026-08-01):
    top-up / reserve from fresh values ([C7](./DECISIONS.md#c7--funding-dispatch-engine-owner-t15-destination-hardening-t16)
    amendment). This was an accepted risk at arming time and is no longer open.
 2. **Crash-after-broadcast reconciliation gap — closed at the use-case layer by
-   T4.1 ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41)); hosted
-   coverage pending T4.2.** A backend killed mid-send rolls back the in-lock
-   database rows: the operation stays `pending`, the wallet is not wedged, and a
-   transfer that reached the network leaves no DB trace and no recorded nonce.
-   `reconcileWallets` now scans the treasury's on-chain outgoing transfers over a
-   bounded lookback and flags any transfer no `funding_transactions` row explains
-   as a critical finding — surfaced in the run summary, never silently adopted.
-   Until T4.2 wires the cron, this detection only runs when the use case is
-   invoked; no scheduled sweep exists in the hosted environment yet.
+   T4.1 ([C14](./DECISIONS.md#c14--reconciliation-use-case-owner-t41)); scheduled
+   by T4.2; scan performance still open in TX.9.** A backend killed mid-send
+   rolls back the in-lock database rows: the operation stays `pending`, the
+   wallet is not wedged, and a transfer that reached the network leaves no DB
+   trace and no recorded nonce. `reconcileWallets` scans the treasury's on-chain
+   outgoing transfers over a bounded lookback and flags any transfer no
+   `funding_transactions` row explains as a critical finding — surfaced in the
+   run summary, never silently adopted. The cron now runs this every six hours,
+   but see the TX.9 entry below: at the default lookback the scan cannot finish,
+   so detection is currently bounded by a manually lowered window.
 
-Test counts on `main` (2026-08-01): **381 unit**, **69 integration** (opt-in,
-Postgres).
+Defects found operating the reconciler live (2026-08-02) — all closed by TX.9
+(PR #44, merged after two review rounds):
+
+3. **The outgoing scan could not complete at its own default setting — closed.**
+   It issued one `getBlock(includeTransactions)` per block, so a 20 000-block
+   lookback was 2 500 sequential batches pulling full transaction bodies; live
+   runs exceeded 5–10 minutes and were cancelled. The scan now resumes from a
+   persisted per-treasury watermark (migration `0005`) in **forward-contiguous**
+   windows `[marker + 1, min(marker + cap, tip)]`, so no range is ever skipped
+   and a backlog drains over successive runs rather than being abandoned. While
+   a backlog remains the run records `outgoing_scan_status: 'incomplete'` — it
+   must not read clean while coverage is behind. Separately, the
+   `submission_unknown` nonce hunt now **bisects** on account nonce
+   (~⌈log₂(window)⌉ probes) instead of sweeping block bodies: measured 17 RPC
+   round trips where the sweep took 20 001.
+4. **A run could record a scan it never performed — closed.**
+   `outgoing_scan_status` defaulted to `complete`, so a policy-disabled early
+   exit persisted a clean scan result. It now defaults to `not-run`, and every
+   early-exit path (policy, missing signer, zero enabled treasuries) persists
+   that. Rows written before migration `0005` may still show a stale `complete`;
+   `finished_at IS NULL` remains the authoritative signal for aborted runs.
+
+**Stated limitation:** a chain reorg below the watermark is not rescanned — if
+`tip < marker` the scan idles until the chain catches up. Recorded in C14.
+
+Test counts on `main` (re-run 2026-08-02, after TX.9): **428 unit**,
+**77 integration** (opt-in, Postgres). The previously published 381/69 was stale.

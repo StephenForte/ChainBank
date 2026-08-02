@@ -6,9 +6,10 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) in
-progress — the reconciliation use case is merged (C14), the cron that runs it is
-not yet wired (T4.2).**
+**Current phase: Phases 1–3 complete; Phase 4 (scheduled reconciliation) nearly
+done — the reconciliation use case (C14), the 6-hourly reconciler cron, failure
+alerting (C15), and the incremental outgoing scan (TX.9, migration `0005`) are
+all merged and deployed. One task remains: T4.4, cron-vs-API concurrency.**
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -230,8 +231,15 @@ near full branch coverage. The uncovered remainder is mostly wiring —
 `container.ts`, route registration, and adapters — which the integration suite
 exercises end to end instead.
 
-The e2e project is wired but still empty; Phase 4's cron-versus-API concurrency
-test (T4.4) is its first real workload and needs decision D6 resolved first.
+The e2e project is wired but still empty, and stays that way: decision D6 was
+reconfirmed on 2026-08-02 and **superseded**. CI runs `npm run test:integration`
+and never `npm run test:e2e`, so an Anvil-backed e2e suite that skips when the
+binary is absent would let a Phase 4 exit criterion be met by a suite that runs
+nowhere. Phase 4's cron-versus-API concurrency work (T4.4) therefore lands in the
+integration suite instead, against real Postgres advisory locks — where the
+serialization actually happens — with a nonce-rejecting signer fake standing in
+for node-level nonce rejection. A real-chain Anvil harness is deferred, not
+dropped.
 
 ## Security notes
 
@@ -275,11 +283,11 @@ Short version:
 
 ## Phase roadmap (short)
 
-| Phase | Focus                                                                      | Status                                                                                                            |
-| ----- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                       |
-| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                |
-| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)       |
-| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                  |
-| 4     | Scheduled wallet reconciliation                                            | in progress — use case merged (T4.1, C14, migration `0004`); cron entry, failure alerting, e2e remain (T4.2–T4.4) |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                      |
+| Phase | Focus                                                                      | Status                                                                                                                                                                                                                                                              |
+| ----- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Bootstrap, shared Postgres, treasury balance, test email — no ETH movement | ✅ complete                                                                                                                                                                                                                                                         |
+| 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                                                                                                                                                                  |
+| 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)                                                                                                                                                         |
+| 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                                                                                                                                                                    |
+| 4     | Scheduled wallet reconciliation                                            | in progress — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), failure alerting (T4.3, C15), and the incremental forward-contiguous outgoing scan (TX.9, migration `0005`) merged and deployed; cron-vs-API concurrency (T4.4, C16) remains |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                                                                                                                                                                        |
