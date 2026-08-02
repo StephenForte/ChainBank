@@ -848,16 +848,16 @@ Local design choices (T4.3, 2026-08-01):
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
-| Var                                  | Service roles                  | Required                    | Default                                          | Owner task                  |
-| ------------------------------------ | ------------------------------ | --------------------------- | ------------------------------------------------ | --------------------------- |
-| `TREASURY_PRIVATE_KEY`               | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                        |
-| `FUNDING_ENABLED`                    | all                            | no                          | `false`                                          | exists (gate flips in T1.4) |
-| `FUNDING_KILL_SWITCH`                | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                        |
-| `TREASURY_MINIMUM_RESERVE_ETH`       | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)   |
-| `FUNDING_CONFIRMATIONS`              | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)    |
-| `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)    |
-| `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                        |
-| `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                        |
+| Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
+| ------------------------------------ | ------------------------------ | --------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| `TREASURY_PRIVATE_KEY`               | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                                      |
+| `FUNDING_ENABLED`                    | all                            | no                          | `false`                                          | exists (gate flips in T1.4)               |
+| `FUNDING_KILL_SWITCH`                | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                                      |
+| `TREASURY_MINIMUM_RESERVE_ETH`       | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)                 |
+| `FUNDING_CONFIRMATIONS`              | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)                  |
+| `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)                  |
+| `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                                      |
+| `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                                      |
 | `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000` (per-run max window; TX.9)               | T4.2 (registered in T4.1; semantics TX.9) |
 
 ## 4. Decision log (append-only)

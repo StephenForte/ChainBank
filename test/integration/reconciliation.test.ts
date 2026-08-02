@@ -603,7 +603,9 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       dashboardBaseUrl: 'http://localhost:3000',
       environment: 'test',
       reconcileFailureAlertThreshold: 3,
-      outgoingLookbackBlocks: options.outgoingLookbackBlocks,
+      ...(options.outgoingLookbackBlocks === undefined
+        ? {}
+        : { outgoingLookbackBlocks: options.outgoingLookbackBlocks }),
     };
   }
 

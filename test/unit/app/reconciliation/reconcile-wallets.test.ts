@@ -8,6 +8,7 @@ import type {
   FundingTransaction,
   ManagedWallet,
   ManagedWalletRepository,
+  RecordOutgoingScanCompleteInput,
   Treasury,
   TreasuryRepository,
 } from '../../../../src/app/ports.js';
@@ -334,12 +335,10 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
   it('records coverage-behind when the gap exceeds the cap and still advances only to the scanned tip', async () => {
     const stores = createInMemoryFundingStores();
     const scanner = createFakeOutgoingScanner({ latestBlockNumber: 50_000n });
-    const deps = buildDeps(
-      stores,
-      [],
-      buildTreasury({ lastOutgoingScanBlock: 1_000n }),
-      { outgoingScanner: scanner, outgoingLookbackBlocks: 20_000n },
-    );
+    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
+      outgoingScanner: scanner,
+      outgoingLookbackBlocks: 20_000n,
+    });
 
     const result = await reconcileWallets(deps, {
       role: 'cron-reconciler',
@@ -359,12 +358,9 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     const stores = createInMemoryFundingStores();
     const scanner = createFakeOutgoingScanner({ latestBlockNumber: 2_000n });
     scanner.setListIncomplete('RPC_UNAVAILABLE', 'partial failure');
-    const deps = buildDeps(
-      stores,
-      [],
-      buildTreasury({ lastOutgoingScanBlock: 1_000n }),
-      { outgoingScanner: scanner },
-    );
+    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
+      outgoingScanner: scanner,
+    });
 
     const result = await reconcileWallets(deps, {
       role: 'cron-reconciler',
@@ -517,7 +513,7 @@ function buildDeps(
     setEnabled: vi.fn(),
     recordCheckSuccess: vi.fn(),
     recordCheckFailure: vi.fn(),
-    recordOutgoingScanComplete: vi.fn((input) => {
+    recordOutgoingScanComplete: vi.fn((input: RecordOutgoingScanCompleteInput) => {
       currentTreasury = {
         ...currentTreasury,
         lastOutgoingScanBlock: input.scannedToBlock,
@@ -575,8 +571,7 @@ function buildDeps(
       let n = 0;
       return { next: () => `id-${String(++n)}` };
     })(),
-    logger:
-      overrides.logger ?? createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+    logger: overrides.logger ?? createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
     isFundingEnabled: overrides.isFundingEnabled ?? true,
     isFundingKillSwitchActive: overrides.isFundingKillSwitchActive ?? false,
     confirmations: 1,
@@ -585,6 +580,8 @@ function buildDeps(
     dashboardBaseUrl: 'http://localhost:3000',
     environment: 'test',
     reconcileFailureAlertThreshold: 3,
-    outgoingLookbackBlocks: overrides.outgoingLookbackBlocks,
+    ...(overrides.outgoingLookbackBlocks === undefined
+      ? {}
+      : { outgoingLookbackBlocks: overrides.outgoingLookbackBlocks }),
   };
 }

@@ -274,9 +274,9 @@ describe('reconciliation decisions', () => {
     it('bounds the hunt by row age and never exceeds the per-run cap', () => {
       const now = new Date('2026-08-02T00:00:00.000Z');
       const createdAt = new Date(now.getTime() - 100 * RECONCILE_BLOCK_TIME_MS);
-      expect(
-        nonceSearchLookbackBlocks({ createdAt, now, maxBlocks: 20_000n }),
-      ).toBe(100n + NONCE_SEARCH_BLOCK_MARGIN);
+      expect(nonceSearchLookbackBlocks({ createdAt, now, maxBlocks: 20_000n })).toBe(
+        100n + NONCE_SEARCH_BLOCK_MARGIN,
+      );
 
       const ancient = new Date(now.getTime() - 1_000_000 * RECONCILE_BLOCK_TIME_MS);
       expect(nonceSearchLookbackBlocks({ createdAt: ancient, now, maxBlocks: 20_000n })).toBe(20_000n);

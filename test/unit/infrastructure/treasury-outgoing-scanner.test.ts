@@ -33,28 +33,28 @@ function mockTransport(options: {
   readonly failAtBlock?: bigint;
 }): Transport {
   return custom({
-    async request({ method, params }) {
+    request({ method, params }) {
       switch (method) {
         case 'eth_chainId':
-          return `0x${SEPOLIA_CHAIN_ID.toString(16)}`;
+          return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
         case 'eth_blockNumber':
-          return `0x${options.tip.toString(16)}`;
+          return Promise.resolve(`0x${options.tip.toString(16)}`);
         case 'eth_getBlockByNumber': {
           const raw = (params as [string, boolean])[0];
           const blockNumber = BigInt(raw);
           if (options.failAtBlock !== undefined && blockNumber === options.failAtBlock) {
-            throw new Error('simulated RPC failure');
+            return Promise.reject(new Error('simulated RPC failure'));
           }
           const txs = options.transfersByBlock?.get(blockNumber) ?? [];
-          return {
+          return Promise.resolve({
             number: `0x${blockNumber.toString(16)}`,
             hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
             timestamp: '0x1',
             transactions: txs,
-          };
+          });
         }
         default:
-          throw new Error(`Unhandled RPC method in test transport: ${method}`);
+          return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
       }
     },
   });
@@ -182,11 +182,9 @@ describe('createTreasuryOutgoingScanner', () => {
 
     const progress = sink.lines().filter((line) => line.event === 'reconciliation.outgoing_scan.progress');
     expect(progress.length).toBeGreaterThan(0);
-    expect(progress[0]).toMatchObject({
-      event: 'reconciliation.outgoing_scan.progress',
-      blocksScanned: expect.any(String),
-      blocksRemaining: expect.any(String),
-    });
+    expect(progress[0]?.event).toBe('reconciliation.outgoing_scan.progress');
+    expect(typeof progress[0]?.blocksScanned).toBe('string');
+    expect(typeof progress[0]?.blocksRemaining).toBe('string');
   });
 
   it('leaves findOutgoingByNonce as not_found when the nonce is outside the searched window', async () => {

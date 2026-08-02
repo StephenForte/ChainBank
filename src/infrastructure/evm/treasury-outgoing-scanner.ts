@@ -109,10 +109,7 @@ export function createTreasuryOutgoingScanner(
         const blockNumber = await publicClient.getBlockNumber();
         return { kind: 'ok', blockNumber };
       } catch (error) {
-        options.logger.error(
-          { detail: describeUnknownError(error) },
-          'Failed to read latest block number',
-        );
+        options.logger.error({ detail: describeUnknownError(error) }, 'Failed to read latest block number');
         return {
           kind: 'unavailable',
           errorCode: 'RPC_UNAVAILABLE',
@@ -143,9 +140,7 @@ export function createTreasuryOutgoingScanner(
       }
 
       const fromBlock =
-        tipResult.blockNumber > input.lookbackBlocks
-          ? tipResult.blockNumber - input.lookbackBlocks
-          : 0n;
+        tipResult.blockNumber > input.lookbackBlocks ? tipResult.blockNumber - input.lookbackBlocks : 0n;
       const scan = await scanOutgoingWindow(publicClient, options, {
         fromAddress: input.fromAddress,
         fromBlock,
