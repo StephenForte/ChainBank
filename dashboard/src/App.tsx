@@ -4,6 +4,7 @@ import {
   checkTreasury,
   fetchReadiness,
   getEnvironment,
+  getWalletBalance,
   listFundingTransactions,
   listProjectEnvironments,
   listProjects,
@@ -28,6 +29,13 @@ const WEI_DECIMALS = 18;
 const WEI_PER_ETHER = 10n ** BigInt(WEI_DECIMALS);
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
+
+/** Point-in-time live balance from GET /v1/wallets/:id/balance (C17). */
+type WalletBalanceView =
+  | { readonly status: 'loading' }
+  | { readonly status: 'observed'; readonly wei: string; readonly ether: string; readonly observedAt: string }
+  | { readonly status: 'unavailable'; readonly errorCode: string; readonly observedAt: string }
+  | { readonly status: 'error'; readonly message: string };
 
 function loadStoredToken(): string {
   try {
@@ -105,6 +113,30 @@ function formatTimestamp(value: string | null): string {
     return '—';
   }
   return new Date(value).toLocaleString();
+}
+
+/** HH:MM:SS local — marks a balance as a point-in-time sample, not a live feed. */
+function formatClockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function balancePolicyChip(
+  balanceWei: string,
+  policyMinimumWei: string | undefined,
+): { readonly className: string; readonly label: string } {
+  if (policyMinimumWei === undefined) {
+    return { className: 'badge badge-unknown', label: 'no policy' };
+  }
+  // Funding uses strictly `<` minimum; at-or-above is fine (C14 / C2).
+  if (BigInt(balanceWei) < BigInt(policyMinimumWei)) {
+    return { className: 'badge badge-warn', label: 'below min' };
+  }
+  return { className: 'badge badge-ok', label: '≥ min' };
 }
 
 /**
@@ -189,6 +221,8 @@ export function App() {
   const [walletProjectFilter, setWalletProjectFilter] = useState('');
   const [walletEnvironmentFilter, setWalletEnvironmentFilter] = useState('');
   const [walletEnabledFilter, setWalletEnabledFilter] = useState('');
+  const [walletBalances, setWalletBalances] = useState<Readonly<Record<string, WalletBalanceView>>>({});
+  const [balancesBusy, setBalancesBusy] = useState(false);
 
   const [policyWallets, setPolicyWallets] = useState<readonly ManagedWalletResource[]>([]);
   const [policyWalletsTotal, setPolicyWalletsTotal] = useState(0);
@@ -341,6 +375,7 @@ export function App() {
       setWalletsTotal(0);
       setWalletsState('idle');
       setWalletsError(undefined);
+      setWalletBalances({});
       return;
     }
     setWalletsState('loading');
@@ -363,11 +398,54 @@ export function App() {
       setWallets(next.data);
       setWalletsTotal(next.pagination.total);
       setWalletsState(next.data.length === 0 ? 'empty' : 'ready');
+      // List reload invalidates prior point-in-time samples.
+      setWalletBalances({});
     } catch (caught) {
       setWallets([]);
       setWalletsTotal(0);
       setWalletsError(formatError(caught));
       setWalletsState('error');
+      setWalletBalances({});
+    }
+  }
+
+  async function fetchOneWalletBalance(activeToken: string, walletId: string): Promise<void> {
+    setWalletBalances((previous) => ({ ...previous, [walletId]: { status: 'loading' } }));
+    try {
+      const result = await getWalletBalance(activeToken.trim(), walletId);
+      const balance = result.balance;
+      if (balance.outcome === 'observed') {
+        const observed: WalletBalanceView = {
+          status: 'observed',
+          wei: balance.wei,
+          ether: balance.ether,
+          observedAt: balance.observedAt,
+        };
+        setWalletBalances((previous) => ({ ...previous, [walletId]: observed }));
+        return;
+      }
+      const unavailable: WalletBalanceView = {
+        status: 'unavailable',
+        errorCode: balance.errorCode,
+        observedAt: balance.observedAt,
+      };
+      setWalletBalances((previous) => ({ ...previous, [walletId]: unavailable }));
+    } catch (caught) {
+      const failed: WalletBalanceView = { status: 'error', message: formatError(caught) };
+      setWalletBalances((previous) => ({ ...previous, [walletId]: failed }));
+    }
+  }
+
+  async function checkListedWalletBalances(activeToken: string): Promise<void> {
+    if (activeToken.trim() === '' || wallets.length === 0) {
+      return;
+    }
+    setBalancesBusy(true);
+    try {
+      // Fan out one live RPC-backed request per currently listed wallet only.
+      await Promise.all(wallets.map((wallet) => fetchOneWalletBalance(activeToken, wallet.id)));
+    } finally {
+      setBalancesBusy(false);
     }
   }
 
@@ -1016,9 +1094,19 @@ export function App() {
         <section className="panel">
           <div className="panel-head">
             <h2 className="section-title">Managed wallets</h2>
-            <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
-              Reload
-            </button>
+            <div className="row">
+              <button
+                type="button"
+                className="secondary"
+                disabled={token === '' || walletsState !== 'ready' || balancesBusy}
+                onClick={() => void checkListedWalletBalances(token)}
+              >
+                {balancesBusy ? 'Checking…' : 'Check balances'}
+              </button>
+              <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
+                Reload
+              </button>
+            </div>
           </div>
           {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
           {token !== '' ? (
@@ -1075,7 +1163,8 @@ export function App() {
               {walletsState === 'ready' ? (
                 <>
                   <p className="muted">
-                    Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
+                    Showing {String(wallets.length)} of {String(walletsTotal)} wallets. Balances load on
+                    demand (one RPC read per listed wallet).
                   </p>
                   <div className="table-wrap">
                     <table className="data-table">
@@ -1084,59 +1173,109 @@ export function App() {
                           <th>Project / env</th>
                           <th>Role</th>
                           <th>Address</th>
+                          <th>Balance</th>
                           <th>Flags</th>
                           <th>Enabled</th>
                           <th />
                         </tr>
                       </thead>
                       <tbody>
-                        {wallets.map((wallet) => (
-                          <tr key={wallet.id}>
-                            <td>
-                              <strong>{wallet.project.slug}</strong>
-                              <span className="muted"> / {wallet.environment.slug}</span>
-                            </td>
-                            <td>{wallet.role}</td>
-                            <td className="mono">
-                              <a
-                                href={wallet.explorerUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={wallet.address}
-                              >
-                                {shortAddress(wallet.address)}
-                              </a>
-                            </td>
-                            <td className="muted">
-                              startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
-                              <br />
-                              reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
-                            </td>
-                            <td>
-                              <span className={enabledBadge(wallet.enabled)}>
-                                {wallet.enabled ? 'enabled' : 'disabled'}
-                              </span>
-                            </td>
-                            <td>
-                              <button
-                                type="button"
-                                className={wallet.enabled ? 'secondary' : undefined}
-                                disabled={walletBusyId === wallet.id}
-                                onClick={() => void onToggleWallet(wallet)}
-                              >
-                                {wallet.enabled ? 'Disable' : 'Enable'}
-                              </button>{' '}
-                              <button
-                                type="button"
-                                className={wallet.reconciliationEnabled ? 'secondary' : undefined}
-                                disabled={walletBusyId === wallet.id}
-                                onClick={() => void onToggleWalletReconciliation(wallet)}
-                              >
-                                {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {wallets.map((wallet) => {
+                          const balanceView = walletBalances[wallet.id];
+                          return (
+                            <tr key={wallet.id}>
+                              <td>
+                                <strong>{wallet.project.slug}</strong>
+                                <span className="muted"> / {wallet.environment.slug}</span>
+                              </td>
+                              <td>{wallet.role}</td>
+                              <td className="mono">
+                                <a
+                                  href={wallet.explorerUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={wallet.address}
+                                >
+                                  {shortAddress(wallet.address)}
+                                </a>
+                              </td>
+                              <td>
+                                {balanceView === undefined ? (
+                                  <button
+                                    type="button"
+                                    className="secondary"
+                                    disabled={balancesBusy}
+                                    onClick={() => void fetchOneWalletBalance(token, wallet.id)}
+                                  >
+                                    Check
+                                  </button>
+                                ) : null}
+                                {balanceView?.status === 'loading' ? (
+                                  <span className="muted">Checking…</span>
+                                ) : null}
+                                {balanceView?.status === 'observed' ? (
+                                  <>
+                                    <span className="mono">{balanceView.ether} ETH</span>{' '}
+                                    {(() => {
+                                      const chip = balancePolicyChip(
+                                        balanceView.wei,
+                                        wallet.policy?.minimumBalanceWei,
+                                      );
+                                      return <span className={chip.className}>{chip.label}</span>;
+                                    })()}
+                                    <div
+                                      className="muted tiny"
+                                      title={`Observed at ${balanceView.observedAt}`}
+                                    >
+                                      as of {formatClockTime(balanceView.observedAt)}
+                                    </div>
+                                  </>
+                                ) : null}
+                                {balanceView?.status === 'unavailable' ? (
+                                  <>
+                                    <span className="badge badge-unknown">unavailable</span>
+                                    <div className="muted tiny" title={balanceView.errorCode}>
+                                      as of {formatClockTime(balanceView.observedAt)}
+                                    </div>
+                                  </>
+                                ) : null}
+                                {balanceView?.status === 'error' ? (
+                                  <span className="error-inline" title={balanceView.message}>
+                                    error
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="muted">
+                                startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
+                                <br />
+                                reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
+                              </td>
+                              <td>
+                                <span className={enabledBadge(wallet.enabled)}>
+                                  {wallet.enabled ? 'enabled' : 'disabled'}
+                                </span>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className={wallet.enabled ? 'secondary' : undefined}
+                                  disabled={walletBusyId === wallet.id}
+                                  onClick={() => void onToggleWallet(wallet)}
+                                >
+                                  {wallet.enabled ? 'Disable' : 'Enable'}
+                                </button>{' '}
+                                <button
+                                  type="button"
+                                  className={wallet.reconciliationEnabled ? 'secondary' : undefined}
+                                  disabled={walletBusyId === wallet.id}
+                                  onClick={() => void onToggleWalletReconciliation(wallet)}
+                                >
+                                  {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
