@@ -1,0 +1,1 @@
+ALTER TABLE "treasuries" ADD COLUMN "last_outgoing_scan_nonce" integer;

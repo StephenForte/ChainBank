@@ -164,11 +164,18 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
             'Outgoing scan watermark must be a non-negative block number',
           );
         }
+        if (!Number.isInteger(input.scannedNonce) || input.scannedNonce < 0) {
+          throw new ChainBankError(
+            'INVALID_CONFIGURATION',
+            'Outgoing scan nonce must be a non-negative integer',
+          );
+        }
         await db
           .update(treasuries)
           .set({
             lastOutgoingScanBlock: weiToDatabaseNumeric(input.scannedToBlock, 'scannedToBlock'),
             lastOutgoingScanAt: input.scannedAt,
+            lastOutgoingScanNonce: input.scannedNonce,
             updatedAt: new Date(),
           })
           .where(eq(treasuries.id, input.treasuryId));
@@ -217,6 +224,7 @@ function toTreasury(row: TreasuryWithChain): Treasury {
         ? undefined
         : weiFromDatabaseNumeric(row.lastOutgoingScanBlock, 'lastOutgoingScanBlock'),
     lastOutgoingScanAt: row.lastOutgoingScanAt ?? undefined,
+    lastOutgoingScanNonce: row.lastOutgoingScanNonce ?? undefined,
     enabled: row.enabled,
   };
 }

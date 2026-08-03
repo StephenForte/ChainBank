@@ -32,6 +32,11 @@ export interface Treasury {
   /** Highest block included in a complete outgoing scan (C14 / TX.9). */
   readonly lastOutgoingScanBlock: bigint | undefined;
   readonly lastOutgoingScanAt: Date | undefined;
+  /**
+   * Confirmed treasury nonce at `lastOutgoingScanBlock` (C14 / TX.14).
+   * `undefined` means cannot-skip — never treat as equality with tip.
+   */
+  readonly lastOutgoingScanNonce: number | undefined;
   readonly enabled: boolean;
 }
 
@@ -67,6 +72,11 @@ export interface RecordOutgoingScanCompleteInput {
   readonly treasuryId: string;
   /** Inclusive end block of a genuinely complete scan window. */
   readonly scannedToBlock: bigint;
+  /**
+   * Confirmed treasury transaction count at `scannedToBlock` (C14 / TX.14).
+   * Written with the watermark; null stored rows cannot skip until seeded.
+   */
+  readonly scannedNonce: number;
   readonly scannedAt: Date;
 }
 

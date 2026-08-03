@@ -229,6 +229,20 @@ export function planOutgoingScanWindow(input: {
 }
 
 /**
+ * TX.14 nonce gate: every outgoing treasury transaction consumes exactly one
+ * nonce. Equality of the confirmed count at the planned tip with the count
+ * recorded when the watermark last advanced proves the planned window contains
+ * zero outgoing transactions — a skip on proven equality is a complete scan of
+ * that window. A null/undefined stored nonce never skips.
+ */
+export function shouldSkipOutgoingBodyScan(input: {
+  readonly storedNonce: number | undefined;
+  readonly tipNonce: number;
+}): boolean {
+  return input.storedNonce !== undefined && input.storedNonce === input.tipNonce;
+}
+
+/**
  * Bound `findOutgoingByNonce` by the `submission_unknown` row's age rather than
  * blindly inheriting the incremental crash-orphan window. Cap at the per-run
  * maximum. Absence within the searched window must leave the row pending.

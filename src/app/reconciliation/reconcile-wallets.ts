@@ -46,6 +46,7 @@ import {
   nonceSearchLookbackBlocks,
   planOutgoingScanWindow,
   reconciliationIdempotencyKey,
+  shouldSkipOutgoingBodyScan,
   type SweepCounters,
   classifyOutgoingAgainstRecords,
 } from './reconciliation-decisions.js';
@@ -165,6 +166,7 @@ export async function reconcileWallets(
   const pendingWatermarkAdvances: Array<{
     readonly treasuryId: string;
     readonly scannedToBlock: bigint;
+    readonly scannedNonce: number;
   }> = [];
 
   try {
@@ -200,6 +202,7 @@ export async function reconcileWallets(
       const orphanScan = await detectCrashOrphansForTreasury(dependencies, {
         treasury,
         maxBlocksPerRun: lookbackBlocks,
+        correlationId: input.correlationId,
       });
       if (orphanScan.scanStatus === 'incomplete') {
         anyScanIncomplete = true;
@@ -357,6 +360,7 @@ export async function reconcileWallets(
     await dependencies.treasuries.recordOutgoingScanComplete({
       treasuryId: advance.treasuryId,
       scannedToBlock: advance.scannedToBlock,
+      scannedNonce: advance.scannedNonce,
       scannedAt: dependencies.clock.now(),
     });
     dependencies.logger.info(
@@ -365,6 +369,7 @@ export async function reconcileWallets(
         correlationId: input.correlationId,
         treasuryId: advance.treasuryId,
         scannedToBlock: advance.scannedToBlock.toString(),
+        scannedNonce: advance.scannedNonce,
       },
       'Treasury outgoing-scan watermark advanced',
     );
@@ -867,12 +872,19 @@ async function detectCrashOrphansForTreasury(
   input: {
     readonly treasury: Treasury;
     readonly maxBlocksPerRun: bigint;
+    readonly correlationId: string;
   },
 ): Promise<{
   readonly scanStatus: 'complete' | 'incomplete';
   readonly unexplained: readonly ReconciliationFinding[];
   readonly findings: readonly ReconciliationFinding[];
-  readonly pendingAdvance: { readonly treasuryId: string; readonly scannedToBlock: bigint } | undefined;
+  readonly pendingAdvance:
+    | {
+        readonly treasuryId: string;
+        readonly scannedToBlock: bigint;
+        readonly scannedNonce: number;
+      }
+    | undefined;
 }> {
   const tipResult = await dependencies.outgoingScanner.getLatestBlockNumber();
   if (tipResult.kind === 'unavailable') {
@@ -900,6 +912,67 @@ async function detectCrashOrphansForTreasury(
       findings: [],
       pendingAdvance: undefined,
     };
+  }
+
+  // TX.14: nonce gate after plan, before the body scan. Null stored nonce never
+  // skips. Count is read at plan.toBlock (not latest) so a tip that moves during
+  // the sweep cannot mask a transaction inside the next window.
+  const storedNonce = input.treasury.lastOutgoingScanNonce;
+  let tipNonce: number | undefined;
+
+  if (storedNonce !== undefined) {
+    const countAtTip = await dependencies.outgoingScanner.getTransactionCountAtBlock({
+      address: input.treasury.addressDisplay,
+      blockNumber: plan.toBlock,
+    });
+    if (countAtTip.kind === 'ok') {
+      tipNonce = countAtTip.confirmedNonce;
+      if (shouldSkipOutgoingBodyScan({ storedNonce, tipNonce })) {
+        dependencies.logger.info(
+          {
+            event: 'reconciliation.outgoing_scan.skipped_nonce_gate',
+            correlationId: input.correlationId,
+            treasuryId: input.treasury.id,
+            storedNonce,
+            tipNonce,
+            fromBlock: plan.fromBlock.toString(),
+            toBlock: plan.toBlock.toString(),
+          },
+          'Outgoing scan skipped: treasury nonce unchanged since watermark',
+        );
+
+        const findings: ReconciliationFinding[] = [];
+        if (plan.isCoverageBehind) {
+          const markerBefore = plan.lastScannedBlock ?? plan.fromBlock - 1n;
+          findings.push({
+            kind: 'outgoing_scan_coverage_behind',
+            severity: 'warning',
+            treasuryId: input.treasury.id,
+            lastScannedBlock: markerBefore.toString(),
+            scannedFromBlock: plan.fromBlock.toString(),
+            scannedToBlock: plan.toBlock.toString(),
+            tip: plan.tip.toString(),
+            blocksRemaining: plan.blocksRemaining.toString(),
+            reason:
+              'Outgoing scan backlog exceeds the per-run cap; advanced forward-contiguously and coverage remains behind the tip.',
+          });
+        }
+
+        // Proven-empty window is a complete scan of the plan; backlog still
+        // reports incomplete while tip coverage remains behind (TX.9).
+        return {
+          scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+          unexplained: [],
+          findings,
+          pendingAdvance: {
+            treasuryId: input.treasury.id,
+            scannedToBlock: plan.advanceMarkerTo,
+            scannedNonce: tipNonce,
+          },
+        };
+      }
+    }
+    // Count unavailable or nonce delta → fall through to today's full scan.
   }
 
   const scan = await dependencies.outgoingScanner.listOutgoingTransfers({
@@ -961,10 +1034,37 @@ async function detectCrashOrphansForTreasury(
   }
   findings.push(...unexplained);
 
+  // Seed / refresh tip nonce for the watermark write. Prefer the gate read when
+  // present (toBlock is immutable for this plan); otherwise read now. Fail closed
+  // on unavailability — do not advance block without a durable nonce.
+  if (tipNonce === undefined) {
+    const countAtTip = await dependencies.outgoingScanner.getTransactionCountAtBlock({
+      address: input.treasury.addressDisplay,
+      blockNumber: plan.toBlock,
+    });
+    if (countAtTip.kind !== 'ok') {
+      findings.push({
+        kind: 'outgoing_scan_incomplete',
+        severity: 'critical',
+        treasuryId: input.treasury.id,
+        errorCode: countAtTip.errorCode,
+        reason: countAtTip.reason,
+      });
+      return {
+        scanStatus: 'incomplete',
+        unexplained,
+        findings,
+        pendingAdvance: undefined,
+      };
+    }
+    tipNonce = countAtTip.confirmedNonce;
+  }
+
   // Planned advance only — flushed after markFinished so findings are durable first.
   const pendingAdvance = {
     treasuryId: input.treasury.id,
     scannedToBlock: plan.advanceMarkerTo,
+    scannedNonce: tipNonce,
   };
 
   // Backlog remaining ⇒ incomplete: the row must not read clean while coverage

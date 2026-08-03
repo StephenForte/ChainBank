@@ -105,6 +105,7 @@ function buildTreasury(): Treasury {
     lastCheckErrorCode: undefined,
     lastOutgoingScanBlock: undefined,
     lastOutgoingScanAt: undefined,
+    lastOutgoingScanNonce: undefined,
     enabled: true,
   };
 }

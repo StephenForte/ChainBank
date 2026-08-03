@@ -724,7 +724,7 @@ interface ReconciliationFundingQuery {
   listRecordedTransactionHashesByTreasury(treasuryId);
 }
 // TreasuryRepository (additive)
-recordOutgoingScanComplete({ treasuryId, scannedToBlock, scannedAt }): Promise<Treasury>;
+recordOutgoingScanComplete({ treasuryId, scannedToBlock, scannedNonce, scannedAt }): Promise<Treasury>;
 ```
 
 Local design choices (T4.1, 2026-08-01):
@@ -825,6 +825,33 @@ TX.9 amendment (2026-08-02) — production-scale outgoing scan (no new contract 
   empty and the scan idles until the chain catches up; a transfer in a
   reorged-out marker block is not rescanned. Acceptable for a Sepolia
   funding-ops service; not silent.
+
+TX.14 amendment (2026-08-02) — nonce-gated outgoing-scan skip (no new contract number):
+
+- **Invariant:** every outgoing transaction from the treasury consumes exactly one
+  treasury nonce. Nonces are strictly monotonic (value-bearing or not). Therefore
+  if the confirmed transaction count at the planned tip equals the count recorded
+  when the watermark last advanced, there are **zero** outgoing transactions in
+  `[watermark+1, tip]` — and a block body scan of that window can find nothing the
+  crash-orphan detector cares about. Skipping on proven equality is a **complete**
+  scan of the planned window (status follows the existing TX.9 complete/incomplete
+  coverage rules; watermark advances), not a shortcut around one.
+- **Column:** `treasuries.last_outgoing_scan_nonce` (integer, nullable; migration
+  `0006`). Null means **cannot-skip**, never skip — the shape of pre-TX.14 rows
+  that already have a watermark. Boot upsert must not clobber this column.
+- **Gate** (after `planOutgoingScanWindow`, before `listOutgoingTransfers`):
+  null stored → full scan; count read at `plan.toBlock` (not `latest`) fails →
+  full scan (fail closed); equal → skip body scan, advance watermark + same
+  nonce, log `reconciliation.outgoing_scan.skipped_nonce_gate` with both nonces;
+  differs → full scan of the planned window, then record the new tip nonce.
+- **Durability:** `scannedNonce` rides the existing post-`markFinished`
+  `recordOutgoingScanComplete` write — same ordering as TX.9/TX.10; no second
+  write path. An interrupted run advances neither block nor nonce.
+- **Reorg limitation unchanged:** a deep reorg that replaces an already-counted
+  transaction inside a previously advanced window remains the stated TX.9
+  limitation; the nonce gate makes nothing worse.
+- **Out of scope:** bisecting the k consumption points when the delta is small
+  (k·log(window) instead of a full body scan).
 
 ### C15 — Reconciliation failure alert (owner: T4.3)
 
@@ -1036,3 +1063,4 @@ Local design choices (TX.13, 2026-08-02):
 - 2026-08-02 — **TX.10 merged (PR #48)** after two planner review rounds, amending C7 in place: a durable pre-broadcast intent (`submission_unknown` + reserved nonce + `BROADCAST_INTENT`) is committed on a pool connection **outside** the advisory-lock transaction, so a killed lock-holder can no longer erase the per-wallet gate. The duplicate T4.4 measured (`sendCalls=2`, one row) is closed — the same race now issues exactly one transfer, and a second idempotency key is refused with `PENDING_FUNDING_EXISTS`. Round 2 added a startup guard (signing-capable roles refuse to boot when `DATABASE_POOL_MAX < 2`, since dispatch needs a second connection while the lock holds the first; `cron-reconciler` default 2 → 3) and documented `BROADCAST_INTENT` in `docs/runbooks/recover-stuck-pending-nonce.md`. **Correction:** the planner's round-1 claim that a pool of 1 deadlocks silently was wrong — the pre-existing `connectionTimeoutMillis: 10_000` bounds it, and re-measurement showed `DATABASE_UNAVAILABLE` at ~10.0s with zero sends (fail closed, pre-broadcast). The guard stands; its justification is converting a per-request stall into a startup failure. `main` at 430 unit / 86 integration, 0 skipped.
 - 2026-08-02 — TX.11: dashboard `setWalletReconciliationEnabled` toggle (existing `PATCH /v1/wallets/:id`) plus reconciler completion/heartbeat `weiTransferred` as a decimal string (no new contract; C16 remains highest).
 - 2026-08-02 — TX.13 published C17: `GET /v1/wallets/:id/balance` (`readWalletBalance`, fresh `BalanceReader` read, C13-style scoped authz, fail-closed `unavailable` outcome) plus on-demand Managed wallets Balance column.
+- 2026-08-02 — TX.14 amended C14 in place (third amendment): nonce-gated outgoing-scan skip via `treasuries.last_outgoing_scan_nonce` (migration `0006`). Proven tip-nonce equality skips the body scan as a complete window; null/unavailable/delta fail closed into today's full scan.
