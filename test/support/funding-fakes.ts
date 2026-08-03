@@ -613,6 +613,12 @@ export function createFakeOutgoingScanner(options?: {
   setLatestBlockNumber(blockNumber: bigint): void;
   setTransfers(transfers: readonly TreasuryOutgoingTransfer[]): void;
   setListIncomplete(errorCode: string, reason: string): void;
+  setCountAtBlockUnavailable(errorCode: string, reason: string): void;
+  clearCountAtBlockUnavailable(): void;
+  /** Tip + count-at-block + list calls — the scanner RPC budget under test. */
+  scannerRpcCallCount(): number;
+  readonly latestBlockCalls: Array<{ at: number }>;
+  readonly countAtBlockCalls: Array<{ address: string; blockNumber: bigint }>;
   readonly listCalls: Array<{ fromAddress: string; fromBlock: bigint; toBlock: bigint }>;
   readonly findByNonceCalls: Array<{ fromAddress: string; nonce: number; lookbackBlocks: bigint }>;
 } {
@@ -622,15 +628,28 @@ export function createFakeOutgoingScanner(options?: {
   let transfers = [...(options?.transfers ?? [])];
   let listOverride: OutgoingScanResult | undefined = options?.listResult;
   let nonceOverride: ConfirmedNonceResult | undefined = options?.nonceResult;
+  let countAtBlockOverride: ConfirmedNonceResult | undefined;
+  /** When > 0, the override applies to the next N count-at-block calls only. */
+  let countAtBlockOverrideRemaining = 0;
+  const latestBlockCalls: Array<{ at: number }> = [];
+  const countAtBlockCalls: Array<{ address: string; blockNumber: bigint }> = [];
   const listCalls: Array<{ fromAddress: string; fromBlock: bigint; toBlock: bigint }> = [];
   const findByNonceCalls: Array<{ fromAddress: string; nonce: number; lookbackBlocks: bigint }> = [];
 
   return {
+    latestBlockCalls,
+    countAtBlockCalls,
     listCalls,
     findByNonceCalls,
+    scannerRpcCallCount() {
+      // Tip + count-at-block + body list. findByNonce is a separate settlement path.
+      return latestBlockCalls.length + countAtBlockCalls.length + listCalls.length;
+    },
     setConfirmedNonce(nonce) {
       confirmedNonce = nonce;
       nonceOverride = undefined;
+      countAtBlockOverride = undefined;
+      countAtBlockOverrideRemaining = 0;
     },
     setLatestBlockNumber(blockNumber) {
       latestBlockNumber = blockNumber;
@@ -642,6 +661,16 @@ export function createFakeOutgoingScanner(options?: {
     setListIncomplete(errorCode, reason) {
       listOverride = { kind: 'incomplete', errorCode, reason };
     },
+    setCountAtBlockUnavailable(errorCode, reason) {
+      // One-shot by default: gate fails closed into a full scan; the post-scan
+      // seed read can still succeed (transient RPC blip).
+      countAtBlockOverride = { kind: 'unavailable', errorCode, reason };
+      countAtBlockOverrideRemaining = 1;
+    },
+    clearCountAtBlockUnavailable() {
+      countAtBlockOverride = undefined;
+      countAtBlockOverrideRemaining = 0;
+    },
     getConfirmedTransactionCount() {
       if (nonceOverride !== undefined) {
         return Promise.resolve(nonceOverride);
@@ -649,9 +678,19 @@ export function createFakeOutgoingScanner(options?: {
       return Promise.resolve({ kind: 'ok' as const, confirmedNonce });
     },
     getLatestBlockNumber() {
+      latestBlockCalls.push({ at: latestBlockCalls.length });
       return Promise.resolve({ kind: 'ok' as const, blockNumber: latestBlockNumber });
     },
-    getTransactionCountAtBlock() {
+    getTransactionCountAtBlock(input) {
+      countAtBlockCalls.push({ address: input.address, blockNumber: input.blockNumber });
+      if (countAtBlockOverride !== undefined && countAtBlockOverrideRemaining > 0) {
+        countAtBlockOverrideRemaining -= 1;
+        const result = countAtBlockOverride;
+        if (countAtBlockOverrideRemaining === 0) {
+          countAtBlockOverride = undefined;
+        }
+        return Promise.resolve(result);
+      }
       if (nonceOverride !== undefined) {
         return Promise.resolve(nonceOverride);
       }

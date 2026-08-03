@@ -108,6 +108,12 @@ export const treasuries = pgTable(
      */
     lastOutgoingScanBlock: weiColumn('last_outgoing_scan_block'),
     lastOutgoingScanAt: timestamp('last_outgoing_scan_at', { withTimezone: true }),
+    /**
+     * Confirmed treasury transaction count at `last_outgoing_scan_block` (C14 / TX.14).
+     * Null means cannot-skip (pre-TX.14 rows / unread); never treat null as skip.
+     * Boot upsert must never clobber this column.
+     */
+    lastOutgoingScanNonce: integer('last_outgoing_scan_nonce'),
 
     enabled: boolean('enabled').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

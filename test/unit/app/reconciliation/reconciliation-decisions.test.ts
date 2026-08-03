@@ -11,6 +11,7 @@ import {
   planOutgoingScanWindow,
   RECONCILE_BLOCK_TIME_MS,
   reconciliationIdempotencyKey,
+  shouldSkipOutgoingBodyScan,
 } from '../../../../src/app/reconciliation/reconciliation-decisions.js';
 import type { ManagedWallet, TreasuryOutgoingTransfer } from '../../../../src/app/ports.js';
 
@@ -272,6 +273,14 @@ describe('reconciliation decisions', () => {
           maxBlocksPerRun: 20_000n,
         }),
       ).toEqual({ kind: 'empty', tip: 9_000n, lastScannedBlock: 9_000n });
+    });
+  });
+
+  describe('shouldSkipOutgoingBodyScan', () => {
+    it('skips only on proven equality with a stored nonce', () => {
+      expect(shouldSkipOutgoingBodyScan({ storedNonce: 7, tipNonce: 7 })).toBe(true);
+      expect(shouldSkipOutgoingBodyScan({ storedNonce: 7, tipNonce: 8 })).toBe(false);
+      expect(shouldSkipOutgoingBodyScan({ storedNonce: undefined, tipNonce: 0 })).toBe(false);
     });
   });
 

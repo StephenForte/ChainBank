@@ -75,6 +75,7 @@ function buildTreasury(overrides: Partial<Treasury> = {}): Treasury {
     lastCheckErrorCode: undefined,
     lastOutgoingScanBlock: undefined,
     lastOutgoingScanAt: undefined,
+    lastOutgoingScanNonce: undefined,
     enabled: true,
     ...overrides,
   };
@@ -306,6 +307,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
       treasuryId: 'treasury-1',
       scannedToBlock: 1_050n,
+      scannedNonce: 0,
       scannedAt: now,
     });
     expect(result.outgoingScanStatus).toBe('complete');
@@ -411,10 +413,16 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
 
   it('does not advance the watermark when markFinished fails', async () => {
     const stores = createInMemoryFundingStores();
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 1_050n });
-    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
-      outgoingScanner: scanner,
-    });
+    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 1_050n, confirmedNonce: 7 });
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanNonce: 7,
+      }),
+      { outgoingScanner: scanner },
+    );
     deps.reconciliationRuns.markFinished = () => Promise.reject(new Error('forced markFinished failure'));
 
     await expect(
@@ -426,6 +434,8 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
       }),
     ).rejects.toThrow('forced markFinished failure');
 
+    // TX.14: skip path queues watermark+nonce, but neither flushes without markFinished.
+    expect(scanner.listCalls).toHaveLength(0);
     expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
   });
 
@@ -470,6 +480,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     const disabled = buildDeps(stores, [], buildTreasury(), {
       isFundingEnabled: false,
     });
+
     const disabledResult = await reconcileWallets(disabled, {
       role: 'cron-reconciler',
       credentialId: 'cron-cred',
@@ -571,6 +582,221 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
   });
 });
 
+describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {
+  it('skips the body scan when tip nonce equals the stored watermark nonce', async () => {
+    const sink = collectLogs();
+    const stores = createInMemoryFundingStores();
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      confirmedNonce: 12,
+    });
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanAt: now,
+        lastOutgoingScanNonce: 12,
+      }),
+      {
+        outgoingScanner: scanner,
+        logger: createLogger({
+          level: 'info',
+          serviceRole: 'test',
+          environment: 'test',
+          destination: sink.stream,
+        }),
+      },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-nonce-skip',
+      runId: 'run-nonce-skip',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(scanner.listCalls).toHaveLength(0);
+    expect(scanner.countAtBlockCalls).toEqual([{ address: TREASURY_ADDRESS, blockNumber: 1_050n }]);
+    // Headline: steady-state skip ≤ tip + count (2 scanner RPC calls).
+    expect(scanner.scannerRpcCallCount()).toBeLessThanOrEqual(2);
+    expect(scanner.scannerRpcCallCount()).toBe(2);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 1_050n,
+      scannedNonce: 12,
+      scannedAt: now,
+    });
+    expect(result.outgoingScanStatus).toBe('complete');
+    expect(result.unexplainedTransferCount).toBe(0);
+
+    const skipLog = sink
+      .lines()
+      .find((line) => line.event === 'reconciliation.outgoing_scan.skipped_nonce_gate');
+    expect(skipLog).toMatchObject({
+      storedNonce: 12,
+      tipNonce: 12,
+      treasuryId: 'treasury-1',
+    });
+  });
+
+  it('runs a full scan on nonce delta and still reports unexplained transfers', async () => {
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'bb'.repeat(32)}`;
+    const windowBlocks = 50n;
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      confirmedNonce: 13,
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH / 2n,
+          nonce: 12,
+          blockNumber: 1_025n,
+        },
+      ],
+    });
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanNonce: 12,
+      }),
+      { outgoingScanner: scanner },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-nonce-delta',
+      runId: 'run-nonce-delta',
+    });
+
+    expect(scanner.listCalls).toEqual([
+      { fromAddress: TREASURY_ADDRESS, fromBlock: 1_001n, toBlock: 1_050n },
+    ]);
+    // Non-skip path pays the body-list cost; production lists ~window block fetches.
+    expect(scanner.listCalls[0]!.toBlock - scanner.listCalls[0]!.fromBlock + 1n).toBe(windowBlocks);
+    expect(result.unexplainedTransferCount).toBe(1);
+    expect(
+      result.findings.some(
+        (f) => f.kind === 'unexplained_outgoing_transfer' && f.transactionHash === orphanHash,
+      ),
+    ).toBe(true);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 1_050n,
+      scannedNonce: 13,
+      scannedAt: now,
+    });
+    expect(result.outgoingScanStatus).toBe('complete');
+  });
+
+  it('fails closed to a full scan when the tip-nonce read is unavailable', async () => {
+    const sink = collectLogs();
+    const stores = createInMemoryFundingStores();
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      confirmedNonce: 12,
+    });
+    scanner.setCountAtBlockUnavailable('RPC_UNAVAILABLE', 'count probe down');
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanNonce: 12,
+      }),
+      {
+        outgoingScanner: scanner,
+        logger: createLogger({
+          level: 'info',
+          serviceRole: 'test',
+          environment: 'test',
+          destination: sink.stream,
+        }),
+      },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-nonce-unavailable',
+      runId: 'run-nonce-unavailable',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(scanner.listCalls).toHaveLength(1);
+    expect(result.outgoingScanStatus).toBe('complete');
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ scannedToBlock: 1_050n, scannedNonce: 12 }),
+    );
+    expect(
+      sink.lines().some((line) => line.event === 'reconciliation.outgoing_scan.skipped_nonce_gate'),
+    ).toBe(false);
+  });
+
+  it('full-scans when stored nonce is null, records nonce, then skips on the next run', async () => {
+    const stores = createInMemoryFundingStores();
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      confirmedNonce: 4,
+    });
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanAt: now,
+        lastOutgoingScanNonce: undefined,
+      }),
+      { outgoingScanner: scanner },
+    );
+
+    const first = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-seed-nonce',
+      runId: 'run-seed-nonce',
+    });
+
+    expect(scanner.listCalls).toHaveLength(1);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 1_050n,
+      scannedNonce: 4,
+      scannedAt: now,
+    });
+    expect(first.outgoingScanStatus).toBe('complete');
+
+    scanner.setLatestBlockNumber(1_100n);
+    scanner.listCalls.length = 0;
+    scanner.countAtBlockCalls.length = 0;
+    scanner.latestBlockCalls.length = 0;
+
+    const second = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-after-seed',
+      runId: 'run-after-seed',
+    });
+
+    expect(scanner.listCalls).toHaveLength(0);
+    expect(scanner.scannerRpcCallCount()).toBeLessThanOrEqual(2);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenLastCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 1_100n,
+      scannedNonce: 4,
+      scannedAt: now,
+    });
+    expect(second.outgoingScanStatus).toBe('complete');
+  });
+});
+
 function buildDeps(
   stores: ReturnType<typeof createInMemoryFundingStores>,
   wallets: readonly ManagedWallet[],
@@ -609,6 +835,7 @@ function buildDeps(
         ...currentTreasury,
         lastOutgoingScanBlock: input.scannedToBlock,
         lastOutgoingScanAt: input.scannedAt,
+        lastOutgoingScanNonce: input.scannedNonce,
       };
       return Promise.resolve(currentTreasury);
     }),

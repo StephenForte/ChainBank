@@ -35,6 +35,7 @@ const treasury: Treasury = {
   lastCheckErrorCode: undefined,
   lastOutgoingScanBlock: undefined,
   lastOutgoingScanAt: undefined,
+  lastOutgoingScanNonce: undefined,
   enabled: true,
 };
 

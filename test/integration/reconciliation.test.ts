@@ -464,7 +464,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
         [WALLET_A_ADDRESS]: ONE_ETH,
       },
     });
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 5_000n });
+    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 5_000n, confirmedNonce: 3 });
 
     const first = await reconcileWallets(
       buildReconcileDeps({
@@ -487,8 +487,9 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
     const afterFirst = await treasuryRepo.findById(seed.treasuryId);
     expect(afterFirst?.lastOutgoingScanBlock).toBe(5_000n);
     expect(afterFirst?.lastOutgoingScanAt).toBeTruthy();
+    expect(afterFirst?.lastOutgoingScanNonce).toBe(3);
 
-    // Boot upsert must not reset the watermark (C14 / TX.9).
+    // Boot upsert must not reset the watermark or nonce (C14 / TX.9 / TX.14).
     await registerConfiguredTreasury(
       { chains: createChainRepository(handle.db), treasuries: treasuryRepo },
       {
@@ -511,8 +512,11 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
     );
     const afterUpsert = await treasuryRepo.findById(seed.treasuryId);
     expect(afterUpsert?.lastOutgoingScanBlock).toBe(5_000n);
+    expect(afterUpsert?.lastOutgoingScanNonce).toBe(3);
 
+    // Nonce delta forces the body scan so the incremental window is still proven.
     scanner.setLatestBlockNumber(5_050n);
+    scanner.setConfirmedNonce(4);
     scanner.listCalls.length = 0;
     await reconcileWallets(
       buildReconcileDeps({
@@ -532,9 +536,37 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
 
     const afterSecond = await treasuryRepo.findById(seed.treasuryId);
     expect(afterSecond?.lastOutgoingScanBlock).toBe(5_050n);
+    expect(afterSecond?.lastOutgoingScanNonce).toBe(4);
 
     const [row] = await handle.db.select().from(treasuries).where(eq(treasuries.id, seed.treasuryId));
     expect(row?.lastOutgoingScanBlock).toBe('5050');
+    expect(row?.lastOutgoingScanNonce).toBe(4);
+
+    // Steady-state equality: tip advances, nonce unchanged → skip body scan (≤ 2 RPCs).
+    scanner.setLatestBlockNumber(5_100n);
+    scanner.listCalls.length = 0;
+    scanner.countAtBlockCalls.length = 0;
+    scanner.latestBlockCalls.length = 0;
+    const skipped = await reconcileWallets(
+      buildReconcileDeps({
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        balanceReader,
+        outgoingScanner: scanner,
+        outgoingLookbackBlocks: 1_000n,
+      }),
+      {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-mark-3-${randomUUID()}`,
+      },
+    );
+    expect(skipped.outgoingScanStatus).toBe('complete');
+    expect(scanner.listCalls).toHaveLength(0);
+    expect(scanner.scannerRpcCallCount()).toBeLessThanOrEqual(2);
+    const afterSkip = await treasuryRepo.findById(seed.treasuryId);
+    expect(afterSkip?.lastOutgoingScanBlock).toBe(5_100n);
+    expect(afterSkip?.lastOutgoingScanNonce).toBe(4);
   });
 
   it('records not-run scan status for a policy-disabled early exit', async () => {
