@@ -928,6 +928,54 @@ Local design choices (T4.4, 2026-08-02):
   gate). That case is `.skip`-ped with the defect named — not softened — pending
   a planner-dispatched cross-cutting fix.
 
+### C17 — Live wallet balance (owner: TX.13)
+
+```ts
+// HTTP (operator, read-only, scoped project-service reads)
+// GET /v1/wallets/:id/balance
+
+// Application use case (src/app/wallets/read-wallet-balance.ts)
+function readWalletBalance(deps, input): Promise<{ wallet; reading: BalanceReading }>;
+// assertWalletReadPermission (wallet:read; project-service bypass)
+// → WALLET_NOT_FOUND if missing
+// → authorizeScope({ action: 'read', projectId, environmentId })
+// → BalanceReader.readBalance (fresh; never-throws unavailable)
+
+// Success (HTTP 200)
+{
+  balance: {
+    outcome: 'observed';
+    wei: string; // decimal string
+    ether: string; // display only
+    blockNumber: string; // decimal string
+    observedAt: string; // ISO 8601 UTC
+  }
+}
+
+// Provider / chain failure (HTTP 200 — fail closed, not a balance)
+{
+  balance: {
+    outcome: 'unavailable';
+    errorCode: 'RPC_UNAVAILABLE' | 'CHAIN_ID_MISMATCH';
+    reason: string;
+    observedAt: string;
+  }
+}
+```
+
+Local design choices (TX.13, 2026-08-02):
+
+- **Authz order mirrors C13:** permission → existence (404) → scope (403). A
+  scoped project-service credential must not learn another project's address or
+  balance. Env-level scope rows authorize only wallets in that environment.
+- **No observation write:** GET is live and read-only; it does not insert
+  `balance_observations`. Contrast `POST /v1/treasuries/:id/check`.
+- **Unavailable shape:** HTTP 200 with `outcome: 'unavailable'` and no `wei` /
+  `ether` fields — never surface provider failure as `0` (AGENTS.md §7).
+- **Ports:** reuses existing `BalanceReader`; no `src/app/ports.ts` change.
+- **Dashboard:** on-demand "Check balances" (listed wallets only); never auto-fire
+  on mount. Chips: below min / ≥ min / no policy / unavailable.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -987,3 +1035,4 @@ Local design choices (T4.4, 2026-08-02):
 - 2026-08-02 — TX.10 amended C7: durable pre-broadcast `insertBroadcastIntent` (`submission_unknown` + nonce, committed outside the advisory-lock txn) closes the crash-induced duplicate measured by T4.4; C16 crash case inverted; detection of intent-less orphans and ambiguous `RPC_UNAVAILABLE` under race remain covered.
 - 2026-08-02 — **TX.10 merged (PR #48)** after two planner review rounds, amending C7 in place: a durable pre-broadcast intent (`submission_unknown` + reserved nonce + `BROADCAST_INTENT`) is committed on a pool connection **outside** the advisory-lock transaction, so a killed lock-holder can no longer erase the per-wallet gate. The duplicate T4.4 measured (`sendCalls=2`, one row) is closed — the same race now issues exactly one transfer, and a second idempotency key is refused with `PENDING_FUNDING_EXISTS`. Round 2 added a startup guard (signing-capable roles refuse to boot when `DATABASE_POOL_MAX < 2`, since dispatch needs a second connection while the lock holds the first; `cron-reconciler` default 2 → 3) and documented `BROADCAST_INTENT` in `docs/runbooks/recover-stuck-pending-nonce.md`. **Correction:** the planner's round-1 claim that a pool of 1 deadlocks silently was wrong — the pre-existing `connectionTimeoutMillis: 10_000` bounds it, and re-measurement showed `DATABASE_UNAVAILABLE` at ~10.0s with zero sends (fail closed, pre-broadcast). The guard stands; its justification is converting a per-request stall into a startup failure. `main` at 430 unit / 86 integration, 0 skipped.
 - 2026-08-02 — TX.11: dashboard `setWalletReconciliationEnabled` toggle (existing `PATCH /v1/wallets/:id`) plus reconciler completion/heartbeat `weiTransferred` as a decimal string (no new contract; C16 remains highest).
+- 2026-08-02 — TX.13 published C17: `GET /v1/wallets/:id/balance` (`readWalletBalance`, fresh `BalanceReader` read, C13-style scoped authz, fail-closed `unavailable` outcome) plus on-demand Managed wallets Balance column.

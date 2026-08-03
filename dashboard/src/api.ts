@@ -429,6 +429,31 @@ export async function listWallets(
   return body as PaginatedListResponse<ManagedWalletResource>;
 }
 
+/** C17 — live on-chain balance. `unavailable` has no wei/ether (never treat as 0). */
+export type WalletBalanceResponse =
+  | {
+      readonly balance: {
+        readonly outcome: 'observed';
+        readonly wei: string;
+        readonly ether: string;
+        readonly blockNumber: string;
+        readonly observedAt: string;
+      };
+    }
+  | {
+      readonly balance: {
+        readonly outcome: 'unavailable';
+        readonly errorCode: string;
+        readonly reason: string;
+        readonly observedAt: string;
+      };
+    };
+
+export async function getWalletBalance(token: string, walletId: string): Promise<WalletBalanceResponse> {
+  const body = await authorizedJson(token, `/v1/wallets/${walletId}/balance`);
+  return body as WalletBalanceResponse;
+}
+
 export async function setWalletEnabled(
   token: string,
   walletId: string,

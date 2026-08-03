@@ -1,11 +1,12 @@
 import type { AppInstance } from '../types.js';
 import { ensureWalletFunded } from '../../app/funding/ensure-wallet-funded.js';
 import { listWallets } from '../../app/wallets/list-wallets.js';
+import { readWalletBalance } from '../../app/wallets/read-wallet-balance.js';
 import { registerWallet } from '../../app/wallets/register-wallet.js';
 import { setWalletPolicy } from '../../app/wallets/set-wallet-policy.js';
 import { updateWallet } from '../../app/wallets/update-wallet.js';
 import type { Container } from '../../container.js';
-import { parseWeiDecimalString } from '../../domain/wei.js';
+import { formatWeiAsEther, parseWeiDecimalString } from '../../domain/wei.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeManagedWallet } from '../serializers/wallet.js';
 import {
@@ -138,6 +139,42 @@ const ensureFundedResponseSchema = {
     transactionHash: { anyOf: [{ type: 'null' }, { type: 'string', minLength: 66, maxLength: 66 }] },
     explorerUrl: { anyOf: [{ type: 'null' }, { type: 'string' }] },
     reasonCode: { anyOf: [{ type: 'null' }, { type: 'string' }] },
+  },
+} as const;
+
+/** C17 — live wallet balance. Discriminated so unavailable never looks like wei 0. */
+const walletBalanceResponseSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['balance'],
+  properties: {
+    balance: {
+      anyOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['outcome', 'wei', 'ether', 'blockNumber', 'observedAt'],
+          properties: {
+            outcome: { type: 'string', enum: ['observed'] },
+            wei: weiDecimalString,
+            ether: { type: 'string', minLength: 1 },
+            blockNumber: { type: 'string', pattern: '^[0-9]+$' },
+            observedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['outcome', 'errorCode', 'reason', 'observedAt'],
+          properties: {
+            outcome: { type: 'string', enum: ['unavailable'] },
+            errorCode: { type: 'string', enum: ['RPC_UNAVAILABLE', 'CHAIN_ID_MISMATCH'] },
+            reason: { type: 'string' },
+            observedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      ],
+    },
   },
 } as const;
 
@@ -274,6 +311,63 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
       return {
         data: page.items.map(serializeManagedWallet),
         pagination: { limit, offset, total: page.total },
+      };
+    },
+  );
+
+  /**
+   * Live on-chain ETH balance for one managed wallet (C17 / TX.13).
+   *
+   * Fresh RPC read; does not write balance_observations. Unavailable reads
+   * return HTTP 200 with outcome `unavailable` — never wei "0".
+   */
+  app.get(
+    '/v1/wallets/:id/balance',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: walletIdParams,
+        response: {
+          200: walletBalanceResponseSchema,
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const { id } = request.params as { id: string };
+
+      const result = await readWalletBalance(
+        {
+          managedWallets: container.repositories.managedWallets,
+          credentialScopes: container.repositories.credentialScopes,
+          balanceReader: container.balanceReader,
+        },
+        {
+          role: actor.role,
+          credentialId: actor.credentialId,
+          walletId: id,
+        },
+      );
+
+      if (result.reading.kind === 'unavailable') {
+        return {
+          balance: {
+            outcome: 'unavailable' as const,
+            errorCode: result.reading.errorCode,
+            reason: result.reading.reason,
+            observedAt: result.reading.observedAt.toISOString(),
+          },
+        };
+      }
+
+      return {
+        balance: {
+          outcome: 'observed' as const,
+          wei: result.reading.balanceWei.toString(),
+          ether: formatWeiAsEther(result.reading.balanceWei),
+          blockNumber: result.reading.blockNumber.toString(),
+          observedAt: result.reading.observedAt.toISOString(),
+        },
       };
     },
   );
