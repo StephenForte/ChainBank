@@ -92,7 +92,8 @@ this is a waiting game, and the run IDs above are the start of the record.
 | T4.4 cron-vs-API concurrency (C16)                           | ✅ done   | PR #46 (one case `.skip`)  |
 | TX.10 crash-duplicate prevention (C7 amendment)              | ✅ done   | PR #48 (two review rounds) |
 | TX.11 dashboard reconcile toggle + `weiTransferred` log      | ✅ done   | PR #53                     |
-| TX.12 dashboard design-system pass (presentation only)       | 🔄 review | PR #56 — approved          |
+| TX.12 dashboard design-system pass (presentation only)       | ✅ done   | PR #56 (+ #58, #59)        |
+| TX.13 live wallet balances (C17)                             | 🔄 review | PR #61 — approved          |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -812,6 +813,22 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   an "unavailable" chip. Load on demand (button), not on mount: each check is a
   real RPC call and public Sepolia is rate-limited. Chips reuse the TX.12 badge
   system (`below min` warn / `≥ min` ok / `no policy` / `unavailable` unknown).
+
+  **Delivered — approved at review (planner, 2026-08-02), PR #61.** Gate re-run:
+  444 unit / 91 integration, 0 skipped; scope held; `ports.ts` untouched
+  (`BalanceReader` sufficed). The worker disclosed it could not hand-verify the
+  dashboard; the planner closed that gap in a browser against a scratch DB
+  seeded with the **real** ForteL2 addresses: harvest read
+  **1.399840335572966 ETH** live from Sepolia — the operator's original
+  health-dump figure to the wei — with the `≥ min` chip; proposer 0.5 vs min
+  0.7 showed `below min`; sequencer showed `no policy`; zero
+  `balance_observations` rows were written. The failure path was exercised by
+  restarting the API against a dead RPC: every row rendered `unavailable` —
+  never `0 ETH`. Better than spec: the response is a tagged `outcome` union
+  (`observed` / `unavailable`, both `additionalProperties: false`), so a client
+  cannot read a wei field off a failed response — the phantom-zero hazard is
+  structurally unrepresentable. Noted for scale: a full-panel check is one live
+  RPC read per visible wallet (≤50); fine at 5, batch-endpoint territory at 50.
 
   Also closes the loop on TX.12's danger-red observation: operator flinched
   (#58 demoted Disable buttons to secondary outline), and disabling the smoke
