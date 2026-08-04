@@ -42,6 +42,7 @@
     "@fastify/rate-limit": "^11.1.0",
     "@fastify/static": "^10.1.2",
     "drizzle-orm": "^0.45.2",
+    "escape-html": "^1.0.3",
     "fastify": "^5.10.0",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
@@ -51,6 +52,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/escape-html": "^1.0.4",
     "@types/node": "^26.1.1",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
@@ -74,6 +76,9 @@
       "esbuild": "^0.25.12"
     },
     "brace-expansion": "5.0.9",
-    "fast-uri": "3.1.5"
+    "fast-uri": "3.1.5",
+    "fast-json-stringify": {
+      "fast-uri": "4.1.2"
+    }
   }
 }
