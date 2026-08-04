@@ -58,6 +58,21 @@ happened at least twice without intervention** — that is the difference betwee
 "the mechanism works" and "reconciliation keeps wallets funded". No task remains;
 this is a waiting game, and the run IDs above are the start of the record.
 
+**Unattended cycle 1 of 2 — observed 2026-08-04, verified on-chain.** BATCHER
+burned from its 0.4 target down to an implied **0.12671371254169426 ETH**
+(below the 0.15 minimum) and was restored by the **scheduled** run — the
+transaction row was created at 18:00:26 UTC, the `0 */6 * * *` boundary to the
+half-minute, with no operator action. Transfer
+`0xbc4adabf989214f8563f8bd569a3b84dc5f2403da3528ce645719c41376f121e` (block
+11418955, receipt `0x1`): **0.27328628745830574 ETH**, exactly
+`target − balance`, treasury nonce **2** — perfect continuity after the 8/2
+top-up's nonce 1. Verified via `eth_getTransactionByHash` /
+`eth_getTransactionReceipt` against a public Sepolia node, per house rule.
+Post-restore burn already visible (0.3695 ETH within hours) — the wallet is
+genuinely consuming, not idle. Measured burn ≈ 0.142 ETH/day ⇒ cycle 2
+expected ≈ 2026-08-06 midday UTC. **One more unattended restoration closes
+Phase 4.**
+
 | Task                                                          | Status    | Landed in                  |
 | ------------------------------------------------------------- | --------- | -------------------------- |
 | T1.1 schema + migration `0001`                                | ✅ done   | PR #2                      |
