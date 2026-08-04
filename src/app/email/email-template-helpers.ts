@@ -1,3 +1,4 @@
+import escapeHtmlLib from 'escape-html';
 import { formatWeiAsEther } from '../../domain/wei.js';
 
 export interface RenderedEmailTemplate {
@@ -12,20 +13,8 @@ export function formatBalanceDisplay(wei: bigint): string {
 }
 
 /** Escape text for safe interpolation into HTML element/attribute content. */
-const HTML_ESCAPE_LOOKUP: Readonly<Record<string, string>> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-};
-
 export function escapeHtml(value: string): string {
-  let escaped = '';
-  for (const char of value) {
-    escaped += HTML_ESCAPE_LOOKUP[char] ?? char;
-  }
-  return escaped;
+  return escapeHtmlLib(value);
 }
 
 export function htmlRow(label: string, value: string): string {
