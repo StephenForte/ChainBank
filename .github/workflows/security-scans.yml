@@ -1,0 +1,56 @@
+name: Security & Vulnerability Scans
+
+on:
+  pull_request:
+    #branches: [ main, master ]
+
+# Grant minimum required permissions for scanning and SARIF reporting
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+jobs:
+  semgrep-sast:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep CI
+        run: semgrep ci
+        env:
+          # Reads rules and policies directly from your Semgrep Cloud App
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  trivy-sca:
+    name: Trivy Dependency & Misconfig Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      # --- ADDED: Cache the Trivy DB to speed up future runs ---
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: ${{ runner.os }}-trivy-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-trivy-
+      # --------------------------------------------------------
+
+      - name: Aqua Security Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          # Focus on high-risk vulnerabilities to reduce noise
+          severity: 'HIGH,CRITICAL'
+          # Set to '1' to fail/block PRs if high or critical CVEs are detected
+          exit-code: '1'
+          # Ignores unpatched upstream vulnerabilities you can't fix yet
+          ignore-unfixed: true
