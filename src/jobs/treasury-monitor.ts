@@ -51,9 +51,8 @@ async function run(container: Container, operationId: string): Promise<void> {
   const result = await checkTreasuryBalance(
     {
       treasuries: container.repositories.treasuries,
-      balanceObservations: container.repositories.balanceObservations,
       balanceReader: container.balanceReader,
-      auditEvents: container.repositories.auditEvents,
+      operatorMutations: container.operatorMutations,
     },
     {
       treasuryId: treasury.id,

@@ -59,8 +59,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
 
       const treasury = await setTreasuryEnabled(
         {
-          treasuries: container.repositories.treasuries,
-          auditEvents: container.repositories.auditEvents,
+          operatorMutations: container.operatorMutations,
         },
         {
           role: actor.role,
@@ -100,9 +99,8 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
       const result = await checkTreasuryBalance(
         {
           treasuries: container.repositories.treasuries,
-          balanceObservations: container.repositories.balanceObservations,
           balanceReader: container.balanceReader,
-          auditEvents: container.repositories.auditEvents,
+          operatorMutations: container.operatorMutations,
         },
         {
           treasuryId: id,

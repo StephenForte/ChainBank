@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectRepository,
 } from '../../../../src/app/ports.js';
+import { createInlineOperatorMutations } from '../../../support/operator-mutations.js';
 
 const now = new Date('2026-07-28T12:00:00.000Z');
 
@@ -47,7 +48,7 @@ describe('disable without delete', () => {
     };
 
     const updated = await setProjectEnabled(
-      { projects, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ projects, auditEvents }) },
       {
         role: 'operator',
         projectId: project.id,
@@ -83,7 +84,7 @@ describe('disable without delete', () => {
     };
 
     const updated = await setEnvironmentEnabled(
-      { environments, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ environments, auditEvents }) },
       {
         role: 'operator',
         environmentId: environment.id,
@@ -113,7 +114,7 @@ describe('disable without delete', () => {
 
     await expect(
       setProjectEnabled(
-        { projects, auditEvents: { record: vi.fn() } },
+        { operatorMutations: createInlineOperatorMutations({ projects, auditEvents: { record: vi.fn() } }) },
         {
           role: 'read-only',
           projectId: project.id,
@@ -143,7 +144,7 @@ describe('audit emission on project create', () => {
     };
 
     await createProject(
-      { projects, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ projects, auditEvents }) },
       {
         role: 'operator',
         slug: 'fortel2',

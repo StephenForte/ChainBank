@@ -8,6 +8,7 @@ import {
   TREASURY_FINDING_ENTITY_TYPE,
 } from '../../src/app/alerts/notify-treasury-finding.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
+import { createOperatorMutationTransaction } from '../../src/infrastructure/db/operator-mutation-transaction.js';
 import { createApiCredentialRepository } from '../../src/infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from '../../src/infrastructure/db/repositories/balance-observation-repository.js';
@@ -197,6 +198,7 @@ describe.skipIf(!integrationEnabled)('GET/POST /v1/alerts (integration, C20)', (
       },
       treasurySigner: createFakeSigner({}),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
+      operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
       treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,

@@ -1,17 +1,10 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { parseSlug } from '../../domain/projects/slug.js';
-import type {
-  AuditEventRepository,
-  Environment,
-  EnvironmentRepository,
-  ProjectRepository,
-} from '../ports.js';
+import type { Environment, OperatorMutationTransaction } from '../ports.js';
 
 export interface CreateEnvironmentDependencies {
-  readonly projects: ProjectRepository;
-  readonly environments: EnvironmentRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface CreateEnvironmentInput {
@@ -30,11 +23,6 @@ export async function createEnvironment(
 ): Promise<Environment> {
   assertPermission(input.role, 'project:write');
 
-  const project = await dependencies.projects.findById(input.projectId);
-  if (project === undefined) {
-    throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
-  }
-
   const slug = parseSlug(input.slug, 'slug');
   const name = input.name.trim();
   if (name.length === 0) {
@@ -43,22 +31,29 @@ export async function createEnvironment(
     });
   }
 
-  const environment = await dependencies.environments.insert({
-    projectId: project.id,
-    slug,
-    name,
-  });
+  return dependencies.operatorMutations.run(async (uow) => {
+    const project = await uow.projects.findById(input.projectId);
+    if (project === undefined) {
+      throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
+    }
 
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorId,
-    action: 'environment.created',
-    entityType: 'environment',
-    entityId: environment.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: { projectId: project.id, slug: environment.slug, name: environment.name },
-  });
+    const environment = await uow.environments.insert({
+      projectId: project.id,
+      slug,
+      name,
+    });
 
-  return environment;
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorId,
+      action: 'environment.created',
+      entityType: 'environment',
+      entityId: environment.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: { projectId: project.id, slug: environment.slug, name: environment.name },
+    });
+
+    return environment;
+  });
 }

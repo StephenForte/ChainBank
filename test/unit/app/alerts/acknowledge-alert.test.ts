@@ -7,8 +7,14 @@ import {
   TREASURY_FINDING_ALERT_TYPE,
   TREASURY_FINDING_ENTITY_TYPE,
 } from '../../../../src/app/alerts/notify-treasury-finding.js';
-import type { AlertRepository, AuditEventRepository, StoredAlert } from '../../../../src/app/ports.js';
+import type {
+  AlertRepository,
+  AuditEventRepository,
+  OperatorMutationTransaction,
+  StoredAlert,
+} from '../../../../src/app/ports.js';
 import { ChainBankError } from '../../../../src/domain/errors.js';
+import { createInlineOperatorMutations } from '../../../support/operator-mutations.js';
 
 const ALERT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const ACTOR_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -35,7 +41,7 @@ function openFindingAlert(overrides: Partial<StoredAlert> = {}): StoredAlert {
   };
 }
 
-function createDeps(existing: StoredAlert | undefined) {
+function createDeps(existing: StoredAlert | undefined, options?: { readonly auditFails?: boolean }) {
   const recorded: Array<{ action: string; metadata: Readonly<Record<string, unknown>> }> = [];
   let stored: StoredAlert | undefined = existing;
 
@@ -70,15 +76,31 @@ function createDeps(existing: StoredAlert | undefined) {
 
   const auditEvents: AuditEventRepository = {
     async record(event) {
+      if (options?.auditFails === true) {
+        throw new Error('forced audit failure');
+      }
       recorded.push({ action: event.action, metadata: event.metadata });
       return Promise.resolve();
     },
   };
 
+  const inline = createInlineOperatorMutations({ alerts, auditEvents });
+  // Simulate transactional rollback: restore alert state when the UoW callback throws.
+  const operatorMutations: OperatorMutationTransaction = {
+    async run(work) {
+      const snapshot = stored === undefined ? undefined : { ...stored };
+      try {
+        return await inline.run(work);
+      } catch (error) {
+        stored = snapshot;
+        throw error;
+      }
+    },
+  };
+
   return {
     deps: {
-      alerts,
-      auditEvents,
+      operatorMutations,
       clock: { now: () => NOW },
     },
     recorded,
@@ -116,6 +138,55 @@ describe('acknowledgeAlert (C20)', () => {
         },
       },
     ]);
+  });
+
+  it('rolls back acknowledgement when the audit insert fails (C21)', async () => {
+    const { deps, recorded, getStored } = createDeps(openFindingAlert(), { auditFails: true });
+
+    await expect(
+      acknowledgeAlert(deps, {
+        role: 'operator',
+        alertId: ALERT_ID,
+        note: 'should not stick',
+        operationId: 'req-audit-fail',
+        actorId: ACTOR_ID,
+        sourceIp: undefined,
+      }),
+    ).rejects.toThrow('forced audit failure');
+
+    expect(getStored()?.state).toBe('open');
+    expect(recorded).toHaveLength(0);
+
+    // Retry succeeds once audit is healthy again — the operator bug report scenario.
+    const retry = createDeps(getStored());
+    const result = await acknowledgeAlert(retry.deps, {
+      role: 'operator',
+      alertId: ALERT_ID,
+      note: 'retry after audit recovered',
+      operationId: 'req-retry',
+      actorId: ACTOR_ID,
+      sourceIp: undefined,
+    });
+    expect(result.state).toBe('acknowledged');
+    expect(retry.recorded).toHaveLength(1);
+  });
+
+  it('writes no audit entry when the acknowledgement mutation fails (C21)', async () => {
+    const { deps, recorded, getStored } = createDeps(openFindingAlert({ state: 'acknowledged' }));
+
+    await expect(
+      acknowledgeAlert(deps, {
+        role: 'operator',
+        alertId: ALERT_ID,
+        note: 'already done',
+        operationId: 'req-no-audit',
+        actorId: ACTOR_ID,
+        sourceIp: undefined,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_STATUS_TRANSITION' });
+
+    expect(getStored()?.state).toBe('acknowledged');
+    expect(recorded).toHaveLength(0);
   });
 
   it('rejects empty, whitespace-only, and oversized notes without state change', async () => {

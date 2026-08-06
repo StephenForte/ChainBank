@@ -20,6 +20,7 @@ import { registerWallet } from '../../../src/app/wallets/register-wallet.js';
 import { setWalletPolicy } from '../../../src/app/wallets/set-wallet-policy.js';
 import { updateWallet } from '../../../src/app/wallets/update-wallet.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
+import { createInlineOperatorMutations } from '../../support/operator-mutations.js';
 
 const now = new Date('2026-07-28T12:00:00.000Z');
 
@@ -94,76 +95,91 @@ function createDeps(options?: { readonly insertError?: Error; readonly existingW
   chains: ChainRepository;
   fundingPolicies: FundingPolicyRepository;
   auditEvents: AuditEventRepository;
+  operatorMutations: ReturnType<typeof createInlineOperatorMutations>;
 } {
   const wallet = options?.existingWallet ?? buildWallet();
   const auditEvents: AuditEventRepository = {
     record: vi.fn(() => Promise.resolve(undefined)),
   };
 
+  const managedWallets: ManagedWalletRepository = {
+    insert: vi.fn((input: ManagedWalletInsert) => {
+      if (options?.insertError !== undefined) {
+        return Promise.reject(options.insertError);
+      }
+      return Promise.resolve(
+        buildWallet({
+          address: input.address,
+          addressDisplay: normalizeManagedAddress(input.address).addressDisplay,
+          role: input.role,
+          criticalAtStartup: input.criticalAtStartup,
+          reconciliationEnabled: input.reconciliationEnabled,
+        }),
+      );
+    }),
+    findById: vi.fn((id: string) => Promise.resolve(id === wallet.id ? wallet : undefined)),
+    list: vi.fn(() => Promise.resolve({ items: [wallet], total: 1 })),
+    update: vi.fn((_id: string, patch: ManagedWalletPatch) =>
+      Promise.resolve(
+        buildWallet({
+          ...wallet,
+          enabled: patch.enabled ?? wallet.enabled,
+          criticalAtStartup: patch.criticalAtStartup ?? wallet.criticalAtStartup,
+          reconciliationEnabled: patch.reconciliationEnabled ?? wallet.reconciliationEnabled,
+        }),
+      ),
+    ),
+  };
+  const projects: ProjectRepository = {
+    insert: vi.fn(),
+    findById: vi.fn((id: string) => Promise.resolve(id === project.id ? project : undefined)),
+    findBySlug: vi.fn(),
+    list: vi.fn(),
+    listByIds: vi.fn(),
+    setEnabled: vi.fn(),
+  };
+  const environments: EnvironmentRepository = {
+    insert: vi.fn(),
+    findById: vi.fn((id: string) => Promise.resolve(id === environment.id ? environment : undefined)),
+    listByProject: vi.fn(),
+    setEnabled: vi.fn(),
+  };
+  const chains: ChainRepository = {
+    upsert: vi.fn(),
+    findByNumericChainId: vi.fn((chainId: number) =>
+      Promise.resolve(chainId === chain.chainId ? chain : undefined),
+    ),
+  };
+  const fundingPolicies: FundingPolicyRepository = {
+    upsert: vi.fn((input: FundingPolicyUpsertInput) =>
+      Promise.resolve(
+        buildPolicy({
+          managedWalletId: input.managedWalletId,
+          minimumBalanceWei: input.minimumBalanceWei,
+          targetBalanceWei: input.targetBalanceWei,
+          maximumTopUpWei: input.maximumTopUpWei,
+          version: (wallet.policy?.version ?? 0) + 1,
+        }),
+      ),
+    ),
+    findByManagedWalletId: vi.fn(() => Promise.resolve(wallet.policy)),
+  };
+
   return {
-    managedWallets: {
-      insert: vi.fn((input: ManagedWalletInsert) => {
-        if (options?.insertError !== undefined) {
-          return Promise.reject(options.insertError);
-        }
-        return Promise.resolve(
-          buildWallet({
-            address: input.address,
-            addressDisplay: normalizeManagedAddress(input.address).addressDisplay,
-            role: input.role,
-            criticalAtStartup: input.criticalAtStartup,
-            reconciliationEnabled: input.reconciliationEnabled,
-          }),
-        );
-      }),
-      findById: vi.fn((id: string) => Promise.resolve(id === wallet.id ? wallet : undefined)),
-      list: vi.fn(() => Promise.resolve({ items: [wallet], total: 1 })),
-      update: vi.fn((_id: string, patch: ManagedWalletPatch) =>
-        Promise.resolve(
-          buildWallet({
-            ...wallet,
-            enabled: patch.enabled ?? wallet.enabled,
-            criticalAtStartup: patch.criticalAtStartup ?? wallet.criticalAtStartup,
-            reconciliationEnabled: patch.reconciliationEnabled ?? wallet.reconciliationEnabled,
-          }),
-        ),
-      ),
-    },
-    projects: {
-      insert: vi.fn(),
-      findById: vi.fn((id: string) => Promise.resolve(id === project.id ? project : undefined)),
-      findBySlug: vi.fn(),
-      list: vi.fn(),
-      listByIds: vi.fn(),
-      setEnabled: vi.fn(),
-    },
-    environments: {
-      insert: vi.fn(),
-      findById: vi.fn((id: string) => Promise.resolve(id === environment.id ? environment : undefined)),
-      listByProject: vi.fn(),
-      setEnabled: vi.fn(),
-    },
-    chains: {
-      upsert: vi.fn(),
-      findByNumericChainId: vi.fn((chainId: number) =>
-        Promise.resolve(chainId === chain.chainId ? chain : undefined),
-      ),
-    },
-    fundingPolicies: {
-      upsert: vi.fn((input: FundingPolicyUpsertInput) =>
-        Promise.resolve(
-          buildPolicy({
-            managedWalletId: input.managedWalletId,
-            minimumBalanceWei: input.minimumBalanceWei,
-            targetBalanceWei: input.targetBalanceWei,
-            maximumTopUpWei: input.maximumTopUpWei,
-            version: (wallet.policy?.version ?? 0) + 1,
-          }),
-        ),
-      ),
-      findByManagedWalletId: vi.fn(() => Promise.resolve(wallet.policy)),
-    },
+    managedWallets,
+    projects,
+    environments,
+    chains,
+    fundingPolicies,
     auditEvents,
+    operatorMutations: createInlineOperatorMutations({
+      managedWallets,
+      projects,
+      environments,
+      chains,
+      fundingPolicies,
+      auditEvents,
+    }),
   };
 }
 
@@ -188,19 +204,22 @@ describe('normalizeManagedAddress', () => {
 describe('registerWallet', () => {
   it('registers a wallet, normalizes the address, and emits an audit event', async () => {
     const dependencies = createDeps();
-    const wallet = await registerWallet(dependencies, {
-      role: 'operator',
-      projectId: project.id,
-      environmentId: environment.id,
-      chainId: chain.chainId,
-      walletRole: 'signer',
-      address: mixedCaseAddress,
-      criticalAtStartup: true,
-      reconciliationEnabled: false,
-      operationId: 'op-1',
-      actorId: 'cred-1',
-      sourceIp: '127.0.0.1',
-    });
+    const wallet = await registerWallet(
+      { operatorMutations: dependencies.operatorMutations },
+      {
+        role: 'operator',
+        projectId: project.id,
+        environmentId: environment.id,
+        chainId: chain.chainId,
+        walletRole: 'signer',
+        address: mixedCaseAddress,
+        criticalAtStartup: true,
+        reconciliationEnabled: false,
+        operationId: 'op-1',
+        actorId: 'cred-1',
+        sourceIp: '127.0.0.1',
+      },
+    );
 
     expect(dependencies.managedWallets.insert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -223,19 +242,22 @@ describe('registerWallet', () => {
   it('denies registration for non-operator roles', async () => {
     const dependencies = createDeps();
     await expect(
-      registerWallet(dependencies, {
-        role: 'read-only',
-        projectId: project.id,
-        environmentId: environment.id,
-        chainId: chain.chainId,
-        walletRole: 'signer',
-        address: mixedCaseAddress,
-        criticalAtStartup: false,
-        reconciliationEnabled: false,
-        operationId: 'op-deny',
-        actorId: 'cred-ro',
-        sourceIp: undefined,
-      }),
+      registerWallet(
+        { operatorMutations: dependencies.operatorMutations },
+        {
+          role: 'read-only',
+          projectId: project.id,
+          environmentId: environment.id,
+          chainId: chain.chainId,
+          walletRole: 'signer',
+          address: mixedCaseAddress,
+          criticalAtStartup: false,
+          reconciliationEnabled: false,
+          operationId: 'op-deny',
+          actorId: 'cred-ro',
+          sourceIp: undefined,
+        },
+      ),
     ).rejects.toMatchObject({ code: 'INSUFFICIENT_ROLE' });
     expect(dependencies.managedWallets.insert).not.toHaveBeenCalled();
     expect(dependencies.auditEvents.record).not.toHaveBeenCalled();
@@ -249,19 +271,22 @@ describe('registerWallet', () => {
     });
 
     await expect(
-      registerWallet(dependencies, {
-        role: 'operator',
-        projectId: project.id,
-        environmentId: environment.id,
-        chainId: chain.chainId,
-        walletRole: 'signer',
-        address: mixedCaseAddress,
-        criticalAtStartup: false,
-        reconciliationEnabled: false,
-        operationId: 'op-dup',
-        actorId: 'cred-1',
-        sourceIp: undefined,
-      }),
+      registerWallet(
+        { operatorMutations: dependencies.operatorMutations },
+        {
+          role: 'operator',
+          projectId: project.id,
+          environmentId: environment.id,
+          chainId: chain.chainId,
+          walletRole: 'signer',
+          address: mixedCaseAddress,
+          criticalAtStartup: false,
+          reconciliationEnabled: false,
+          operationId: 'op-dup',
+          actorId: 'cred-1',
+          sourceIp: undefined,
+        },
+      ),
     ).rejects.toMatchObject({ code: 'WALLET_ALREADY_REGISTERED' });
   });
 
@@ -273,19 +298,22 @@ describe('registerWallet', () => {
     });
 
     await expect(
-      registerWallet(dependencies, {
-        role: 'operator',
-        projectId: project.id,
-        environmentId: environment.id,
-        chainId: chain.chainId,
-        walletRole: 'signer',
-        address: mixedCaseAddress,
-        criticalAtStartup: false,
-        reconciliationEnabled: false,
-        operationId: 'op-mismatch',
-        actorId: 'cred-1',
-        sourceIp: undefined,
-      }),
+      registerWallet(
+        { operatorMutations: dependencies.operatorMutations },
+        {
+          role: 'operator',
+          projectId: project.id,
+          environmentId: environment.id,
+          chainId: chain.chainId,
+          walletRole: 'signer',
+          address: mixedCaseAddress,
+          criticalAtStartup: false,
+          reconciliationEnabled: false,
+          operationId: 'op-mismatch',
+          actorId: 'cred-1',
+          sourceIp: undefined,
+        },
+      ),
     ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   });
 });
@@ -329,8 +357,7 @@ describe('updateWallet', () => {
 
     const updated = await updateWallet(
       {
-        managedWallets: dependencies.managedWallets,
-        auditEvents: dependencies.auditEvents,
+        operatorMutations: dependencies.operatorMutations,
       },
       {
         role: 'operator',
@@ -353,8 +380,7 @@ describe('updateWallet', () => {
     await expect(
       updateWallet(
         {
-          managedWallets: dependencies.managedWallets,
-          auditEvents: dependencies.auditEvents,
+          operatorMutations: dependencies.operatorMutations,
         },
         {
           role: 'read-only',
@@ -383,9 +409,7 @@ describe('setWalletPolicy', () => {
 
     const wallet = await setWalletPolicy(
       {
-        managedWallets: dependencies.managedWallets,
-        fundingPolicies: dependencies.fundingPolicies,
-        auditEvents: dependencies.auditEvents,
+        operatorMutations: dependencies.operatorMutations,
       },
       {
         role: 'operator',
@@ -424,9 +448,7 @@ describe('setWalletPolicy', () => {
     await expect(
       setWalletPolicy(
         {
-          managedWallets: dependencies.managedWallets,
-          fundingPolicies: dependencies.fundingPolicies,
-          auditEvents: dependencies.auditEvents,
+          operatorMutations: dependencies.operatorMutations,
         },
         {
           role: 'operator',
@@ -449,9 +471,7 @@ describe('setWalletPolicy', () => {
     await expect(
       setWalletPolicy(
         {
-          managedWallets: dependencies.managedWallets,
-          fundingPolicies: dependencies.fundingPolicies,
-          auditEvents: dependencies.auditEvents,
+          operatorMutations: dependencies.operatorMutations,
         },
         {
           role: 'read-only',

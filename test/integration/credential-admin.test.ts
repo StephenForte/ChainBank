@@ -6,6 +6,7 @@ import { authenticateCredential } from '../../src/app/auth/authenticate-credenti
 import type { Container } from '../../src/container.js';
 import { loadConfig } from '../../src/config/index.js';
 import { createApiCredentialRepository } from '../../src/infrastructure/db/repositories/api-credential-repository.js';
+import { createOperatorMutationTransaction } from '../../src/infrastructure/db/operator-mutation-transaction.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
 import {
   apiCredentialScopes,
@@ -123,6 +124,7 @@ describe.skipIf(!integrationEnabled)('admin credential lifecycle (integration)',
       balanceReader: {} as Container['balanceReader'],
       treasurySigner: undefined,
       fundingDispatchLock: {} as Container['fundingDispatchLock'],
+      operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: {} as Container['transactionReceiptTracker'],
       treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,

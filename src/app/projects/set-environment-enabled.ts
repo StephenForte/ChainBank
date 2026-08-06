@@ -1,10 +1,9 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
-import type { AuditEventRepository, Environment, EnvironmentRepository } from '../ports.js';
+import type { Environment, OperatorMutationTransaction } from '../ports.js';
 
 export interface SetEnvironmentEnabledDependencies {
-  readonly environments: EnvironmentRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface SetEnvironmentEnabledInput {
@@ -18,6 +17,7 @@ export interface SetEnvironmentEnabledInput {
 
 /**
  * Enables or disables an environment without deleting historical rows.
+ * The enablement write and its audit entry commit atomically (C21).
  */
 export async function setEnvironmentEnabled(
   dependencies: SetEnvironmentEnabledDependencies,
@@ -25,27 +25,29 @@ export async function setEnvironmentEnabled(
 ): Promise<Environment> {
   assertPermission(input.role, 'project:write');
 
-  const existing = await dependencies.environments.findById(input.environmentId);
-  if (existing === undefined) {
-    throw new ChainBankError('ENVIRONMENT_NOT_FOUND', `Environment ${input.environmentId} does not exist`);
-  }
+  return dependencies.operatorMutations.run(async (uow) => {
+    const existing = await uow.environments.findById(input.environmentId);
+    if (existing === undefined) {
+      throw new ChainBankError('ENVIRONMENT_NOT_FOUND', `Environment ${input.environmentId} does not exist`);
+    }
 
-  const environment = await dependencies.environments.setEnabled(input.environmentId, input.enabled);
+    const environment = await uow.environments.setEnabled(input.environmentId, input.enabled);
 
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorId,
-    action: input.enabled ? 'environment.enabled' : 'environment.disabled',
-    entityType: 'environment',
-    entityId: environment.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: {
-      projectId: environment.projectId,
-      slug: environment.slug,
-      enabled: environment.enabled,
-    },
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorId,
+      action: input.enabled ? 'environment.enabled' : 'environment.disabled',
+      entityType: 'environment',
+      entityId: environment.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: {
+        projectId: environment.projectId,
+        slug: environment.slug,
+        enabled: environment.enabled,
+      },
+    });
+
+    return environment;
   });
-
-  return environment;
 }

@@ -1,21 +1,10 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
-import type {
-  AuditEventRepository,
-  ChainRepository,
-  EnvironmentRepository,
-  ManagedWallet,
-  ManagedWalletRepository,
-  ProjectRepository,
-} from '../ports.js';
+import type { ManagedWallet, OperatorMutationTransaction } from '../ports.js';
 import { normalizeManagedAddress } from './normalize-managed-address.js';
 
 export interface RegisterWalletDependencies {
-  readonly managedWallets: ManagedWalletRepository;
-  readonly projects: ProjectRepository;
-  readonly environments: EnvironmentRepository;
-  readonly chains: ChainRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface RegisterWalletInput {
@@ -38,37 +27,13 @@ export interface RegisterWalletInput {
  *
  * Never accepts private-key material. Duplicate (chain, address) rows are
  * rejected, including races handled by the database unique constraint.
+ * The insert and its audit entry commit atomically (C21).
  */
 export async function registerWallet(
   dependencies: RegisterWalletDependencies,
   input: RegisterWalletInput,
 ): Promise<ManagedWallet> {
   assertPermission(input.role, 'wallet:write');
-
-  const project = await dependencies.projects.findById(input.projectId);
-  if (project === undefined) {
-    throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
-  }
-
-  const environment = await dependencies.environments.findById(input.environmentId);
-  if (environment === undefined) {
-    throw new ChainBankError('ENVIRONMENT_NOT_FOUND', `Environment ${input.environmentId} does not exist`);
-  }
-  if (environment.projectId !== project.id) {
-    throw new ChainBankError(
-      'INVALID_REQUEST',
-      `Environment ${environment.id} does not belong to project ${project.id}`,
-      {
-        publicMessage: 'The environment does not belong to the specified project.',
-        context: { projectId: project.id, environmentId: environment.id },
-      },
-    );
-  }
-
-  const chain = await dependencies.chains.findByNumericChainId(input.chainId);
-  if (chain === undefined) {
-    throw new ChainBankError('CHAIN_NOT_FOUND', `Chain ${String(input.chainId)} is not registered`);
-  }
 
   const walletRole = input.walletRole.trim();
   if (walletRole.length === 0) {
@@ -79,33 +44,60 @@ export async function registerWallet(
 
   const normalized = normalizeManagedAddress(input.address);
 
-  const wallet = await dependencies.managedWallets.insert({
-    environmentId: environment.id,
-    chainRowId: chain.id,
-    role: walletRole,
-    address: normalized.address,
-    criticalAtStartup: input.criticalAtStartup,
-    reconciliationEnabled: input.reconciliationEnabled,
-  });
+  return dependencies.operatorMutations.run(async (uow) => {
+    const project = await uow.projects.findById(input.projectId);
+    if (project === undefined) {
+      throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
+    }
 
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorId,
-    action: 'wallet.registered',
-    entityType: 'managed_wallet',
-    entityId: wallet.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: {
-      projectId: project.id,
+    const environment = await uow.environments.findById(input.environmentId);
+    if (environment === undefined) {
+      throw new ChainBankError('ENVIRONMENT_NOT_FOUND', `Environment ${input.environmentId} does not exist`);
+    }
+    if (environment.projectId !== project.id) {
+      throw new ChainBankError(
+        'INVALID_REQUEST',
+        `Environment ${environment.id} does not belong to project ${project.id}`,
+        {
+          publicMessage: 'The environment does not belong to the specified project.',
+          context: { projectId: project.id, environmentId: environment.id },
+        },
+      );
+    }
+
+    const chain = await uow.chains.findByNumericChainId(input.chainId);
+    if (chain === undefined) {
+      throw new ChainBankError('CHAIN_NOT_FOUND', `Chain ${String(input.chainId)} is not registered`);
+    }
+
+    const wallet = await uow.managedWallets.insert({
       environmentId: environment.id,
-      chainId: chain.chainId,
-      role: wallet.role,
-      address: wallet.addressDisplay,
-      criticalAtStartup: wallet.criticalAtStartup,
-      reconciliationEnabled: wallet.reconciliationEnabled,
-    },
-  });
+      chainRowId: chain.id,
+      role: walletRole,
+      address: normalized.address,
+      criticalAtStartup: input.criticalAtStartup,
+      reconciliationEnabled: input.reconciliationEnabled,
+    });
 
-  return wallet;
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorId,
+      action: 'wallet.registered',
+      entityType: 'managed_wallet',
+      entityId: wallet.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: {
+        projectId: project.id,
+        environmentId: environment.id,
+        chainId: chain.chainId,
+        role: wallet.role,
+        address: wallet.addressDisplay,
+        criticalAtStartup: wallet.criticalAtStartup,
+        reconciliationEnabled: wallet.reconciliationEnabled,
+      },
+    });
+
+    return wallet;
+  });
 }

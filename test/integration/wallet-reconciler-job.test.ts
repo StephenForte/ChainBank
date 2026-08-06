@@ -6,6 +6,7 @@ import type { Container } from '../../src/container.js';
 import { loadConfig } from '../../src/config/index.js';
 import { createDatabase } from '../../src/infrastructure/db/client.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
+import { createOperatorMutationTransaction } from '../../src/infrastructure/db/operator-mutation-transaction.js';
 import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { createApiCredentialRepository } from '../../src/infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
@@ -271,6 +272,7 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
       }),
       treasurySigner: createFakeSigner({ address: TREASURY_ADDRESS }),
       fundingDispatchLock: createFundingDispatchLock(database.db),
+      operatorMutations: createOperatorMutationTransaction(database.db),
       transactionReceiptTracker: createFakeReceiptTracker({
         kind: 'confirmed',
         confirmedAt: clock.now(),

@@ -3,6 +3,7 @@ import type { AuditEventRepository, Treasury, TreasuryRepository } from '../../.
 import { setTreasuryEnabled } from '../../../../src/app/treasury/set-treasury-enabled.js';
 import { ROLES, type Role } from '../../../../src/domain/auth/roles.js';
 import { ChainBankError } from '../../../../src/domain/errors.js';
+import { createInlineOperatorMutations } from '../../../support/operator-mutations.js';
 
 const now = new Date('2026-08-01T12:00:00.000Z');
 
@@ -62,7 +63,12 @@ describe('setTreasuryEnabled authorization', () => {
     async (role) => {
       await expect(
         setTreasuryEnabled(
-          { treasuries: buildRepository(), auditEvents: buildAuditEvents() },
+          {
+            operatorMutations: createInlineOperatorMutations({
+              treasuries: buildRepository(),
+              auditEvents: buildAuditEvents(),
+            }),
+          },
           {
             role,
             treasuryId: treasury.id,
@@ -81,7 +87,7 @@ describe('setTreasuryEnabled authorization', () => {
     const auditEvents = buildAuditEvents();
 
     const updated = await setTreasuryEnabled(
-      { treasuries, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
       {
         role: 'operator',
         treasuryId: treasury.id,
@@ -105,7 +111,7 @@ describe('setTreasuryEnabled authorization', () => {
     const auditEvents = buildAuditEvents();
 
     const updated = await setTreasuryEnabled(
-      { treasuries, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
       {
         role: 'operator',
         treasuryId: treasury.id,
@@ -127,7 +133,7 @@ describe('setTreasuryEnabled audit and errors', () => {
     const auditEvents = buildAuditEvents();
 
     await setTreasuryEnabled(
-      { treasuries, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
       {
         role: 'operator',
         treasuryId: treasury.id,
@@ -164,7 +170,7 @@ describe('setTreasuryEnabled audit and errors', () => {
     const auditEvents = buildAuditEvents();
 
     await setTreasuryEnabled(
-      { treasuries, auditEvents },
+      { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
       {
         role: 'operator',
         treasuryId: treasury.id,
@@ -191,7 +197,7 @@ describe('setTreasuryEnabled audit and errors', () => {
 
     await expect(
       setTreasuryEnabled(
-        { treasuries, auditEvents },
+        { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
         {
           role: 'operator',
           treasuryId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
@@ -216,7 +222,7 @@ describe('setTreasuryEnabled audit and errors', () => {
 
     await expect(
       setTreasuryEnabled(
-        { treasuries, auditEvents },
+        { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
         {
           role: 'operator',
           treasuryId: treasury.id,
@@ -238,7 +244,7 @@ describe('setTreasuryEnabled audit and errors', () => {
 
     await expect(
       setTreasuryEnabled(
-        { treasuries, auditEvents: buildAuditEvents() },
+        { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents: buildAuditEvents() }) },
         {
           role: 'operator',
           treasuryId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',

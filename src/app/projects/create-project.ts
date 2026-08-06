@@ -1,11 +1,10 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { parseSlug } from '../../domain/projects/slug.js';
-import type { AuditEventRepository, Project, ProjectRepository } from '../ports.js';
+import type { OperatorMutationTransaction, Project } from '../ports.js';
 
 export interface CreateProjectDependencies {
-  readonly projects: ProjectRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface CreateProjectInput {
@@ -31,18 +30,20 @@ export async function createProject(
     });
   }
 
-  const project = await dependencies.projects.insert({ slug, name });
+  return dependencies.operatorMutations.run(async (uow) => {
+    const project = await uow.projects.insert({ slug, name });
 
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorId,
-    action: 'project.created',
-    entityType: 'project',
-    entityId: project.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: { slug: project.slug, name: project.name },
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorId,
+      action: 'project.created',
+      entityType: 'project',
+      entityId: project.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: { slug: project.slug, name: project.name },
+    });
+
+    return project;
   });
-
-  return project;
 }

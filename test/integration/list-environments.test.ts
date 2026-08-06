@@ -13,6 +13,7 @@ import { createFundingOperationRepository } from '../../src/infrastructure/db/re
 import { createFundingPolicyRepository } from '../../src/infrastructure/db/repositories/funding-policy-repository.js';
 import { createFundingTransactionRepository } from '../../src/infrastructure/db/repositories/funding-transaction-repository.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
+import { createOperatorMutationTransaction } from '../../src/infrastructure/db/operator-mutation-transaction.js';
 import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { createManagedWalletRepository } from '../../src/infrastructure/db/repositories/managed-wallet-repository.js';
 import { createProjectRepository } from '../../src/infrastructure/db/repositories/project-repository.js';
@@ -108,6 +109,7 @@ describe.skipIf(!integrationEnabled)('GET /v1/projects/:id/environments (integra
       },
       treasurySigner: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
+      operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
       treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
