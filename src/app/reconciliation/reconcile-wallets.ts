@@ -6,6 +6,11 @@ import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import { maybeNotifyReconciliationFailure } from '../alerts/notify-reconciliation-failure.js';
 import {
+  isCriticalReconciliationFinding,
+  logCriticalReconciliationFindings,
+  notifyTreasuryFinding,
+} from '../alerts/notify-treasury-finding.js';
+import {
   notifyTreasuryReserveRefusal,
   resolveTreasuryReserveAlert,
 } from '../alerts/notify-treasury-reserve-alert.js';
@@ -375,7 +380,21 @@ export async function reconcileWallets(
     );
   }
 
+  // Cheap half of TX.15: surface critical findings in logs even when the run
+  // is a C15 success (funded correctly / no error_code). Independent of email.
+  logCriticalReconciliationFindings(dependencies.logger, {
+    findings: finished.findings,
+    correlationId: input.correlationId,
+    runId: finished.runId,
+  });
+
   await maybeNotifyReconciliationFailureAfterRun(dependencies, {
+    run: finished,
+    credentialId: input.credentialId,
+    correlationId: input.correlationId,
+  });
+
+  await maybeNotifyTreasuryFindingsAfterRun(dependencies, {
     run: finished,
     credentialId: input.credentialId,
     correlationId: input.correlationId,
@@ -452,6 +471,78 @@ async function maybeNotifyReconciliationFailureAfterRun(
           error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
       },
       'Reconciliation failure alert notification failed; run outcome unchanged',
+    );
+  }
+}
+
+/**
+ * C18 failure-isolated hook: critical finding alerts must never change the
+ * finished run's outcome, C15 classification, or cron exit code.
+ */
+async function maybeNotifyTreasuryFindingsAfterRun(
+  dependencies: ReconcileWalletsDependencies,
+  input: {
+    readonly run: ReconciliationRun;
+    readonly credentialId: string;
+    readonly correlationId: string;
+  },
+): Promise<void> {
+  const criticalFindings = input.run.findings.filter(isCriticalReconciliationFinding);
+  if (criticalFindings.length === 0) {
+    return;
+  }
+
+  try {
+    const treasuries = await dependencies.treasuries.listEnabled();
+    const treasuriesById = new Map(treasuries.map((treasury) => [treasury.id, treasury]));
+    const actor = { type: 'cron' as const, id: input.credentialId };
+
+    for (const finding of criticalFindings) {
+      const treasury = treasuriesById.get(finding.treasuryId);
+      if (treasury === undefined) {
+        dependencies.logger.warn(
+          {
+            event: 'treasury.finding_alert.treasury_missing',
+            correlationId: input.correlationId,
+            runId: input.run.runId,
+            treasuryId: finding.treasuryId,
+            findingKind: finding.kind,
+          },
+          'Treasury finding alert skipped: finding treasury is not in the enabled set',
+        );
+        continue;
+      }
+
+      await notifyTreasuryFinding(
+        {
+          alerts: dependencies.alerts,
+          emailSender: dependencies.emailSender,
+          auditEvents: dependencies.auditEvents,
+          clock: dependencies.clock,
+          logger: dependencies.logger,
+        },
+        {
+          finding,
+          treasury,
+          runId: input.run.runId,
+          operatorRecipients: dependencies.operatorRecipients,
+          dashboardBaseUrl: dependencies.dashboardBaseUrl,
+          environment: dependencies.environment,
+          operationId: input.correlationId,
+          actor,
+        },
+      );
+    }
+  } catch (error) {
+    dependencies.logger.error(
+      {
+        event: 'treasury.finding_alert.notification_failed',
+        correlationId: input.correlationId,
+        runId: input.run.runId,
+        err:
+          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      },
+      'Treasury finding alert notification failed; run outcome unchanged',
     );
   }
 }
