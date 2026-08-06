@@ -355,6 +355,14 @@ export interface AlertRepository {
   ): Promise<StoredAlert | undefined>;
   findById(id: string): Promise<StoredAlert | undefined>;
   list(filters: AlertListFilters): Promise<AlertListPage>;
+  /**
+   * Inserts an open alert. Concurrent inserts racing the partial unique index
+   * on `(entity_type, entity_id, alert_type) WHERE state = 'open'` (TX.19)
+   * throw a unique violation — callers must catch via `isUniqueViolation`,
+   * re-read with the path's lookup (`findOpenByEntity` or
+   * `findOpenOrAcknowledgedByEntity`), and adopt the winner as deduped.
+   * Swallowing the race as an unhandled throw loses the alert (C18).
+   */
   insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert>;
   /** warning → critical; leaves last_sent_at unchanged. */
   markEscalated(input: {

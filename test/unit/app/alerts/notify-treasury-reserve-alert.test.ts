@@ -16,6 +16,7 @@ import type {
 } from '../../../../src/app/ports.js';
 import { parseEtherToWei } from '../../../../src/domain/wei.js';
 import { createLogger } from '../../../../src/observability/logger.js';
+import { UniqueViolationError } from '../../../support/funding-fakes.js';
 
 const treasury: Treasury = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -480,5 +481,59 @@ describe('notifyTreasuryReserveRefusal', () => {
     expect(result).toEqual({ kind: 'skipped', reason: 'non-positive-requested-amount' });
     expect(messages).toHaveLength(0);
     expect(alerts.rows.size).toBe(0);
+  });
+
+  it('adopts an open row on unique-violation race without sending a second email (TX.19)', async () => {
+    const alerts = createFakeAlerts();
+    const { sender, messages } = createSender('sent');
+    const auditEvents: AuditEventRepository = { record: vi.fn(() => Promise.resolve()) };
+    const clock = createClock(new Date('2026-07-31T12:00:00.000Z'));
+
+    const winner = await alerts.insertOpen({
+      alertType: TREASURY_RESERVE_ALERT_TYPE,
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: treasury.id,
+      firstTriggeredAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: winner.id,
+      lastSentAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+    });
+
+    let lookups = 0;
+    const racing: AlertRepository = {
+      ...alerts,
+      findOpenByEntity(entityType, entityId, alertType) {
+        lookups += 1;
+        if (lookups === 1) {
+          // Race window: both writers observed "no open row".
+          return Promise.resolve(undefined);
+        }
+        return alerts.findOpenByEntity(entityType, entityId, alertType);
+      },
+      insertOpen() {
+        return Promise.reject(new UniqueViolationError());
+      },
+    };
+
+    const result = await notifyTreasuryReserveRefusal(
+      {
+        alerts: racing,
+        emailSender: sender,
+        auditEvents,
+        clock,
+        logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
+      },
+      baseInput(),
+    );
+
+    expect(result).toEqual({ kind: 'deduped', alertId: winner.id });
+    expect(messages).toHaveLength(0);
+    expect(alerts.rows.size).toBe(1);
   });
 });

@@ -348,27 +348,41 @@ export const fundingTransactions = pgTable('funding_transactions', {
   confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
 });
 
-export const alerts = pgTable('alerts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  alertType: text('alert_type').notNull(),
-  severity: text('severity').notNull(),
-  entityType: text('entity_type').notNull(),
-  entityId: text('entity_id').notNull(),
-  state: text('state').notNull(),
-  firstTriggeredAt: timestamp('first_triggered_at', { withTimezone: true }).notNull(),
-  lastEvaluatedAt: timestamp('last_evaluated_at', { withTimezone: true }).notNull(),
-  lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
-  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
-  /**
-   * Operator acknowledgement of a treasury_finding (C20). Distinct from
-   * `resolved` — acknowledgement is a human attestation, not condition recovery.
-   * Nullable; no backfill (migration 0007).
-   */
-  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
-  acknowledgedBy: text('acknowledged_by'),
-  acknowledgementNote: text('acknowledgement_note'),
-  metadataJson: jsonb('metadata_json').notNull().default({}),
-});
+export const alerts = pgTable(
+  'alerts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    alertType: text('alert_type').notNull(),
+    severity: text('severity').notNull(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id').notNull(),
+    state: text('state').notNull(),
+    firstTriggeredAt: timestamp('first_triggered_at', { withTimezone: true }).notNull(),
+    lastEvaluatedAt: timestamp('last_evaluated_at', { withTimezone: true }).notNull(),
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    /**
+     * Operator acknowledgement of a treasury_finding (C20). Distinct from
+     * `resolved` — acknowledgement is a human attestation, not condition recovery.
+     * Nullable; no backfill (migration 0007).
+     */
+    acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+    acknowledgedBy: text('acknowledged_by'),
+    acknowledgementNote: text('acknowledgement_note'),
+    metadataJson: jsonb('metadata_json').notNull().default({}),
+  },
+  (table) => [
+    /**
+     * At most one *open* alert per (entity_type, entity_id, alert_type) (TX.19).
+     * Partial — must not cover acknowledged/resolved rows: C20 allows an
+     * acknowledged finding and a new open row to share entityId on condition
+     * recurrence; C10/C15 allow a resolved row then a later open of the same key.
+     */
+    uniqueIndex('alerts_open_entity_type_entity_id_alert_type_key')
+      .on(table.entityType, table.entityId, table.alertType)
+      .where(sql`${table.state} = 'open'`),
+  ],
+);
 
 /**
  * Run-level summary for scheduled reconciliation (C14 / P4-US1).

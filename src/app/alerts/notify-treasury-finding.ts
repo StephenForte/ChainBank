@@ -1,6 +1,7 @@
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
+import { isUniqueViolation } from '../../shared/postgres-error.js';
 import { renderTreasuryFindingEmail } from '../email/treasury-finding-template.js';
 import type {
   AlertRepository,
@@ -217,19 +218,35 @@ async function openAndSendFindingAlert(
   entityId: string,
   now: Date,
   metadata: Readonly<Record<string, unknown>>,
-): Promise<Extract<NotifyTreasuryFindingResult, { kind: 'opened' }>> {
-  const opened = await dependencies.alerts.insertOpen({
-    alertType: TREASURY_FINDING_ALERT_TYPE,
-    severity: 'critical',
-    entityType: TREASURY_FINDING_ENTITY_TYPE,
-    entityId,
-    firstTriggeredAt: now,
-    lastEvaluatedAt: now,
-    pendingEmail: 'critical',
-    metadata,
-  });
-  const email = await sendFindingEmail(dependencies, input, opened);
-  return { kind: 'opened', alertId: opened.id, email };
+): Promise<Extract<NotifyTreasuryFindingResult, { kind: 'opened' | 'deduped' }>> {
+  try {
+    const opened = await dependencies.alerts.insertOpen({
+      alertType: TREASURY_FINDING_ALERT_TYPE,
+      severity: 'critical',
+      entityType: TREASURY_FINDING_ENTITY_TYPE,
+      entityId,
+      firstTriggeredAt: now,
+      lastEvaluatedAt: now,
+      pendingEmail: 'critical',
+      metadata,
+    });
+    const email = await sendFindingEmail(dependencies, input, opened);
+    return { kind: 'opened', alertId: opened.id, email };
+  } catch (error) {
+    // Partial unique index (TX.19): another writer opened first. Adopt via the
+    // same C20 lookup this path uses — never throw, or the finding is lost.
+    if (isUniqueViolation(error)) {
+      const winner = await dependencies.alerts.findOpenOrAcknowledgedByEntity(
+        TREASURY_FINDING_ENTITY_TYPE,
+        entityId,
+        TREASURY_FINDING_ALERT_TYPE,
+      );
+      if (winner !== undefined) {
+        return { kind: 'deduped', alertId: winner.id };
+      }
+    }
+    throw error;
+  }
 }
 
 function findingMetadata(input: NotifyTreasuryFindingInput): Readonly<Record<string, unknown>> {

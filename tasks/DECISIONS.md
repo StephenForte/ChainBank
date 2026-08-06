@@ -1184,6 +1184,17 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
   acknowledge control with required note; acknowledged section remains visible.
 - **Only `treasury_finding` may be acknowledged** — balance/reserve/recon-failure
   alerts keep resolving via their existing recovery paths.
+- **At most one open row per `(entity_type, entity_id, alert_type)` (TX.19).**
+  Migration `0008` adds a **partial** unique index
+  `WHERE state = 'open'`. A full unique index on those columns would forbid the
+  acknowledged+open shared-`entityId` pair this contract requires for
+  `outgoing_scan_incomplete` recurrence, and would also forbid C10/C15's
+  resolved-then-reopen lifecycle. Every `insertOpen` caller treats Postgres
+  `23505` as "someone else opened first": catch via `isUniqueViolation`,
+  re-read with the same lookup the path already uses (`findOpenByEntity` for
+  C10/C15/balance; `findOpenOrAcknowledgedByEntity` for findings), and continue
+  as deduped without sending a second email. Leaving the race unhandled would
+  turn a duplicate email into a lost critical alert (C18).
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
@@ -1253,3 +1264,4 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
 - 2026-08-06 — TX.18 amended C17 dashboard clause in place: auto-load balances when ≤25 listed wallets; button-only above that with hint; supersede in-flight on filter/list change; never-render-zero / `unavailable` rule untouched. Reconciliation panel: always-visible summary + collapsible warnings/history; critical findings never gated by collapse (localStorage persists detail expand only).
 - 2026-08-06 — TX.17 published C20: `GET /v1/alerts` + `POST /v1/alerts/:id/acknowledge` with `alert:read` / `alert:acknowledge`, migration `0007` (`acknowledged` state + note/actor/timestamp columns), dedupe lookup extended to acknowledged rows so re-observation cannot re-alert, findings_json immutable, standing dashboard banner independent of the runs page window, no un-acknowledge path.
 - 2026-08-06 — TX.17 review amended C20 in place: acknowledged-dedupe applies only to event-kind findings (`unexplained_outgoing_transfer`); recurring `outgoing_scan_incomplete` re-observation after ack opens a new row + email and leaves the prior acknowledgement note/actor intact (open preferred over acknowledged for a shared entityId). Unscoped ack-dedupe had permanently silenced the "detector is dark" signal — TX.9 defect 2 at the alert layer.
+- 2026-08-06 — TX.19 amended C20 in place: partial unique index on `alerts (entity_type, entity_id, alert_type) WHERE state = 'open'` (migration `0008`); all `insertOpen` callers adopt on `23505` rather than throwing (lost-alert trap). Full uniqueness rejected — it breaks C20 condition recurrence and C10/C15 reopen-after-resolve.

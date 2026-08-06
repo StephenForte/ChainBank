@@ -14,6 +14,7 @@ import type {
   Treasury,
 } from '../../../src/app/ports.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
+import { UniqueViolationError } from '../../support/funding-fakes.js';
 
 const treasury: Treasury = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -446,5 +447,63 @@ describe('evaluateTreasuryAlerts', () => {
     );
     expect(stable.email.kind).toBe('not-required');
     expect(messages).toHaveLength(2);
+  });
+
+  it('adopts an open balance alert on unique-violation race without a second email (TX.19)', async () => {
+    const alerts = createFakeAlerts();
+    const { sender, messages } = createSender('sent');
+    const auditEvents: AuditEventRepository = { record: vi.fn(() => Promise.resolve()) };
+    const clock = createClock(new Date('2026-07-29T12:00:00.000Z'));
+
+    const winner = await alerts.insertOpen({
+      alertType: TREASURY_BALANCE_ALERT_TYPE,
+      severity: 'warning',
+      entityType: TREASURY_ALERT_ENTITY_TYPE,
+      entityId: treasury.id,
+      firstTriggeredAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+      pendingEmail: 'warning',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: winner.id,
+      lastSentAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+    });
+
+    let lookups = 0;
+    const racing: AlertRepository = {
+      ...alerts,
+      findOpenByEntity(entityType, entityId, alertType) {
+        lookups += 1;
+        if (lookups === 1) {
+          return Promise.resolve(undefined);
+        }
+        return alerts.findOpenByEntity(entityType, entityId, alertType);
+      },
+      insertOpen() {
+        return Promise.reject(new UniqueViolationError());
+      },
+    };
+
+    const result = await evaluateTreasuryAlerts(
+      { alerts: racing, emailSender: sender, auditEvents, clock },
+      {
+        treasury,
+        balanceWei: parseEtherToWei('0.5', 'b'),
+        reminderIntervalMs: REMINDER_MS,
+        operatorRecipients: ['operator@example.com'],
+        dashboardBaseUrl: 'http://localhost:3000',
+        environment: 'local',
+        operationId: 'op-race',
+        actor: { type: 'cron', id: 'treasury-monitor' },
+      },
+    );
+
+    expect(result.transition).toEqual({ kind: 'open', severity: 'warning' });
+    expect(result.email.kind).toBe('not-required');
+    expect(result.openAlert?.id).toBe(winner.id);
+    expect(messages).toHaveLength(0);
+    expect(alerts.rows.size).toBe(1);
   });
 });

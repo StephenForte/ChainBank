@@ -25,6 +25,7 @@ import type {
 import { parseEtherToWei } from '../../../../src/domain/wei.js';
 import { createLogger } from '../../../../src/observability/logger.js';
 import { classifyReconcilerExit, reconcilerExitCode } from '../../../../src/jobs/wallet-reconciler.js';
+import { UniqueViolationError } from '../../../support/funding-fakes.js';
 
 const treasury: Treasury = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -705,5 +706,61 @@ describe('notifyTreasuryFinding', () => {
         )
       )?.id,
     ).toBe(second.alertId);
+  });
+
+  it('adopts an open finding on unique-violation race without a second email (TX.19)', async () => {
+    const alerts = createFakeAlerts();
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+    const finding = unexplainedFinding({ transactionHash: `0x${'cd'.repeat(32)}` });
+
+    const winner = await alerts.insertOpen({
+      alertType: TREASURY_FINDING_ALERT_TYPE,
+      severity: 'critical',
+      entityType: TREASURY_FINDING_ENTITY_TYPE,
+      entityId: treasuryFindingAlertEntityId(finding),
+      firstTriggeredAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: winner.id,
+      lastSentAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+    });
+
+    let lookups = 0;
+    const racing = {
+      ...alerts,
+      findOpenOrAcknowledgedByEntity(
+        entityType: string,
+        entityId: string,
+        alertType: string,
+      ): Promise<Awaited<ReturnType<AlertRepository['findOpenOrAcknowledgedByEntity']>>> {
+        lookups += 1;
+        if (lookups === 1) {
+          return Promise.resolve(undefined);
+        }
+        return alerts.findOpenOrAcknowledgedByEntity(entityType, entityId, alertType);
+      },
+      insertOpen() {
+        return Promise.reject(new UniqueViolationError());
+      },
+    };
+
+    const result = await notifyTreasuryFinding(
+      { alerts: racing, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(finding),
+    );
+
+    expect(result).toEqual({ kind: 'deduped', alertId: winner.id });
+    expect(messages).toHaveLength(0);
+    expect(alerts.rows.size).toBe(1);
   });
 });
