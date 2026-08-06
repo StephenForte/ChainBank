@@ -69,7 +69,7 @@ function storeToken(token: string): void {
   }
 }
 
-/** Default collapsed — quiet when there are no critical findings (TX.18). */
+/** Default collapsed — quiet when there are no unacknowledged critical findings (TX.18 / TX.20). */
 function loadReconciliationDetailExpanded(): boolean {
   try {
     return localStorage.getItem(RECON_DETAIL_STORAGE_KEY) === 'true';
@@ -228,6 +228,98 @@ function toFindingViews(runs: readonly ReconciliationRunResource[]): readonly Fi
 const TRANSACTION_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 
 /**
+ * Client-side mirror of C18 `treasuryFindingAlertEntityId`. Returns undefined when
+ * the finding cannot be keyed — absence of a key is not acknowledgement (TX.20).
+ */
+function findingAlertEntityId(finding: FindingView): string | undefined {
+  if (finding.kind === 'outgoing_scan_incomplete') {
+    const errorCode = asOptionalString(finding.raw.errorCode);
+    if (finding.treasuryId === undefined || errorCode === undefined) {
+      return undefined;
+    }
+    return `outgoing_scan_incomplete:${finding.treasuryId}:${errorCode}`.toLowerCase();
+  }
+  if (finding.transactionHash !== undefined) {
+    return finding.transactionHash.toLowerCase();
+  }
+  return undefined;
+}
+
+/**
+ * Alerts fetch succeeded. Only then may a critical leave the always-visible block.
+ * `loading` / `error` / `idle` must never quietly demote (TX.20 fail-closed).
+ */
+function areFindingAlertsResolved(state: LoadState): boolean {
+  return state === 'ready' || state === 'empty';
+}
+
+/**
+ * Demote only on positive evidence of acknowledgement. Open preferred over
+ * acknowledged for a shared entityId (C20 condition recurrence). No matching
+ * alert row → unacknowledged. Unresolved alerts fetch → unacknowledged.
+ */
+function isCriticalFindingAcknowledged(
+  finding: FindingView,
+  findingAlertsState: LoadState,
+  openFindingAlerts: readonly AlertResource[],
+  acknowledgedFindingAlerts: readonly AlertResource[],
+): boolean {
+  if (!areFindingAlertsResolved(findingAlertsState)) {
+    return false;
+  }
+  const entityId = findingAlertEntityId(finding);
+  if (entityId === undefined) {
+    return false;
+  }
+  if (openFindingAlerts.some((alert) => alert.entityId.toLowerCase() === entityId)) {
+    return false;
+  }
+  return acknowledgedFindingAlerts.some((alert) => alert.entityId.toLowerCase() === entityId);
+}
+
+function matchingAcknowledgedAlert(
+  finding: FindingView,
+  acknowledgedFindingAlerts: readonly AlertResource[],
+): AlertResource | undefined {
+  const entityId = findingAlertEntityId(finding);
+  if (entityId === undefined) {
+    return undefined;
+  }
+  return acknowledgedFindingAlerts.find((alert) => alert.entityId.toLowerCase() === entityId);
+}
+
+/** Summary clause that distinguishes unacknowledged from acknowledged (TX.20). */
+function criticalFindingsSummaryLabel(
+  unacknowledgedCount: number,
+  acknowledgedCount: number,
+  alertsResolved: boolean,
+): string {
+  const total = unacknowledgedCount + acknowledgedCount;
+  if (total === 0) {
+    return '0 critical findings';
+  }
+  // Until alerts resolve, every critical is treated as needing attention — do not
+  // claim acknowledgement we have not proven.
+  if (!alertsResolved) {
+    return total === 1 ? '1 critical finding' : `${String(total)} critical findings`;
+  }
+  if (acknowledgedCount === 0) {
+    return unacknowledgedCount === 1
+      ? '1 unacknowledged critical finding'
+      : `${String(unacknowledgedCount)} unacknowledged critical findings`;
+  }
+  if (unacknowledgedCount === 0) {
+    return acknowledgedCount === 1
+      ? '1 acknowledged critical finding'
+      : `${String(acknowledgedCount)} acknowledged critical findings`;
+  }
+  return (
+    `${String(unacknowledgedCount)} unacknowledged · ${String(acknowledgedCount)} acknowledged ` +
+    `critical finding${total === 1 ? '' : 's'}`
+  );
+}
+
+/**
  * C18 routes two natures through `treasury_finding` (C20): an event keyed by
  * transaction hash, and a condition keyed `outgoing_scan_incomplete:<treasury>:<code>`.
  * Only the first is a transaction, so only the first gets a "Transaction" label.
@@ -383,7 +475,7 @@ export function App() {
   const [reconciliationRunsTotal, setReconciliationRunsTotal] = useState(0);
   const [reconciliationState, setReconciliationState] = useState<LoadState>('idle');
   const [reconciliationError, setReconciliationError] = useState<string | undefined>();
-  // Persists warnings + run-history visibility only — critical findings are never gated on this.
+  // Persists warnings + run-history visibility only — unacknowledged criticals are never gated on this.
   const [reconciliationDetailExpanded, setReconciliationDetailExpanded] = useState(
     loadReconciliationDetailExpanded,
   );
@@ -1444,16 +1536,141 @@ export function App() {
                     const otherFindings = findings.filter(
                       (item) => item.severity !== 'critical' && item.severity !== 'warning',
                     );
+                    const alertsResolved = areFindingAlertsResolved(findingAlertsState);
+                    const unacknowledgedCriticalFindings = criticalFindings.filter(
+                      (item) =>
+                        !isCriticalFindingAcknowledged(
+                          item,
+                          findingAlertsState,
+                          openFindingAlerts,
+                          acknowledgedFindingAlerts,
+                        ),
+                    );
+                    const acknowledgedCriticalFindings = criticalFindings.filter((item) =>
+                      isCriticalFindingAcknowledged(
+                        item,
+                        findingAlertsState,
+                        openFindingAlerts,
+                        acknowledgedFindingAlerts,
+                      ),
+                    );
                     const newestRun = reconciliationRuns[0];
-                    const criticalCount = criticalFindings.length;
-                    const hasCritical = criticalCount > 0;
-                    const criticalLabel =
-                      criticalCount === 1
-                        ? '1 critical finding'
-                        : `${String(criticalCount)} critical findings`;
+                    const hasUnacknowledgedCritical = unacknowledgedCriticalFindings.length > 0;
+                    const hasCritical = criticalFindings.length > 0;
+                    const summaryNeedsAttention = hasUnacknowledgedCritical || otherFindings.length > 0;
+                    const criticalLabel = criticalFindingsSummaryLabel(
+                      unacknowledgedCriticalFindings.length,
+                      acknowledgedCriticalFindings.length,
+                      alertsResolved,
+                    );
+                    const renderCriticalFinding = (
+                      finding: FindingView,
+                      index: number,
+                      acknowledgement: AlertResource | undefined,
+                    ) => {
+                      const entityId =
+                        findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
+                      const href = explorerTxUrl(treasuries, finding.treasuryId, finding.transactionHash);
+                      const isAcknowledged = acknowledgement !== undefined;
+                      return (
+                        <article
+                          key={`${isAcknowledged ? 'ack' : 'critical'}-${finding.runId}-${finding.kind}-${String(index)}`}
+                          className={
+                            isAcknowledged ? 'finding finding-acknowledged' : 'finding finding-critical'
+                          }
+                        >
+                          <div className="finding-head">
+                            <span
+                              className={
+                                isAcknowledged
+                                  ? 'badge badge-ok badge-square'
+                                  : 'badge badge-bad badge-square'
+                              }
+                            >
+                              {isAcknowledged ? 'acknowledged' : 'critical'}
+                            </span>
+                            <code>{finding.kind}</code>
+                          </div>
+                          <dl className="facts">
+                            <div>
+                              <dt>{findingEntityLabel(entityId)}</dt>
+                              <dd className="mono">
+                                {TRANSACTION_HASH_PATTERN.test(entityId) ? (
+                                  href === undefined ? (
+                                    <span title={entityId}>{entityId}</span>
+                                  ) : (
+                                    <a href={href} target="_blank" rel="noreferrer" title={entityId}>
+                                      {shortAddress(entityId)}
+                                    </a>
+                                  )
+                                ) : (
+                                  <span title={entityId}>{entityId}</span>
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Destination</dt>
+                              <dd className="mono">
+                                {finding.toAddress === undefined ? '—' : shortAddress(finding.toAddress)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Value</dt>
+                              <dd className="mono">
+                                {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Nonce</dt>
+                              <dd className="mono">
+                                {finding.nonce === undefined ? '—' : String(finding.nonce)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Block</dt>
+                              <dd className="mono">{finding.blockNumber ?? '—'}</dd>
+                            </div>
+                            <div>
+                              <dt>Run</dt>
+                              <dd>
+                                <code>{finding.runId}</code>
+                                <span className="muted"> · {formatTimestamp(finding.runStartedAt)}</span>
+                              </dd>
+                            </div>
+                            {isAcknowledged ? (
+                              <div>
+                                <dt>Acknowledged</dt>
+                                <dd>
+                                  {acknowledgement.acknowledgedAt === null
+                                    ? '—'
+                                    : formatTimestamp(acknowledgement.acknowledgedAt)}
+                                  {acknowledgement.acknowledgedBy !== null ? (
+                                    <span className="muted">
+                                      {' '}
+                                      · by{' '}
+                                      <code title={acknowledgement.acknowledgedBy}>
+                                        {shortAddress(acknowledgement.acknowledgedBy)}
+                                      </code>
+                                    </span>
+                                  ) : null}
+                                </dd>
+                              </div>
+                            ) : null}
+                          </dl>
+                          {finding.reason !== undefined ? <p className="muted">{finding.reason}</p> : null}
+                          {isAcknowledged && acknowledgement.acknowledgementNote !== null ? (
+                            <p className="ack-note-display">{acknowledgement.acknowledgementNote}</p>
+                          ) : null}
+                        </article>
+                      );
+                    };
                     return (
                       <>
-                        <div className={hasCritical ? 'recon-summary recon-summary-alert' : 'recon-summary'}>
+                        <div
+                          className={
+                            summaryNeedsAttention ? 'recon-summary recon-summary-alert' : 'recon-summary'
+                          }
+                        >
                           <button
                             type="button"
                             className="recon-toggle"
@@ -1461,8 +1678,8 @@ export function App() {
                             aria-controls="reconciliation-detail"
                             title={
                               reconciliationDetailExpanded
-                                ? 'Collapse warnings and run history'
-                                : 'Expand warnings and run history'
+                                ? 'Collapse acknowledged findings, warnings, and run history'
+                                : 'Expand acknowledged findings, warnings, and run history'
                             }
                             onClick={onToggleReconciliationDetail}
                           >
@@ -1474,7 +1691,7 @@ export function App() {
                               {reconciliationRunsTotal === 1 ? '' : 's'}
                             </span>
                             <span aria-hidden="true"> · </span>
-                            {hasCritical ? (
+                            {hasUnacknowledgedCritical ? (
                               <span className="recon-critical-callout">{criticalLabel}</span>
                             ) : (
                               <span>{criticalLabel}</span>
@@ -1499,84 +1716,17 @@ export function App() {
                         </div>
 
                         {/*
-                          Critical findings stay outside the collapse control. Collapsing
-                          must never hide them — that was the whole point of this panel.
+                          Unacknowledged critical findings stay outside the collapse.
+                          Acknowledgement is a deliberate human act with a required note
+                          (C20); until that evidence exists — including while alerts are
+                          still loading or the fetch failed — collapsing must never hide
+                          a critical (TX.20 / C17).
                         */}
-                        {hasCritical ? (
+                        {hasUnacknowledgedCritical ? (
                           <div className="finding-list recon-critical-always">
-                            {criticalFindings.map((finding, index) => {
-                              const href = explorerTxUrl(
-                                treasuries,
-                                finding.treasuryId,
-                                finding.transactionHash,
-                              );
-                              return (
-                                <article
-                                  key={`critical-${finding.runId}-${finding.kind}-${String(index)}`}
-                                  className="finding finding-critical"
-                                >
-                                  <div className="finding-head">
-                                    <span className="badge badge-bad badge-square">critical</span>
-                                    <code>{finding.kind}</code>
-                                  </div>
-                                  <dl className="facts">
-                                    <div>
-                                      <dt>Transaction</dt>
-                                      <dd className="mono">
-                                        {finding.transactionHash === undefined ? (
-                                          '—'
-                                        ) : href === undefined ? (
-                                          finding.transactionHash
-                                        ) : (
-                                          <a href={href} target="_blank" rel="noreferrer">
-                                            {shortAddress(finding.transactionHash)}
-                                          </a>
-                                        )}
-                                      </dd>
-                                    </div>
-                                    <div>
-                                      <dt>Destination</dt>
-                                      <dd className="mono">
-                                        {finding.toAddress === undefined
-                                          ? '—'
-                                          : shortAddress(finding.toAddress)}
-                                      </dd>
-                                    </div>
-                                    <div>
-                                      <dt>Value</dt>
-                                      <dd className="mono">
-                                        {finding.valueWei === undefined
-                                          ? '—'
-                                          : formatFindingWei(finding.valueWei)}
-                                      </dd>
-                                    </div>
-                                    <div>
-                                      <dt>Nonce</dt>
-                                      <dd className="mono">
-                                        {finding.nonce === undefined ? '—' : String(finding.nonce)}
-                                      </dd>
-                                    </div>
-                                    <div>
-                                      <dt>Block</dt>
-                                      <dd className="mono">{finding.blockNumber ?? '—'}</dd>
-                                    </div>
-                                    <div>
-                                      <dt>Run</dt>
-                                      <dd>
-                                        <code>{finding.runId}</code>
-                                        <span className="muted">
-                                          {' '}
-                                          · {formatTimestamp(finding.runStartedAt)}
-                                        </span>
-                                      </dd>
-                                    </div>
-                                  </dl>
-                                  {finding.reason !== undefined ? (
-                                    <p className="muted">{finding.reason}</p>
-                                  ) : null}
-                                </article>
-                              );
-                            })}
+                            {unacknowledgedCriticalFindings.map((finding, index) =>
+                              renderCriticalFinding(finding, index, undefined),
+                            )}
                           </div>
                         ) : null}
 
@@ -1586,7 +1736,9 @@ export function App() {
                           not evidence that the finding is minor — C18's rule is that the
                           system must not make the benign-vs-hostile call it cannot make.
                           Filing them under "Warning findings" asserted exactly that, and
-                          the default-collapsed state then hid them entirely.
+                          the default-collapsed state then hid them entirely. They have no
+                          alert row, so TX.20's "no match ⇒ unacknowledged" rule keeps them
+                          here without a special case.
                         */}
                         {otherFindings.length > 0 ? (
                           <div className="finding-list recon-critical-always">
@@ -1635,6 +1787,26 @@ export function App() {
 
                             {!hasCritical ? (
                               <p className="muted">No critical findings in the loaded runs.</p>
+                            ) : null}
+
+                            {acknowledgedCriticalFindings.length > 0 ? (
+                              <>
+                                <h3 className="subsection-title">Acknowledged critical findings</h3>
+                                <p className="muted">
+                                  Acknowledged findings stay in the run record with their note — collapsing
+                                  hides them from the always-visible block only after an operator stands them
+                                  down (C20 / TX.20).
+                                </p>
+                                <div className="finding-list">
+                                  {acknowledgedCriticalFindings.map((finding, index) =>
+                                    renderCriticalFinding(
+                                      finding,
+                                      index,
+                                      matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),
+                                    ),
+                                  )}
+                                </div>
+                              </>
                             ) : null}
 
                             <h3 className="subsection-title">Warning findings</h3>

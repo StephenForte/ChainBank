@@ -1000,15 +1000,30 @@ Local design choices (TX.13, 2026-08-02):
 - **Unavailable shape:** HTTP 200 with `outcome: 'unavailable'` and no `wei` /
   `ether` fields — never surface provider failure as `0` (AGENTS.md §7).
 - **Ports:** reuses existing `BalanceReader`; no `src/app/ports.ts` change.
-- **Dashboard (amended TX.18):** after the listed wallet page loads, auto-fetch
-  balances when the listed count is ≤ 25 (one live RPC read per listed wallet).
-  Above 25, fall back to button-only with a short hint — TX.13 measured fine at
-  5 and batch-endpoint territory at 50; 25 is the guard. Manual "Check balances"
-  remains the explicit refresh. Filter / list reloads supersede in-flight
-  balance bursts (generation counter) so overlapping reads do not accumulate.
-  Chips unchanged: below min / ≥ min / no policy / unavailable. **Never render
-  an unreadable balance as `0 ETH`** — `outcome: 'unavailable'` stays explicit
-  (unchanged from TX.13; more load-bearing under auto-load rate limits).
+- **Dashboard (amended TX.18; reconciliation always-visible amended TX.20):** after
+  the listed wallet page loads, auto-fetch balances when the listed count is ≤ 25
+  (one live RPC read per listed wallet). Above 25, fall back to button-only with
+  a short hint — TX.13 measured fine at 5 and batch-endpoint territory at 50; 25
+  is the guard. Manual "Check balances" remains the explicit refresh. Filter /
+  list reloads supersede in-flight balance bursts (generation counter) so
+  overlapping reads do not accumulate. Chips unchanged: below min / ≥ min / no
+  policy / unavailable. **Never render an unreadable balance as `0 ETH`** —
+  `outcome: 'unavailable'` stays explicit (unchanged from TX.13; more
+  load-bearing under auto-load rate limits).
+- **Reconciliation panel (TX.18 / TX.20):** always-visible summary + collapsible
+  warnings/history; localStorage persists detail expand only and never gates a
+  critical. **Invariant (amended TX.20):** never hide an **unacknowledged**
+  critical finding behind collapse. Acknowledgement is the deliberate C20 human
+  act (required note, no un-acknowledge); the dashboard joins run findings to
+  `GET /v1/alerts` client-side. Fail closed on every ambiguous case: no matching
+  alert row ⇒ unacknowledged; alerts fetch loading/error ⇒ every critical stays
+  always-visible; match entityIds case-insensitively (tx hash and
+  `outgoing_scan_incomplete:<treasuryId>:<errorCode>`); open preferred over
+  acknowledged for a shared entityId (C20 condition recurrence). Acknowledged
+  criticals remain in the collapsible detail with note/actor — never removed.
+  Unclassified severities stay always-visible (no alert row ⇒ unacknowledged).
+  Summary distinguishes unacknowledged from acknowledged counts so it cannot
+  claim "1 critical finding" while the always-visible block is empty.
 
 ### C18 — Critical reconciliation finding alert (owner: TX.15)
 
@@ -1268,3 +1283,4 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
 - 2026-08-06 — TX.17 published C20: `GET /v1/alerts` + `POST /v1/alerts/:id/acknowledge` with `alert:read` / `alert:acknowledge`, migration `0007` (`acknowledged` state + note/actor/timestamp columns), dedupe lookup extended to acknowledged rows so re-observation cannot re-alert, findings_json immutable, standing dashboard banner independent of the runs page window, no un-acknowledge path.
 - 2026-08-06 — TX.17 review amended C20 in place: acknowledged-dedupe applies only to event-kind findings (`unexplained_outgoing_transfer`); recurring `outgoing_scan_incomplete` re-observation after ack opens a new row + email and leaves the prior acknowledgement note/actor intact (open preferred over acknowledged for a shared entityId). Unscoped ack-dedupe had permanently silenced the "detector is dark" signal — TX.9 defect 2 at the alert layer.
 - 2026-08-06 — TX.19 amended C20 in place: partial unique index on `alerts (entity_type, entity_id, alert_type) WHERE state = 'open'` (migration `0008`); all `insertOpen` callers adopt on `23505` rather than throwing (lost-alert trap). Full uniqueness rejected — it breaks C20 condition recurrence and C10/C15 reopen-after-resolve.
+- 2026-08-06 — TX.20 amended C17 reconciliation always-visible clause in place (no new number): demote acknowledged critical findings from the always-visible block into the collapsible detail after a C20 acknowledgement; fail closed when alerts are unresolved or no alert row matches; summary distinguishes unacknowledged vs acknowledged. Interacts with C20's standing banner (unchanged) — the panel reads the same open/acknowledged alert lists client-side.
