@@ -49,15 +49,22 @@ of event C14's crash-orphan scan exists to catch — a treasury transfer no
 - **Dispatch was unharmed.** The next scheduled run read the account nonce fresh inside
   the advisory lock and used nonce 4 with no conflict — an externally consumed nonce did
   not wedge funding (C7 / TX.10 / TX.8).
-- **The detector should have fired** on the 18:00 UTC run that followed: TX.14's gate sees
-  the nonce delta, declines to skip, scans the window, finds a transfer matching no
-  recorded hash ⇒ `unexplained_outgoing_transfer`, severity critical. **NOT YET
-  VERIFIED** — `reconciliation_runs.findings_json` needs a DB read the planner cannot
-  reach. Confirming it would be live-fire proof of the detector and is a five-minute check.
-- **Soft spot this exposed:** a critical finding lands in the run row and goes no further.
-  C15 alerts on run _failure_, and a run that funds correctly while recording an
-  unexplained transfer is a _success_ — so nothing emails and nothing surfaces on the
-  dashboard. Tracked as **TX.15**.
+- ✅ **The detector fired — verified 2026-08-06.** The 2026-08-05 18:00:20 UTC run
+  recorded `unexplained_transfer_count: 1` with
+  `{kind: 'unexplained_outgoing_transfer', severity: 'critical', nonce: 3, valueWei:
+'1000000000000000000', toAddress: '0x5128…652d', blockNumber: '11425869',
+transactionHash: '0xb10c651e446f00a58b…'}` — twelve minutes after the operator's manual
+  send. **Live-fire proof of C14's crash-orphan scan against a transfer it had never
+  seen.** Discrimination is sound: the five surrounding runs recorded zero unexplained
+  transfers, and the 06:00 run that funded BATCHER reported `unexplained 0` — it
+  recognised its _own_ transfer as explained while flagging the foreign one.
+- **Soft spot this exposed, now measured rather than suspected:** that 18:00 run recorded
+  `wallets_funded: 0`, no `error_code`, `outgoing_scan_status: 'complete'` — it classifies
+  as a **success** under C15. The critical finding sat in `findings_json` for over a day
+  and **nothing** happened: no email, no dashboard surface, no log line (findings are
+  logged nowhere — confirmed by reading both `wallet-reconciler.ts` and
+  `reconcile-wallets.ts`). It surfaced only via a hand-written database query. Tracked as
+  **TX.15**.
 
 **Scope note:** Phase 4 exiting completes this effort. Phases 5–8 remain out of scope;
 TX.15, threshold changes, and any mainnet work are new scope the operator initiates.
@@ -900,9 +907,13 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   is an orthogonal channel. **Do not weaken the finding itself**: an unexplained transfer
   stays critical even when benign, because benign-vs-hostile is not a distinction the
   system can safely make.
-  Before dispatch, confirm the finding actually fired on the 2026-08-05 18:00 UTC run
-  (`SELECT findings_json FROM reconciliation_runs ORDER BY started_at DESC`) — if it did
-  not, that is a **more serious defect** than the alerting gap and reshapes this task.
+  **Detection is proven sound (2026-08-06) — this task is purely about escalation.** The
+  finding fired with full forensic detail (nonce, value, destination, block, hash) and did
+  not false-positive on the system's own transfers, so **no scanner changes are in scope**.
+  The only reason it was ever seen is a hand-written DB query: findings reach **no**
+  channel today — not email, not dashboard, not logs. Adding a log line for critical
+  findings is the cheapest half of this task and is worth doing even if the alert design
+  takes longer.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
