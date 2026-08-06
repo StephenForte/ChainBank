@@ -586,6 +586,9 @@ code {
 .facts dd {
   margin: var(--s-xxs) 0 0;
   color: var(--ink);
+  /* Condition-kind finding keys render in full and have no natural break
+     point; without this they clip out of the panel on a phone. */
+  overflow-wrap: anywhere;
 }
 
 .error-inline {
