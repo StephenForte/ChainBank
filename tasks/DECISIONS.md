@@ -1000,8 +1000,15 @@ Local design choices (TX.13, 2026-08-02):
 - **Unavailable shape:** HTTP 200 with `outcome: 'unavailable'` and no `wei` /
   `ether` fields — never surface provider failure as `0` (AGENTS.md §7).
 - **Ports:** reuses existing `BalanceReader`; no `src/app/ports.ts` change.
-- **Dashboard:** on-demand "Check balances" (listed wallets only); never auto-fire
-  on mount. Chips: below min / ≥ min / no policy / unavailable.
+- **Dashboard (amended TX.18):** after the listed wallet page loads, auto-fetch
+  balances when the listed count is ≤ 25 (one live RPC read per listed wallet).
+  Above 25, fall back to button-only with a short hint — TX.13 measured fine at
+  5 and batch-endpoint territory at 50; 25 is the guard. Manual "Check balances"
+  remains the explicit refresh. Filter / list reloads supersede in-flight
+  balance bursts (generation counter) so overlapping reads do not accumulate.
+  Chips unchanged: below min / ≥ min / no policy / unavailable. **Never render
+  an unreadable balance as `0 ETH`** — `outcome: 'unavailable'` stays explicit
+  (unchanged from TX.13; more load-bearing under auto-load rate limits).
 
 ### C18 — Critical reconciliation finding alert (owner: TX.15)
 
@@ -1172,3 +1179,4 @@ Local design choices (TX.16, 2026-08-06):
 - 2026-08-06 — **C14's crash-orphan detector proven live-fire.** The 2026-08-05 18:00:20 UTC reconciler run recorded `unexplained_outgoing_transfer` (critical) for the operator's manual 1 ETH treasury send at nonce 3 — `0xb10c651e446f00a58b…`, block 11425869, destination `0x5128…652d` — twelve minutes after it happened, with full forensic detail. The five surrounding runs recorded zero unexplained transfers, and the run that funded BATCHER correctly classified its _own_ transfer as explained, so discrimination is sound. **The gap is escalation, not detection:** that run had `wallets_funded: 0`, no `error_code` and `outgoing_scan_status: 'complete'`, so C15 classifies it a success; the finding reached no email, no dashboard and no log line, and was surfaced only by a hand-written query. TX.15 is therefore scoped to escalation only — no scanner changes.
 - 2026-08-06 — TX.15 published C18: critical reconciliation finding alert (`treasury_finding`) with finding-keyed identity (tx hash for unexplained transfers), persist-then-send dedupe, **no auto-resolution** (event, not recoverable state), `logger.error` per critical finding, forensic email template + explorer link, audit `treasury.alert.email.sent`/`.failed`, failure-isolated from C15 run outcome / cron exit.
 - 2026-08-06 — TX.16 published C19: `GET /v1/reconciliation-runs` with `reconciliation:read` (operator/read-only only; project-service denied even with scopes), paginated newest-first runs with findings inline, permissive finding schema, `weiTransferred` as decimal string, and a findings-first dashboard Reconciliation panel.
+- 2026-08-06 — TX.18 amended C17 dashboard clause in place: auto-load balances when ≤25 listed wallets; button-only above that with hint; supersede in-flight on filter/list change; never-render-zero / `unavailable` rule untouched. Reconciliation panel: always-visible summary + collapsible warnings/history; critical findings never gated by collapse (localStorage persists detail expand only).
