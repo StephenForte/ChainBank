@@ -9,107 +9,97 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-02 — Phase 4 code-complete, awaiting live evidence)
+## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
 
-`main` is at **430 unit tests plus 86 integration tests, 0 skipped** (both counts
-re-run by the planner against `origin/main` on 2026-08-02), with CI (format, lint,
+`main` is at **449 unit tests plus 91 integration tests, 0 skipped** (both counts
+re-run by the planner against `origin/main`), with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
 **No open PRs. Every planned Phase 1–4 task is merged. No known open defects.**
 
-**Reconciliation funded a real wallet in production for the first time on
-2026-08-02.** Four ForteL2 wallets are enrolled (HARVEST, ADMIN, BATCHER,
-PROPOSER) in project `fortel2` / environment `development`. The §20 exit criteria:
+**PHASE 4 IS EXITED (2026-08-06).** All three §20 exit criteria are met with evidence,
+not assertion. Four ForteL2 wallets are enrolled (HARVEST, ADMIN, BATCHER, PROPOSER) in
+project `fortel2` / environment `development`.
 
-| §20 Phase 4 exit criterion                                                    | State                                                                                                           |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Long-running ForteL2 wallets remain above policy minimum during a test period | 🟡 **Mechanism proven, duration not yet.** One top-up observed end to end; the "test period" is still accruing. |
-| API and cron concurrency tests pass                                           | ✅ T4.4 (C16) + TX.10 — 86 integration tests, **0 skipped**.                                                    |
-| Failure and recovery alerting works                                           | ✅ T4.3 (C15), covered by unit and integration tests.                                                           |
+| §20 Phase 4 exit criterion                                                    | Evidence                                                                  |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Long-running ForteL2 wallets remain above policy minimum during a test period | ✅ **Two unattended restorations**, both verified on-chain — table below. |
+| API and cron concurrency tests pass                                           | ✅ T4.4 (C16) + TX.10 — 91 integration tests, **0 skipped**.              |
+| Failure and recovery alerting works                                           | ✅ T4.3 (C15), unit + integration covered.                                |
 
-**Live evidence (verified against a public Sepolia node, not just our own logs):**
+**The two unattended cycles.** BATCHER (min 0.15 / target 0.4) burned below minimum and
+was restored by the **scheduled** cron both times, no operator action. Amount,
+destination, receipt and treasury-nonce continuity were verified against a public Sepolia
+node each time — not read off the dashboard:
 
-- **Run `2cee03df-7edf-4752-861b-3bb7a29b9671`** (19:35:50Z) — staged enable of the
-  three wallets already above minimum. `walletsAssessed: 3, walletsFunded: 0,
-walletsNoop: 3`. First sweep in production history to assess a non-empty set.
-- **Run `aa93e369-e492-43f1-b054-522f6f4c6277`** (19:44:27Z) — BATCHER enrolled.
-  `walletsAssessed: 4, walletsFunded: 1, walletsNoop: 3, walletsBlocked: 0,
-walletsFailed: 0`, `outgoingScanStatus: complete`, exit 0, `durationMs: 19512`.
-- **Transaction
-  `0xdb6ef91bfaac35ace560db7b62ad24406806ddaa4a34021c1590edc6778f49ae`** — status
-  `0x1`, block 11405512, 21000 gas, to `0x3D54…a31d` (BATCHER),
-  value **254982149095701880 wei**. That is exactly `min(target − balance,
-maxTopUp)`, and BATCHER's post-transfer balance is **0.400000000000000000 ETH** —
-  its target to the wei. Destination and amount confirmed by
-  `eth_getTransactionByHash` / `eth_getTransactionReceipt` against
-  `ethereum-sepolia-rpc.publicnode.com`, independent of ChainBank's own records.
+| Cycle | Restored (UTC)      | Pre-balance | Transfer                                          | Nonce |
+| ----- | ------------------- | ----------- | ------------------------------------------------- | ----- |
+| 1     | 2026-08-04 18:00:36 | 0.1267 ETH  | `0xbc4adabf…121e`, blk 11418955, 0.2732862874 ETH | 2     |
+| 2     | 2026-08-06 06:00:36 | 0.1278 ETH  | `0xff52dc6c…a1d5`, blk 11429428, 0.2721720071 ETH | 4     |
 
-Three things this run also demonstrated in production for the first time:
-`outgoingScanStatus: complete` (TX.9's incremental scan reached the chain tip
-rather than timing out), a 19.5s total runtime where the pre-TX.9 scan alone could
-not finish, and the C14 below-minimum rule funding exactly one of four assessed
-wallets.
+Both landed within ~36 s of a `0 */6 * * *` boundary, both moved exactly
+`target − balance`, both receipts `0x1`. Measured burn: 0.142 → 0.181 ETH/day, rising.
 
-**What is still missing is duration, not capability.** The criterion says wallets
-remain above minimum _during a test period_; we have one restoration, not a period.
-BATCHER burns gas posting batches, so it should fall below 0.15 again and be
-restored unattended on the 6-hourly schedule. **Phase 4 exits when that has
-happened at least twice without intervention** — that is the difference between
-"the mechanism works" and "reconciliation keeps wallets funded". No task remains;
-this is a waiting game, and the run IDs above are the start of the record.
+**A real foreign transaction crossed the treasury mid-window, and the system absorbed
+it.** On 2026-08-05 17:48:12 UTC the operator sent **1 ETH to HARVEST by hand**
+(nonce 3, `0xb10c651e…`; confirmed by the operator 2026-08-06). This is exactly the class
+of event C14's crash-orphan scan exists to catch — a treasury transfer no
+`funding_transactions` row explains. Three consequences, all load-bearing:
 
-**Unattended cycle 1 of 2 — observed 2026-08-04, verified on-chain.** BATCHER
-burned from its 0.4 target down to an implied **0.12671371254169426 ETH**
-(below the 0.15 minimum) and was restored by the **scheduled** run — the
-transaction row was created at 18:00:26 UTC, the `0 */6 * * *` boundary to the
-half-minute, with no operator action. Transfer
-`0xbc4adabf989214f8563f8bd569a3b84dc5f2403da3528ce645719c41376f121e` (block
-11418955, receipt `0x1`): **0.27328628745830574 ETH**, exactly
-`target − balance`, treasury nonce **2** — perfect continuity after the 8/2
-top-up's nonce 1. Verified via `eth_getTransactionByHash` /
-`eth_getTransactionReceipt` against a public Sepolia node, per house rule.
-Post-restore burn already visible (0.3695 ETH within hours) — the wallet is
-genuinely consuming, not idle. Measured burn ≈ 0.142 ETH/day ⇒ cycle 2
-expected ≈ 2026-08-06 midday UTC. **One more unattended restoration closes
-Phase 4.**
+- **Dispatch was unharmed.** The next scheduled run read the account nonce fresh inside
+  the advisory lock and used nonce 4 with no conflict — an externally consumed nonce did
+  not wedge funding (C7 / TX.10 / TX.8).
+- **The detector should have fired** on the 18:00 UTC run that followed: TX.14's gate sees
+  the nonce delta, declines to skip, scans the window, finds a transfer matching no
+  recorded hash ⇒ `unexplained_outgoing_transfer`, severity critical. **NOT YET
+  VERIFIED** — `reconciliation_runs.findings_json` needs a DB read the planner cannot
+  reach. Confirming it would be live-fire proof of the detector and is a five-minute check.
+- **Soft spot this exposed:** a critical finding lands in the run row and goes no further.
+  C15 alerts on run _failure_, and a run that funds correctly while recording an
+  unexplained transfer is a _success_ — so nothing emails and nothing surfaces on the
+  dashboard. Tracked as **TX.15**.
 
-| Task                                                          | Status    | Landed in                  |
-| ------------------------------------------------------------- | --------- | -------------------------- |
-| T1.1 schema + migration `0001`                                | ✅ done   | PR #2                      |
-| T1.2 funding math domain                                      | ✅ done   | PR #2                      |
-| T1.3 wallet registration + policy APIs                        | ✅ done   | PR #7                      |
-| T1.4 signer infrastructure                                    | ✅ done   | PR #2                      |
-| T1.5 funding dispatch engine                                  | ✅ done   | PR #8                      |
-| T1.6 `ensure-funded` endpoint                                 | ✅ done   | PR #13                     |
-| T1.7 funding history API + dashboard                          | ✅ done   | PR #11                     |
-| T1.8 reserve-exhaustion email                                 | ✅ done   | PR #21                     |
-| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done   | PR #7                      |
-| T2.3 operation status + confirmation resume                   | ✅ done   | PR #10                     |
-| T2.4 dashboard project/environment/wallet/policy views        | ✅ done   | PR #20                     |
-| T3.1 alert state machine                                      | ✅ done   | PR #5                      |
-| T3.2 email templates                                          | ✅ done   | PR #6                      |
-| T3.3 alert persistence + cron/manual orchestration            | ✅ done   | PR #12                     |
-| T3.4 operational runbooks (PRD §19)                           | ✅ done   | PR #14                     |
-| TX.1 CI pipeline                                              | ✅ done   | PR #4, fixed in #9         |
-| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done   | Phase 0 + PR #13           |
-| TX.4 credential list / disable / revoke / enable              | ✅ done   | PR #16, #17                |
-| TX.6 alert lookup filtered by alert type                      | ✅ done   | PR #15                     |
-| T1.9 concurrency integration tests                            | ✅ done   | PR #35                     |
-| T2.2 `ensure-ready` endpoint (contract C11)                   | ✅ done   | PR #33                     |
-| TX.5 treasury row lifecycle + ambiguity guard (C12)           | ✅ done   | PR #32                     |
-| TX.7 list-environments route (C13)                            | ✅ done   | PR #34                     |
-| TX.8 confirm-outside-lock race fix (C7 amendment)             | ✅ done   | PR #37                     |
-| TX.3 docs refresh (README + PRD §25)                          | ✅ done   | PR #39                     |
-| T4.1 reconciliation use case (C14, migration `0004`)          | ✅ done   | PR #40                     |
-| T4.2 reconciler cron entry + Render blueprint                 | ✅ done   | PR #41                     |
-| T4.3 reconciliation failure alerting (C15)                    | ✅ done   | PR #42                     |
-| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)  | ✅ done   | PR #44 (two review rounds) |
-| T4.4 cron-vs-API concurrency (C16)                            | ✅ done   | PR #46 (one case `.skip`)  |
-| TX.10 crash-duplicate prevention (C7 amendment)               | ✅ done   | PR #48 (two review rounds) |
-| TX.11 dashboard reconcile toggle + `weiTransferred` log       | ✅ done   | PR #53                     |
-| TX.12 dashboard design-system pass (presentation only)        | ✅ done   | PR #56 (+ #58, #59)        |
-| TX.13 live wallet balances (C17)                              | 🔄 review | PR #61 — approved          |
-| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | 🔄 review | PR #64 — approved          |
+**Scope note:** Phase 4 exiting completes this effort. Phases 5–8 remain out of scope;
+TX.15, threshold changes, and any mainnet work are new scope the operator initiates.
+
+| Task                                                          | Status      | Landed in                  |
+| ------------------------------------------------------------- | ----------- | -------------------------- |
+| T1.1 schema + migration `0001`                                | ✅ done     | PR #2                      |
+| T1.2 funding math domain                                      | ✅ done     | PR #2                      |
+| T1.3 wallet registration + policy APIs                        | ✅ done     | PR #7                      |
+| T1.4 signer infrastructure                                    | ✅ done     | PR #2                      |
+| T1.5 funding dispatch engine                                  | ✅ done     | PR #8                      |
+| T1.6 `ensure-funded` endpoint                                 | ✅ done     | PR #13                     |
+| T1.7 funding history API + dashboard                          | ✅ done     | PR #11                     |
+| T1.8 reserve-exhaustion email                                 | ✅ done     | PR #21                     |
+| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done     | PR #7                      |
+| T2.3 operation status + confirmation resume                   | ✅ done     | PR #10                     |
+| T2.4 dashboard project/environment/wallet/policy views        | ✅ done     | PR #20                     |
+| T3.1 alert state machine                                      | ✅ done     | PR #5                      |
+| T3.2 email templates                                          | ✅ done     | PR #6                      |
+| T3.3 alert persistence + cron/manual orchestration            | ✅ done     | PR #12                     |
+| T3.4 operational runbooks (PRD §19)                           | ✅ done     | PR #14                     |
+| TX.1 CI pipeline                                              | ✅ done     | PR #4, fixed in #9         |
+| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done     | Phase 0 + PR #13           |
+| TX.4 credential list / disable / revoke / enable              | ✅ done     | PR #16, #17                |
+| TX.6 alert lookup filtered by alert type                      | ✅ done     | PR #15                     |
+| T1.9 concurrency integration tests                            | ✅ done     | PR #35                     |
+| T2.2 `ensure-ready` endpoint (contract C11)                   | ✅ done     | PR #33                     |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)           | ✅ done     | PR #32                     |
+| TX.7 list-environments route (C13)                            | ✅ done     | PR #34                     |
+| TX.8 confirm-outside-lock race fix (C7 amendment)             | ✅ done     | PR #37                     |
+| TX.3 docs refresh (README + PRD §25)                          | ✅ done     | PR #39                     |
+| T4.1 reconciliation use case (C14, migration `0004`)          | ✅ done     | PR #40                     |
+| T4.2 reconciler cron entry + Render blueprint                 | ✅ done     | PR #41                     |
+| T4.3 reconciliation failure alerting (C15)                    | ✅ done     | PR #42                     |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)  | ✅ done     | PR #44 (two review rounds) |
+| T4.4 cron-vs-API concurrency (C16)                            | ✅ done     | PR #46 (one case `.skip`)  |
+| TX.10 crash-duplicate prevention (C7 amendment)               | ✅ done     | PR #48 (two review rounds) |
+| TX.11 dashboard reconcile toggle + `weiTransferred` log       | ✅ done     | PR #53                     |
+| TX.12 dashboard design-system pass (presentation only)        | ✅ done     | PR #56 (+ #58, #59)        |
+| TX.13 live wallet balances (C17)                              | 🔄 review   | PR #61 — approved          |
+| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | 🔄 review   | PR #64 — approved          |
+| TX.15 surface critical reconciliation findings                | not started | — opened by live event     |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -893,6 +883,27 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   skip/delta logs produce exactly the data needed to decide the deferred
   k-bisection follow-up.
 
+- **TX.15** 🔴 Surface critical reconciliation findings `[T4.3, C14, C15]` — contract
+  **C18** (pre-assigned if a new alert type is published; amend C15 in place if not)
+  **Opened by a real event, 2026-08-06.** An operator hand-sent 1 ETH from the treasury
+  (nonce 3). The crash-orphan scan is designed to record that as
+  `unexplained_outgoing_transfer`, severity **critical** — possible key compromise or a
+  crash-orphaned send. But a run that funds its wallets correctly while recording that
+  finding classifies as a **success** under C15, which alerts on run _failure_. So the
+  finding lands in `reconciliation_runs.findings_json` and **nothing happens**: no email,
+  no dashboard surface, no exit-code change. The one signal the system exists to raise is
+  the one signal it currently whispers.
+  Deliver: critical findings escalate independently of run classification. Likely a
+  `treasury_finding` alert type reusing C3a/C10's persist-then-send dedupe (TX.6's typed
+  lookup already prevents entity collision), plus surfacing findings in the dashboard run
+  view. **Do not change C15's failure semantics** — a funded run is still a success; this
+  is an orthogonal channel. **Do not weaken the finding itself**: an unexplained transfer
+  stays critical even when benign, because benign-vs-hostile is not a distinction the
+  system can safely make.
+  Before dispatch, confirm the finding actually fired on the 2026-08-05 18:00 UTC run
+  (`SELECT findings_json FROM reconciliation_runs ORDER BY started_at DESC`) — if it did
+  not, that is a **more serious defect** than the alerting gap and reshapes this task.
+
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
   - integration tests against a Postgres service container. Actions pinned by SHA.
@@ -1025,11 +1036,9 @@ response or a routine rotation dependent on hand-written SQL.
    pre-broadcast intent. The duplicate T4.4 measured is closed and its test is
    un-skipped and inverted.
 
-**All planned engineering work for Phases 1–4 is merged.** What is left before
-Phase 4 can honestly be called exited is a **live observation window**, not a task:
-enrol a wallet with `reconciliation_enabled = true` and watch it across several
-6-hourly runs. See the status section above for the operator decision that needs
-making.
+✅ **Phase 4 EXITED 2026-08-06** on two verified unattended restorations (see Status).
+All planned engineering for Phases 1–4 plus the operability wave (TX.11–TX.14) is merged.
+This effort's scope is complete; TX.15 below is newly opened and unstarted.
 
 Merge-order cautions for Wave 5:
 
