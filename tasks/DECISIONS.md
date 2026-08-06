@@ -1003,6 +1003,61 @@ Local design choices (TX.13, 2026-08-02):
 - **Dashboard:** on-demand "Check balances" (listed wallets only); never auto-fire
   on mount. Chips: below min / ≥ min / no policy / unavailable.
 
+### C18 — Critical reconciliation finding alert (owner: TX.15)
+
+```ts
+// src/app/alerts/notify-treasury-finding.ts
+export const TREASURY_FINDING_ALERT_TYPE = 'treasury_finding';
+export const TREASURY_FINDING_ENTITY_TYPE = 'treasury_finding';
+
+function treasuryFindingAlertEntityId(finding): string;
+function logCriticalReconciliationFindings(logger, input): void;
+function notifyTreasuryFinding(deps, input): Promise<NotifyTreasuryFindingResult>;
+// deps: AlertRepository, EmailSender | undefined, AuditEventRepository, Clock, Logger
+// Result kinds: opened | deduped | retried
+
+// src/app/email/treasury-finding-template.ts
+function renderTreasuryFindingEmail(context): RenderedEmailTemplate;
+```
+
+Local design choices (TX.15, 2026-08-06):
+
+- **Why a new type, not a C15 amendment:** C15 pages on run _failure_ (error_code /
+  zero-progress sweeps). A run that funds correctly while recording
+  `unexplained_outgoing_transfer` is a C15 **success** — that classification is
+  correct and must stay. Critical findings are an orthogonal event channel.
+- **Identity / dedupe:** entityType `treasury_finding`, entityId =
+  `transactionHash.toLowerCase()` for unexplained transfers (or
+  `outgoing_scan_incomplete:${treasuryId}:${errorCode}` for scan failures).
+  Alert type `treasury_finding`. TX.6 typed lookup plus finding-keyed entityId
+  means a _second_ distinct transfer alerts while the first is still open;
+  re-observation of the same finding dedupes (persist-then-send, no re-send
+  after `acknowledgeSend`).
+- **No auto-resolution:** an unexplained transfer is an immutable event — it
+  never becomes explained. Inventing a recovery condition would clear a
+  key-compromise signal incorrectly. Rows stay `open` after a successful send.
+  Closing requires a future operator acknowledgement path (or SQL). If nothing
+  ever closes them, open rows accumulate as the durable incident record; that
+  is intentional fail-closed noise, not silent loss.
+- **Logging:** every critical finding emits `logger.error` with the full
+  forensic payload (wei as string — TX.11) before the alert hook runs, so
+  Render logs surface the event even when email is unavailable.
+- **Email:** new template carries hash, destination, value, nonce, block,
+  treasury, and explorer link. Audit actions match C10/C15:
+  `treasury.alert.email.sent` / `.failed` (audit entity remains `treasury` for
+  operator queries; finding identity lives in metadata).
+- **Call site:** after `markFinished` and the C15 hook, **before** watermark
+  advances — a `recordOutgoingScanComplete` failure must not silence critical
+  finding logs/emails. Alert-store / email errors are logged and must not change
+  run outcome, C15 classification, or cron exit code. Each finding is notified
+  in its own try/catch so one store failure cannot suppress a later distinct
+  incident in the same run.
+- **Severity:** unexplained transfers stay `critical` even when later confirmed
+  benign — the system cannot safely distinguish operator action from compromise.
+- **Out of scope:** scanner / watermark / C14 classification; dashboard
+  surfacing (needs a reconciliation-runs HTTP endpoint C14 deliberately omits).
+- **Ports / migration:** reuses existing `AlertRepository`; no schema change.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -1066,3 +1121,4 @@ Local design choices (TX.13, 2026-08-02):
 - 2026-08-02 — TX.14 amended C14 in place (third amendment): nonce-gated outgoing-scan skip via `treasuries.last_outgoing_scan_nonce` (migration `0006`). Proven tip-nonce equality skips the body scan as a complete window; null/unavailable/delta fail closed into today's full scan.
 - 2026-08-06 — **PHASE 4 EXITED.** §20's three exit criteria met with evidence: two unattended BATCHER restorations by the scheduled cron (`0xbc4adabf…121e` 2026-08-04 18:00:36 UTC / 0.2732862874 ETH / nonce 2; `0xff52dc6c…a1d5` 2026-08-06 06:00:36 UTC / 0.2721720071 ETH / nonce 4 — both verified on-chain, both exactly `target − balance`, both within ~36 s of a cron boundary), concurrency tests passing at 91 integration / 0 skipped (T4.4 + TX.10), and C15 failure alerting covered. Measured BATCHER burn 0.142 → 0.181 ETH/day. Mid-window an operator hand-sent 1 ETH from the treasury (nonce 3): dispatch absorbed the foreign nonce without conflict (fresh in-lock read, C7/TX.8/TX.10), and the transfer is precisely what C14's crash-orphan scan classifies as `unexplained_outgoing_transfer` (critical) — but C15 alerts on run _failure_, and a run that funds correctly is a success, so the finding is recorded and never surfaced. Opened as **TX.15**; C15's failure semantics are deliberately unchanged. This effort's scope ends here — Phases 5–8 remain out of scope.
 - 2026-08-06 — **C14's crash-orphan detector proven live-fire.** The 2026-08-05 18:00:20 UTC reconciler run recorded `unexplained_outgoing_transfer` (critical) for the operator's manual 1 ETH treasury send at nonce 3 — `0xb10c651e446f00a58b…`, block 11425869, destination `0x5128…652d` — twelve minutes after it happened, with full forensic detail. The five surrounding runs recorded zero unexplained transfers, and the run that funded BATCHER correctly classified its _own_ transfer as explained, so discrimination is sound. **The gap is escalation, not detection:** that run had `wallets_funded: 0`, no `error_code` and `outgoing_scan_status: 'complete'`, so C15 classifies it a success; the finding reached no email, no dashboard and no log line, and was surfaced only by a hand-written query. TX.15 is therefore scoped to escalation only — no scanner changes.
+- 2026-08-06 — TX.15 published C18: critical reconciliation finding alert (`treasury_finding`) with finding-keyed identity (tx hash for unexplained transfers), persist-then-send dedupe, **no auto-resolution** (event, not recoverable state), `logger.error` per critical finding, forensic email template + explorer link, audit `treasury.alert.email.sent`/`.failed`, failure-isolated from C15 run outcome / cron exit.

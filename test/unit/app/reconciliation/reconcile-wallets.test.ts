@@ -5,13 +5,19 @@ import type {
   AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
+  EmailMessage,
+  EmailSender,
   FundingTransaction,
+  InsertOpenAlertInput,
   ManagedWallet,
   ManagedWalletRepository,
   RecordOutgoingScanCompleteInput,
+  StoredOpenAlert,
   Treasury,
   TreasuryRepository,
 } from '../../../../src/app/ports.js';
+import { classifyReconciliationRun } from '../../../../src/app/alerts/notify-reconciliation-failure.js';
+import { classifyReconcilerExit, reconcilerExitCode } from '../../../../src/jobs/wallet-reconciler.js';
 import { createLogger } from '../../../../src/observability/logger.js';
 import { createFixedClock } from '../../../support/clock.js';
 import {
@@ -242,6 +248,67 @@ describe('reconcileWallets sweep decisions', () => {
     expect(result.outgoingScanStatus).toBe('complete');
   });
 
+  it('logs critical findings at error and still classifies the run as C15 success / exit 0', async () => {
+    const sink = collectLogs();
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'b1'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH,
+          nonce: 3,
+          // Must sit inside the fake scanner tip window (default tip 1000).
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: 'msg-1' });
+      },
+    };
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury(), {
+        outgoingScanner: scanner,
+        logger: createLogger({
+          level: 'error',
+          serviceRole: 'test',
+          environment: 'test',
+          destination: sink.stream,
+        }),
+      }),
+      alerts: createWorkingAlertRepository(),
+      emailSender,
+    };
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-finding-log',
+      runId: 'run-finding-log',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result.run.errorCode).toBeUndefined();
+    expect(classifyReconciliationRun(result.run)).toBe('success');
+    expect(classifyReconcilerExit(result.run.errorCode)).toBe('success');
+    expect(reconcilerExitCode('success')).toBe(0);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain(orphanHash);
+
+    const critical = sink.lines().find((line) => line.event === 'reconciliation.critical_finding');
+    expect(critical).toBeDefined();
+    expect(critical?.level).toBe('error');
+    expect(critical?.transactionHash).toBe(orphanHash);
+    expect(typeof critical?.valueWei).toBe('string');
+    expect(() => JSON.stringify(critical)).not.toThrow();
+  });
+
   it('marks outgoing scan incomplete on RPC failure rather than a clean report', async () => {
     const stores = createInMemoryFundingStores();
     const scanner = createFakeOutgoingScanner();
@@ -280,6 +347,156 @@ describe('reconcileWallets sweep decisions', () => {
     expect(result.run.finishedAt).toBeDefined();
     expect(result.outgoingScanStatus).toBe('not-run');
     expect(deps.alerts.insertOpen).not.toHaveBeenCalled();
+  });
+
+  it('keeps the run outcome when the treasury-finding alert hook throws', async () => {
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'cd'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH / 2n,
+          nonce: 9,
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const deps = buildDeps(stores, [], buildTreasury(), { outgoingScanner: scanner });
+    deps.alerts.findOpenByEntity = () => Promise.reject(new Error('finding alert store down'));
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-finding-iso',
+      runId: 'run-finding-iso',
+    });
+
+    expect(result.run.errorCode).toBeUndefined();
+    expect(result.run.finishedAt).toBeDefined();
+    expect(result.unexplainedTransferCount).toBe(1);
+    expect(classifyReconciliationRun(result.run)).toBe('success');
+    expect(classifyReconcilerExit(result.run.errorCode)).toBe('success');
+    expect(reconcilerExitCode('success')).toBe(0);
+  });
+
+  it('still logs and emails critical findings when watermark advance throws', async () => {
+    const sink = collectLogs();
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'ab'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH,
+          nonce: 3,
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: 'msg-1' });
+      },
+    };
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury(), {
+        outgoingScanner: scanner,
+        logger: createLogger({
+          level: 'error',
+          serviceRole: 'test',
+          environment: 'test',
+          destination: sink.stream,
+        }),
+      }),
+      alerts: createWorkingAlertRepository(),
+      emailSender,
+    };
+    deps.treasuries.recordOutgoingScanComplete = vi.fn(() =>
+      Promise.reject(new Error('watermark write failed')),
+    );
+
+    await expect(
+      reconcileWallets(deps, {
+        role: 'cron-reconciler',
+        credentialId: 'cron-cred',
+        correlationId: 'corr-watermark-fail',
+        runId: 'run-watermark-fail',
+      }),
+    ).rejects.toThrow('watermark write failed');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain(orphanHash);
+    const critical = sink.lines().find((line) => line.event === 'reconciliation.critical_finding');
+    expect(critical).toBeDefined();
+    expect(critical?.transactionHash).toBe(orphanHash);
+  });
+
+  it('alerts a later distinct finding when an earlier finding notify throws', async () => {
+    const stores = createInMemoryFundingStores();
+    const hashA = `0x${'a1'.repeat(32)}`;
+    const hashB = `0x${'b2'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: hashA,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH,
+          nonce: 3,
+          blockNumber: 40n,
+        },
+        {
+          transactionHash: hashB,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_B,
+          valueWei: ONE_ETH / 2n,
+          nonce: 4,
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+    const alerts = createWorkingAlertRepository();
+    const originalFind = alerts.findOpenByEntity.bind(alerts);
+    alerts.findOpenByEntity = (entityType, entityId, alertType) => {
+      if (entityId === hashA) {
+        return Promise.reject(new Error('first finding alert store down'));
+      }
+      return originalFind(entityType, entityId, alertType);
+    };
+
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury(), { outgoingScanner: scanner }),
+      alerts,
+      emailSender,
+    };
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-finding-partial',
+      runId: 'run-finding-partial',
+    });
+
+    expect(result.unexplainedTransferCount).toBe(2);
+    expect(result.run.errorCode).toBeUndefined();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain(hashB);
+    expect(messages[0]?.text).not.toContain(hashA);
   });
 });
 
@@ -796,6 +1013,94 @@ describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {
     expect(second.outgoingScanStatus).toBe('complete');
   });
 });
+
+function createWorkingAlertRepository(): AlertRepository {
+  const rows = new Map<string, StoredOpenAlert>();
+  let seq = 0;
+  return {
+    findOpenByEntity(entityType, entityId, alertType) {
+      return Promise.resolve(
+        [...rows.values()].find(
+          (row) => row.entityType === entityType && row.entityId === entityId && row.alertType === alertType,
+        ),
+      );
+    },
+    insertOpen(input: InsertOpenAlertInput) {
+      const id = `alert-${String(++seq)}`;
+      const row: StoredOpenAlert = {
+        id,
+        alertType: input.alertType,
+        severity: input.severity,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        firstTriggeredAt: input.firstTriggeredAt,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        lastSentAt: undefined,
+        pendingEmail: input.pendingEmail,
+        metadata: { ...input.metadata, pendingEmail: input.pendingEmail },
+      };
+      rows.set(id, row);
+      return Promise.resolve(row);
+    },
+    markEscalated() {
+      return Promise.reject(new Error('unused'));
+    },
+    markPendingEmail(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        return Promise.reject(new Error('missing alert'));
+      }
+      const next: StoredOpenAlert = {
+        ...existing,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: input.pendingEmail,
+        metadata: {
+          ...existing.metadata,
+          ...(input.metadata ?? {}),
+          pendingEmail: input.pendingEmail,
+        },
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    clearPendingEmail() {
+      return Promise.reject(new Error('unused'));
+    },
+    acknowledgeSend(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        return Promise.reject(new Error('missing alert'));
+      }
+      const metadata = { ...existing.metadata };
+      delete metadata.pendingEmail;
+      const next: StoredOpenAlert = {
+        ...existing,
+        lastSentAt: input.lastSentAt,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: undefined,
+        metadata,
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(next);
+    },
+    resolve() {
+      return Promise.reject(new Error('unused'));
+    },
+    touchLastEvaluated(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined) {
+        return Promise.resolve();
+      }
+      rows.set(input.id, {
+        ...existing,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        metadata:
+          input.metadata === undefined ? existing.metadata : { ...existing.metadata, ...input.metadata },
+      });
+      return Promise.resolve();
+    },
+  };
+}
 
 function buildDeps(
   stores: ReturnType<typeof createInMemoryFundingStores>,
