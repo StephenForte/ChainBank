@@ -23,14 +23,19 @@ const weiDecimalString = {
  * union with `additionalProperties: false` would 500 on old or unknown kinds —
  * the opposite of what an incident-read surface needs. Require nothing beyond
  * object shape; pass every property through (C19).
+ *
+ * Declaring NO properties is deliberate. `fast-json-stringify` coerces a
+ * declared property to its declared type rather than rejecting it, so
+ * `kind: { type: 'string' }` / `severity: { type: 'string' }` silently rewrote
+ * a non-string value instead of passing it through: a planner probe measured
+ * `severity: null` → `""` and `severity: { level: 'critical' }` →
+ * `"[object Object]"`. Erasing the severity of a finding is precisely the
+ * silent-evidence-loss this endpoint exists to prevent, so the schema declares
+ * nothing and the passthrough is total.
  */
 const reconciliationFindingResponseSchema = {
   type: 'object',
   additionalProperties: true,
-  properties: {
-    kind: { type: 'string' },
-    severity: { type: 'string' },
-  },
 } as const;
 
 const reconciliationRunResponseSchema = {

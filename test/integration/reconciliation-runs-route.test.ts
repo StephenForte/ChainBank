@@ -341,6 +341,54 @@ describe.skipIf(!integrationEnabled)('GET /v1/reconciliation-runs (integration, 
     expect(body.data[0]?.findings).toEqual([unknownFinding]);
   });
 
+  it('passes non-string kind/severity through without coercion', async () => {
+    // Added at planner review. The response schema previously declared
+    // `kind`/`severity` as strings; fast-json-stringify COERCES a declared
+    // property rather than rejecting it, so `severity: null` came back as `""`
+    // and `severity: { level: 'critical' }` as `"[object Object]"`. Erasing a
+    // finding's severity is the silent evidence loss this endpoint exists to
+    // prevent, so the schema now declares no finding properties at all.
+    const findings = [
+      { kind: 'future_detector', severity: 'critical', context: { inner: { deep: 'v' }, list: [1, 2, 3] } },
+      { kind: 'null_severity', severity: null, detail: 'kept' },
+      { kind: 42, severity: 'critical', detail: 'numeric kind' },
+      { kind: 'object_severity', severity: { level: 'critical' }, detail: 'kept' },
+    ];
+    await seedFinishedRun({
+      startedAt: new Date('2026-08-05T12:00:00.000Z'),
+      finishedAt: new Date('2026-08-05T12:00:20.000Z'),
+      findings,
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/reconciliation-runs?limit=10&offset=0',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<ReconciliationRunResponseBody>().data[0]?.findings).toEqual(findings);
+  });
+
+  it('wraps a non-object finding rather than dropping it', async () => {
+    await seedFinishedRun({
+      startedAt: new Date('2026-08-05T06:00:00.000Z'),
+      finishedAt: new Date('2026-08-05T06:00:20.000Z'),
+      findings: ['a bare string finding', null, 7],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/reconciliation-runs?limit=10&offset=0',
+      headers: { authorization: `Bearer ${operatorToken}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<ReconciliationRunResponseBody>().data[0]?.findings).toEqual([
+      { kind: 'unrecognised_finding_shape', severity: 'unknown', value: 'a bare string finding' },
+      { kind: 'unrecognised_finding_shape', severity: 'unknown', value: null },
+      { kind: 'unrecognised_finding_shape', severity: 'unknown', value: 7 },
+    ]);
+  });
+
   it('returns unfinished runs with finishedAt null, distinct from finished runs', async () => {
     const unfinishedId = await seedFinishedRun({
       startedAt: new Date('2026-08-06T06:00:00.000Z'),
