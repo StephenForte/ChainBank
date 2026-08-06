@@ -131,15 +131,12 @@ export async function evaluateTreasuryAlerts(
     treasuryId: input.treasury.id,
   });
 
-  // Another writer won the open-insert race (TX.19 partial unique index). The
-  // alert exists — do not send a second email (same adopt-as-dedupe contract as
-  // ensureIdempotentOperation / C10–C18 notify paths).
+  // Another writer won the open-insert race (TX.19). The transition above was
+  // computed from a miss — re-enter so we evaluate against the winner (e.g.
+  // escalate warning→critical) rather than adopting a stale `open` and
+  // skipping the email the balance actually requires.
   if (persisted.kind === 'open-race-lost') {
-    return {
-      transition,
-      email: { kind: 'not-required' },
-      openAlert: persisted.alert,
-    };
+    return evaluateTreasuryAlerts(dependencies, input);
   }
 
   const sendResult = await sendTransitionEmail(dependencies.emailSender, {

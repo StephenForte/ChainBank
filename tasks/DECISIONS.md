@@ -1192,9 +1192,12 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
   resolved-then-reopen lifecycle. Every `insertOpen` caller treats Postgres
   `23505` as "someone else opened first": catch via `isUniqueViolation`,
   re-read with the same lookup the path already uses (`findOpenByEntity` for
-  C10/C15/balance; `findOpenOrAcknowledgedByEntity` for findings), and continue
-  as deduped without sending a second email. Leaving the race unhandled would
-  turn a duplicate email into a lost critical alert (C18).
+  C10/C15; `findOpenOrAcknowledgedByEntity` for findings), and continue as
+  deduped without sending a second email. Balance evaluation
+  (`evaluateTreasuryAlerts`) **re-enters** after adopting so a stale
+  miss-computed `open` cannot skip an escalate the winner's severity still
+  requires. Leaving the race unhandled would turn a duplicate email into a
+  lost critical alert (C18).
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 

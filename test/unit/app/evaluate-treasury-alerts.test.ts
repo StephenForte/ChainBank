@@ -449,7 +449,7 @@ describe('evaluateTreasuryAlerts', () => {
     expect(messages).toHaveLength(2);
   });
 
-  it('adopts an open balance alert on unique-violation race without a second email (TX.19)', async () => {
+  it('re-evaluates against the winner after an open-insert race in the same band (TX.19)', async () => {
     const alerts = createFakeAlerts();
     const { sender, messages } = createSender('sent');
     const auditEvents: AuditEventRepository = { record: vi.fn(() => Promise.resolve()) };
@@ -500,10 +500,72 @@ describe('evaluateTreasuryAlerts', () => {
       },
     );
 
-    expect(result.transition).toEqual({ kind: 'open', severity: 'warning' });
+    // Winner already covers the warning band — re-enter yields none, no second email.
+    expect(result.transition).toEqual({ kind: 'none' });
     expect(result.email.kind).toBe('not-required');
     expect(result.openAlert?.id).toBe(winner.id);
     expect(messages).toHaveLength(0);
+    expect(alerts.rows.size).toBe(1);
+  });
+
+  it('escalates after losing an open-insert race when the winner is only warning (TX.19)', async () => {
+    const alerts = createFakeAlerts();
+    const { sender, messages } = createSender('sent');
+    const auditEvents: AuditEventRepository = { record: vi.fn(() => Promise.resolve()) };
+    const clock = createClock(new Date('2026-07-29T12:00:00.000Z'));
+
+    const winner = await alerts.insertOpen({
+      alertType: TREASURY_BALANCE_ALERT_TYPE,
+      severity: 'warning',
+      entityType: TREASURY_ALERT_ENTITY_TYPE,
+      entityId: treasury.id,
+      firstTriggeredAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+      pendingEmail: 'warning',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: winner.id,
+      lastSentAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+    });
+
+    let lookups = 0;
+    const racing: AlertRepository = {
+      ...alerts,
+      findOpenByEntity(entityType, entityId, alertType) {
+        lookups += 1;
+        // First evaluation misses (race window); re-enter sees the winner.
+        if (lookups === 1) {
+          return Promise.resolve(undefined);
+        }
+        return alerts.findOpenByEntity(entityType, entityId, alertType);
+      },
+      insertOpen() {
+        return Promise.reject(new UniqueViolationError());
+      },
+    };
+
+    const result = await evaluateTreasuryAlerts(
+      { alerts: racing, emailSender: sender, auditEvents, clock },
+      {
+        treasury,
+        balanceWei: parseEtherToWei('0.1', 'b'),
+        reminderIntervalMs: REMINDER_MS,
+        operatorRecipients: ['operator@example.com'],
+        dashboardBaseUrl: 'http://localhost:3000',
+        environment: 'local',
+        operationId: 'op-race-escalate',
+        actor: { type: 'cron', id: 'treasury-monitor' },
+      },
+    );
+
+    expect(result.transition).toEqual({ kind: 'escalate' });
+    expect(result.email.kind).toBe('sent');
+    expect(result.openAlert?.id).toBe(winner.id);
+    expect(result.openAlert?.severity).toBe('critical');
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.subject).toMatch(/CRITICAL/);
     expect(alerts.rows.size).toBe(1);
   });
 });
