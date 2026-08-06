@@ -242,6 +242,16 @@ function createRunRepo(initial: ReconciliationRun[] = []): ReconciliationRunRepo
       const sorted = [...runs].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
       return Promise.resolve(sorted.slice(0, limit));
     },
+    list(pagination) {
+      const sorted = [...runs].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+      return Promise.resolve({
+        items: sorted.slice(pagination.offset, pagination.offset + pagination.limit),
+        total: sorted.length,
+      });
+    },
+    count() {
+      return Promise.resolve(runs.length);
+    },
   };
 }
 

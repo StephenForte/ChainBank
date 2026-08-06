@@ -8,6 +8,7 @@ import {
   listFundingTransactions,
   listProjectEnvironments,
   listProjects,
+  listReconciliationRuns,
   listTreasuries,
   listWallets,
   sendTestEmail,
@@ -21,6 +22,7 @@ import {
   type ManagedWalletResource,
   type ProjectResource,
   type ReadinessResponse,
+  type ReconciliationRunResource,
   type TreasuryResource,
 } from './api';
 
@@ -74,6 +76,7 @@ function statusClass(status: string): string {
     case 'confirmed':
     case 'succeeded':
     case 'enabled':
+    case 'complete':
       return 'badge badge-ok';
     case 'warning':
     case 'degraded':
@@ -82,6 +85,7 @@ function statusClass(status: string): string {
     case 'pending':
     case 'in_progress':
     case 'created':
+    case 'incomplete':
       return 'badge badge-warn';
     case 'critical':
     case 'failed':
@@ -91,6 +95,7 @@ function statusClass(status: string): string {
     case 'disabled':
       return 'badge badge-bad';
     case 'replaced':
+    case 'not-run':
       return 'badge badge-unknown';
     default:
       return 'badge badge-unknown';
@@ -137,6 +142,94 @@ function balancePolicyChip(
     return { className: 'badge badge-warn', label: 'below min' };
   }
   return { className: 'badge badge-ok', label: '≥ min' };
+}
+
+type FindingView = {
+  readonly severity: 'critical' | 'warning' | 'unknown';
+  readonly kind: string;
+  readonly runId: string;
+  readonly runStartedAt: string;
+  readonly treasuryId: string | undefined;
+  readonly transactionHash: string | undefined;
+  readonly toAddress: string | undefined;
+  readonly valueWei: string | undefined;
+  readonly nonce: number | undefined;
+  readonly blockNumber: string | undefined;
+  readonly reason: string | undefined;
+  readonly raw: Record<string, unknown>;
+};
+
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function findingSeverity(value: unknown): FindingView['severity'] {
+  if (value === 'critical' || value === 'warning') {
+    return value;
+  }
+  return 'unknown';
+}
+
+function toFindingViews(runs: readonly ReconciliationRunResource[]): readonly FindingView[] {
+  const views: FindingView[] = [];
+  for (const run of runs) {
+    for (const raw of run.findings) {
+      views.push({
+        severity: findingSeverity(raw.severity),
+        kind: asOptionalString(raw.kind) ?? 'unknown',
+        runId: run.runId,
+        runStartedAt: run.startedAt,
+        treasuryId: asOptionalString(raw.treasuryId),
+        transactionHash: asOptionalString(raw.transactionHash),
+        toAddress: asOptionalString(raw.toAddress),
+        valueWei: asOptionalString(raw.valueWei),
+        nonce: asOptionalNumber(raw.nonce),
+        blockNumber: asOptionalString(raw.blockNumber),
+        reason: asOptionalString(raw.reason),
+        raw,
+      });
+    }
+  }
+  return views;
+}
+
+function explorerTxUrl(
+  treasuries: readonly TreasuryResource[],
+  treasuryId: string | undefined,
+  transactionHash: string | undefined,
+): string | undefined {
+  if (treasuryId === undefined || transactionHash === undefined) {
+    return undefined;
+  }
+  const treasury = treasuries.find((item) => item.id === treasuryId);
+  if (treasury === undefined) {
+    return undefined;
+  }
+  // TreasuryResource.explorerUrl is `${base}/address/${addr}` — recover the base.
+  const marker = '/address/';
+  const index = treasury.explorerUrl.lastIndexOf(marker);
+  if (index === -1) {
+    return undefined;
+  }
+  return `${treasury.explorerUrl.slice(0, index)}/tx/${transactionHash}`;
+}
+
+function runCompletionLabel(run: ReconciliationRunResource): {
+  readonly className: string;
+  readonly label: string;
+} {
+  // finishedAt null is unfinished / crashed — never render as a clean success (C15).
+  if (run.finishedAt === null) {
+    return { className: 'badge badge-warn', label: 'unfinished' };
+  }
+  if (run.errorCode !== null) {
+    return { className: 'badge badge-bad', label: 'error' };
+  }
+  return { className: 'badge badge-ok', label: 'finished' };
 }
 
 /**
@@ -196,6 +289,11 @@ export function App() {
   const [fundingHistoryError, setFundingHistoryError] = useState<string | undefined>();
   const [historyProjectFilter, setHistoryProjectFilter] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState('');
+
+  const [reconciliationRuns, setReconciliationRuns] = useState<readonly ReconciliationRunResource[]>([]);
+  const [reconciliationRunsTotal, setReconciliationRunsTotal] = useState(0);
+  const [reconciliationState, setReconciliationState] = useState<LoadState>('idle');
+  const [reconciliationError, setReconciliationError] = useState<string | undefined>();
 
   const [projects, setProjects] = useState<readonly ProjectResource[]>([]);
   const [projectsTotal, setProjectsTotal] = useState(0);
@@ -293,6 +391,30 @@ export function App() {
       setFundingHistoryTotal(0);
       setFundingHistoryError(formatError(caught));
       setFundingHistoryState('error');
+    }
+  }
+
+  async function loadReconciliationRuns(activeToken: string): Promise<void> {
+    if (activeToken.trim() === '') {
+      setReconciliationRuns([]);
+      setReconciliationRunsTotal(0);
+      setReconciliationState('idle');
+      setReconciliationError(undefined);
+      return;
+    }
+    setReconciliationState('loading');
+    setReconciliationError(undefined);
+    try {
+      // Plain DB read — no RPC cost; load with the other panels (unlike C17 balances).
+      const next = await listReconciliationRuns(activeToken.trim(), { limit: 50, offset: 0 });
+      setReconciliationRuns(next.data);
+      setReconciliationRunsTotal(next.pagination.total);
+      setReconciliationState(next.data.length === 0 ? 'empty' : 'ready');
+    } catch (caught) {
+      setReconciliationRuns([]);
+      setReconciliationRunsTotal(0);
+      setReconciliationError(formatError(caught));
+      setReconciliationState('error');
     }
   }
 
@@ -480,6 +602,7 @@ export function App() {
     // Each panel loads and fails independently — do not Promise.all across panels.
     void loadReadiness();
     void loadTreasuries(activeToken);
+    void loadReconciliationRuns(activeToken);
     void loadFundingHistory(activeToken);
     void loadProjectsPanel(activeToken);
     void loadWalletsPanel(activeToken);
@@ -499,6 +622,7 @@ export function App() {
   useEffect(() => {
     void loadTreasuries(token);
     void loadProjectsPanel(token);
+    void loadReconciliationRuns(token);
   }, [token]);
 
   useEffect(() => {
@@ -901,6 +1025,214 @@ export function App() {
               ))}
             </div>
           ) : null}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2 className="section-title">Reconciliation</h2>
+            <button type="button" className="secondary" onClick={() => void loadReconciliationRuns(token)}>
+              Reload
+            </button>
+          </div>
+          {token === '' ? (
+            <p className="muted">Paste an operator token to load reconciliation runs.</p>
+          ) : (
+            <>
+              {reconciliationState === 'loading' ? <p className="muted">Loading…</p> : null}
+              {reconciliationState === 'error' ? <p className="error-inline">{reconciliationError}</p> : null}
+              {reconciliationState === 'empty' ? (
+                <p className="muted">
+                  No reconciliation runs returned ({String(reconciliationRunsTotal)} total).
+                </p>
+              ) : null}
+              {reconciliationState === 'ready'
+                ? (() => {
+                    const findings = toFindingViews(reconciliationRuns);
+                    const criticalFindings = findings.filter((item) => item.severity === 'critical');
+                    const warningFindings = findings.filter((item) => item.severity === 'warning');
+                    const otherFindings = findings.filter(
+                      (item) => item.severity !== 'critical' && item.severity !== 'warning',
+                    );
+                    return (
+                      <>
+                        <p className="muted">
+                          Showing {String(reconciliationRuns.length)} of {String(reconciliationRunsTotal)}{' '}
+                          runs (newest first). Findings below are from this page only — older critical
+                          findings outside the window will not appear here.
+                        </p>
+
+                        <h3 className="subsection-title">Critical findings</h3>
+                        {criticalFindings.length === 0 ? (
+                          <p className="muted">No critical findings in the loaded runs.</p>
+                        ) : (
+                          <div className="finding-list">
+                            {criticalFindings.map((finding, index) => {
+                              const href = explorerTxUrl(
+                                treasuries,
+                                finding.treasuryId,
+                                finding.transactionHash,
+                              );
+                              return (
+                                <article
+                                  key={`critical-${finding.runId}-${finding.kind}-${String(index)}`}
+                                  className="finding finding-critical"
+                                >
+                                  <div className="finding-head">
+                                    <span className="badge badge-bad badge-square">critical</span>
+                                    <code>{finding.kind}</code>
+                                  </div>
+                                  <dl className="facts">
+                                    <div>
+                                      <dt>Transaction</dt>
+                                      <dd className="mono">
+                                        {finding.transactionHash === undefined ? (
+                                          '—'
+                                        ) : href === undefined ? (
+                                          finding.transactionHash
+                                        ) : (
+                                          <a href={href} target="_blank" rel="noreferrer">
+                                            {shortAddress(finding.transactionHash)}
+                                          </a>
+                                        )}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Destination</dt>
+                                      <dd className="mono">
+                                        {finding.toAddress === undefined
+                                          ? '—'
+                                          : shortAddress(finding.toAddress)}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Value</dt>
+                                      <dd className="mono">
+                                        {finding.valueWei === undefined
+                                          ? '—'
+                                          : `${formatWeiAsEther(finding.valueWei)} ETH`}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Nonce</dt>
+                                      <dd className="mono">
+                                        {finding.nonce === undefined ? '—' : String(finding.nonce)}
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Block</dt>
+                                      <dd className="mono">{finding.blockNumber ?? '—'}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Run</dt>
+                                      <dd>
+                                        <code>{finding.runId}</code>
+                                        <span className="muted">
+                                          {' '}
+                                          · {formatTimestamp(finding.runStartedAt)}
+                                        </span>
+                                      </dd>
+                                    </div>
+                                  </dl>
+                                  {finding.reason !== undefined ? (
+                                    <p className="muted">{finding.reason}</p>
+                                  ) : null}
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <h3 className="subsection-title">Warning findings</h3>
+                        {warningFindings.length === 0 && otherFindings.length === 0 ? (
+                          <p className="muted">No warning findings in the loaded runs.</p>
+                        ) : (
+                          <div className="finding-list">
+                            {[...warningFindings, ...otherFindings].map((finding, index) => (
+                              <article
+                                key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
+                                className={
+                                  finding.severity === 'warning'
+                                    ? 'finding finding-warning'
+                                    : 'finding finding-unknown'
+                                }
+                              >
+                                <div className="finding-head">
+                                  <span
+                                    className={
+                                      finding.severity === 'warning'
+                                        ? 'badge badge-warn'
+                                        : 'badge badge-unknown'
+                                    }
+                                  >
+                                    {finding.severity}
+                                  </span>
+                                  <code>{finding.kind}</code>
+                                </div>
+                                <p className="muted">
+                                  Run <code>{finding.runId}</code> · {formatTimestamp(finding.runStartedAt)}
+                                  {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
+                                </p>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+
+                        <h3 className="subsection-title">Run history</h3>
+                        <div className="table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Started</th>
+                                <th>Finished</th>
+                                <th>Assessed</th>
+                                <th>Funded</th>
+                                <th>Blocked</th>
+                                <th>Failed</th>
+                                <th>Transferred</th>
+                                <th>Scan</th>
+                                <th>Status</th>
+                                <th>Error</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reconciliationRuns.map((run) => {
+                                const completion = runCompletionLabel(run);
+                                return (
+                                  <tr key={run.id}>
+                                    <td>{formatTimestamp(run.startedAt)}</td>
+                                    <td>
+                                      {run.finishedAt === null ? (
+                                        <span className="badge badge-warn">unfinished</span>
+                                      ) : (
+                                        formatTimestamp(run.finishedAt)
+                                      )}
+                                    </td>
+                                    <td className="mono">{String(run.walletsAssessed)}</td>
+                                    <td className="mono">{String(run.walletsFunded)}</td>
+                                    <td className="mono">{String(run.walletsBlocked)}</td>
+                                    <td className="mono">{String(run.walletsFailed)}</td>
+                                    <td className="mono">{run.weiTransferredEther} ETH</td>
+                                    <td>
+                                      <span className={statusClass(run.outgoingScanStatus)}>
+                                        {run.outgoingScanStatus}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <span className={completion.className}>{completion.label}</span>
+                                    </td>
+                                    <td className="mono">{run.errorCode ?? '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    );
+                  })()
+                : null}
+            </>
+          )}
         </section>
 
         <section className="panel">

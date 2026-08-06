@@ -1058,6 +1058,55 @@ Local design choices (TX.15, 2026-08-06):
   surfacing (needs a reconciliation-runs HTTP endpoint C14 deliberately omits).
 - **Ports / migration:** reuses existing `AlertRepository`; no schema change.
 
+### C19 — List reconciliation runs (owner: TX.16)
+
+```ts
+// Permission (src/domain/auth/roles.ts) — additive; ROLES untouched
+'reconciliation:read'; // operator + read-only only
+// Denied: project-service (even with scope rows), cron-reconciler,
+// cron-treasury-monitor.
+
+// HTTP (read-only)
+// GET /v1/reconciliation-runs?limit&offset
+// Response: { data: ReconciliationRunResource[], pagination: { limit, offset, total } }
+// weiTransferred: decimal string; findings: opaque objects (additionalProperties: true)
+
+// Application ports (src/app/ports.ts) — ReconciliationRunRepository additive
+list(pagination: { limit, offset }): Promise<ReconciliationRunListPage>; // newest-first by started_at
+count(): Promise<number>;
+// listRecent(limit) signature unchanged (C15 consecutive-failure derivation)
+
+// Application use case (src/app/reconciliation/list-reconciliation-runs.ts)
+function listReconciliationRuns(deps, input): Promise<ListReconciliationRunsResult>;
+// assertPermission(role, 'reconciliation:read') → repo.list — no project scope
+```
+
+Local design choices (TX.16, 2026-08-06):
+
+- **Authz is role denial, not scope.** Runs are treasury-global; findings carry
+  destination, value, nonce, and hash across every project. There is no project
+  to scope to, so C13/C17's `resolveReadableProjectIds` pattern cannot express
+  the boundary. Scope grants must not buy treasury-wide forensic data.
+- **No `GET /v1/reconciliation-runs/:id`.** The dashboard needs the newest page
+  with findings inline; deep-linking a single run is not required yet. Add later
+  if an operator workflow needs it.
+- **Fail-permissive findings presentation.** `findings_json` is unvalidated at
+  rest across TX.9/TX.14/TX.15 writers. Response schema uses
+  `additionalProperties: true` on finding objects so an unrecognised `kind`
+  still appears. Never silently drop or 500 on old evidence.
+- **`weiTransferred` as decimal string** on the wire (TX.11 type-enforcement
+  pattern); raw bigint would throw in Fastify's serializer.
+- **Explorer links stay client-side.** Finding has `treasuryId` + hash; run has
+  no chain. Dashboard matches loaded `TreasuryResource.explorerUrl`; unmatched
+  hashes render raw, never a guessed URL. No chain fields added to C19.
+- **Unfinished runs** (`finishedAt` null) are returned and labelled unfinished —
+  never rendered as a clean completed success (C15 neutrality).
+- **Stated limitation:** the dashboard panel shows findings within the fetched
+  runs page (~12 days at 50 runs / 6h). Older critical findings outside that
+  window do not appear; a standing unresolved-findings banner is TX.17.
+- **Out of scope:** scanner / watermark / C14–C15–C18 semantics; alert ack
+  (TX.17); any write path; dashboard component-test harness.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -1122,3 +1171,4 @@ Local design choices (TX.15, 2026-08-06):
 - 2026-08-06 — **PHASE 4 EXITED.** §20's three exit criteria met with evidence: two unattended BATCHER restorations by the scheduled cron (`0xbc4adabf…121e` 2026-08-04 18:00:36 UTC / 0.2732862874 ETH / nonce 2; `0xff52dc6c…a1d5` 2026-08-06 06:00:36 UTC / 0.2721720071 ETH / nonce 4 — both verified on-chain, both exactly `target − balance`, both within ~36 s of a cron boundary), concurrency tests passing at 91 integration / 0 skipped (T4.4 + TX.10), and C15 failure alerting covered. Measured BATCHER burn 0.142 → 0.181 ETH/day. Mid-window an operator hand-sent 1 ETH from the treasury (nonce 3): dispatch absorbed the foreign nonce without conflict (fresh in-lock read, C7/TX.8/TX.10), and the transfer is precisely what C14's crash-orphan scan classifies as `unexplained_outgoing_transfer` (critical) — but C15 alerts on run _failure_, and a run that funds correctly is a success, so the finding is recorded and never surfaced. Opened as **TX.15**; C15's failure semantics are deliberately unchanged. This effort's scope ends here — Phases 5–8 remain out of scope.
 - 2026-08-06 — **C14's crash-orphan detector proven live-fire.** The 2026-08-05 18:00:20 UTC reconciler run recorded `unexplained_outgoing_transfer` (critical) for the operator's manual 1 ETH treasury send at nonce 3 — `0xb10c651e446f00a58b…`, block 11425869, destination `0x5128…652d` — twelve minutes after it happened, with full forensic detail. The five surrounding runs recorded zero unexplained transfers, and the run that funded BATCHER correctly classified its _own_ transfer as explained, so discrimination is sound. **The gap is escalation, not detection:** that run had `wallets_funded: 0`, no `error_code` and `outgoing_scan_status: 'complete'`, so C15 classifies it a success; the finding reached no email, no dashboard and no log line, and was surfaced only by a hand-written query. TX.15 is therefore scoped to escalation only — no scanner changes.
 - 2026-08-06 — TX.15 published C18: critical reconciliation finding alert (`treasury_finding`) with finding-keyed identity (tx hash for unexplained transfers), persist-then-send dedupe, **no auto-resolution** (event, not recoverable state), `logger.error` per critical finding, forensic email template + explorer link, audit `treasury.alert.email.sent`/`.failed`, failure-isolated from C15 run outcome / cron exit.
+- 2026-08-06 — TX.16 published C19: `GET /v1/reconciliation-runs` with `reconciliation:read` (operator/read-only only; project-service denied even with scopes), paginated newest-first runs with findings inline, permissive finding schema, `weiTransferred` as decimal string, and a findings-first dashboard Reconciliation panel.

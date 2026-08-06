@@ -1,9 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import type {
   FinishReconciliationRunInput,
   InsertReconciliationRunInput,
   ReconciliationFinding,
   ReconciliationRun,
+  ReconciliationRunListPage,
   ReconciliationRunRepository,
 } from '../../../app/ports.js';
 import { ChainBankError } from '../../../domain/errors.js';
@@ -88,6 +89,46 @@ export function createReconciliationRunRepository(db: Database): ReconciliationR
           .orderBy(desc(reconciliationRuns.startedAt))
           .limit(limit);
         return rows.map(toReconciliationRun);
+      });
+    },
+
+    async list(pagination: {
+      readonly limit: number;
+      readonly offset: number;
+    }): Promise<ReconciliationRunListPage> {
+      return withDatabaseErrors('reconciliation_runs.list', async () => {
+        if (!Number.isInteger(pagination.limit) || pagination.limit < 1) {
+          throw new ChainBankError(
+            'INVALID_REQUEST',
+            `list limit must be a positive integer; got ${String(pagination.limit)}`,
+          );
+        }
+        if (!Number.isInteger(pagination.offset) || pagination.offset < 0) {
+          throw new ChainBankError(
+            'INVALID_REQUEST',
+            `list offset must be a non-negative integer; got ${String(pagination.offset)}`,
+          );
+        }
+
+        const [totalRow] = await db.select({ value: count() }).from(reconciliationRuns);
+        const rows = await db
+          .select()
+          .from(reconciliationRuns)
+          .orderBy(desc(reconciliationRuns.startedAt))
+          .limit(pagination.limit)
+          .offset(pagination.offset);
+
+        return {
+          items: rows.map(toReconciliationRun),
+          total: Number(totalRow?.value ?? 0),
+        };
+      });
+    },
+
+    async count(): Promise<number> {
+      return withDatabaseErrors('reconciliation_runs.count', async () => {
+        const [totalRow] = await db.select({ value: count() }).from(reconciliationRuns);
+        return Number(totalRow?.value ?? 0);
       });
     },
   };

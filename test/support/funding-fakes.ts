@@ -597,6 +597,16 @@ export function createInMemoryReconciliationRunRepository(): ReconciliationRunRe
       const sorted = [...runsById.values()].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
       return Promise.resolve(sorted.slice(0, limit));
     },
+    list(pagination) {
+      const sorted = [...runsById.values()].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+      return Promise.resolve({
+        items: sorted.slice(pagination.offset, pagination.offset + pagination.limit),
+        total: sorted.length,
+      });
+    },
+    count() {
+      return Promise.resolve(runsById.size);
+    },
   };
 }
 
