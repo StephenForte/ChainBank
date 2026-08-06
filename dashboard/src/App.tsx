@@ -1195,6 +1195,16 @@ export function App() {
                             ) : (
                               <span>{criticalLabel}</span>
                             )}
+                            {otherFindings.length > 0 ? (
+                              <>
+                                <span aria-hidden="true"> · </span>
+                                <span className="recon-critical-callout">
+                                  {otherFindings.length === 1
+                                    ? '1 unclassified finding'
+                                    : `${String(otherFindings.length)} unclassified findings`}
+                                </span>
+                              </>
+                            ) : null}
                             {newestRun !== undefined ? (
                               <>
                                 <span aria-hidden="true"> · </span>
@@ -1286,6 +1296,51 @@ export function App() {
                           </div>
                         ) : null}
 
+                        {/*
+                          Unclassified findings stay outside the collapse too (planner
+                          review, TX.18). A severity this dashboard cannot recognise is
+                          not evidence that the finding is minor — C18's rule is that the
+                          system must not make the benign-vs-hostile call it cannot make.
+                          Filing them under "Warning findings" asserted exactly that, and
+                          the default-collapsed state then hid them entirely.
+                        */}
+                        {otherFindings.length > 0 ? (
+                          <div className="finding-list recon-critical-always">
+                            {otherFindings.map((finding, index) => (
+                              <article
+                                key={`unclassified-${finding.runId}-${finding.kind}-${String(index)}`}
+                                className="finding finding-unknown"
+                              >
+                                <div className="finding-head">
+                                  <span className="badge badge-unknown badge-square">unclassified</span>
+                                  <code>{finding.kind}</code>
+                                </div>
+                                <dl className="facts">
+                                  <div>
+                                    <dt>Severity</dt>
+                                    <dd>
+                                      <code>{finding.severity}</code>
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Run</dt>
+                                    <dd>
+                                      <code>{finding.runId}</code>
+                                      <span className="muted">
+                                        {' '}
+                                        · {formatTimestamp(finding.runStartedAt)}
+                                      </span>
+                                    </dd>
+                                  </div>
+                                </dl>
+                                {finding.reason !== undefined ? (
+                                  <p className="muted">{finding.reason}</p>
+                                ) : null}
+                              </article>
+                            ))}
+                          </div>
+                        ) : null}
+
                         {reconciliationDetailExpanded ? (
                           <div id="reconciliation-detail">
                             <p className="muted">
@@ -1299,11 +1354,11 @@ export function App() {
                             ) : null}
 
                             <h3 className="subsection-title">Warning findings</h3>
-                            {warningFindings.length === 0 && otherFindings.length === 0 ? (
+                            {warningFindings.length === 0 ? (
                               <p className="muted">No warning findings in the loaded runs.</p>
                             ) : (
                               <div className="finding-list">
-                                {[...warningFindings, ...otherFindings].map((finding, index) => (
+                                {warningFindings.map((finding, index) => (
                                   <article
                                     key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
                                     className={
