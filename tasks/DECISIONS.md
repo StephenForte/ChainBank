@@ -1017,13 +1017,15 @@ Local design choices (TX.13, 2026-08-02):
   act (required note, no un-acknowledge); the dashboard joins run findings to
   `GET /v1/alerts` client-side. Fail closed on every ambiguous case: no matching
   alert row ⇒ unacknowledged; alerts fetch loading/error ⇒ every critical stays
-  always-visible; match entityIds case-insensitively (tx hash and
-  `outgoing_scan_incomplete:<treasuryId>:<errorCode>`); open preferred over
-  acknowledged for a shared entityId (C20 condition recurrence). Acknowledged
-  criticals remain in the collapsible detail with note/actor — never removed.
-  Unclassified severities stay always-visible (no alert row ⇒ unacknowledged).
-  Summary distinguishes unacknowledged from acknowledged counts so it cannot
-  claim "1 critical finding" while the always-visible block is empty.
+  always-visible; truncated open-alerts page (`total` > fetched) ⇒ never demote
+  (absence of an open row cannot be proven — C20 condition recurrence can leave
+  open + acknowledged on the same entityId); match entityIds case-insensitively
+  (tx hash and `outgoing_scan_incomplete:<treasuryId>:<errorCode>`); open
+  preferred over acknowledged for a shared entityId. Acknowledged criticals
+  remain in the collapsible detail with note/actor — never removed. Unclassified
+  severities stay always-visible (no alert row ⇒ unacknowledged). Summary
+  distinguishes unacknowledged from acknowledged counts so it cannot claim
+  "1 critical finding" while the always-visible block is empty.
 
 ### C18 — Critical reconciliation finding alert (owner: TX.15)
 

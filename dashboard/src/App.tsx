@@ -257,14 +257,20 @@ function areFindingAlertsResolved(state: LoadState): boolean {
  * Demote only on positive evidence of acknowledgement. Open preferred over
  * acknowledged for a shared entityId (C20 condition recurrence). No matching
  * alert row → unacknowledged. Unresolved alerts fetch → unacknowledged.
+ *
+ * `openAlertsComplete` is load-bearing: demotion requires proving the *absence*
+ * of an open row. A truncated open page (total > fetched) cannot prove that —
+ * an open alert on a later page plus an acknowledged match on page one would
+ * otherwise falsely demote (C20 condition recurrence makes that real).
  */
 function isCriticalFindingAcknowledged(
   finding: FindingView,
   findingAlertsState: LoadState,
   openFindingAlerts: readonly AlertResource[],
   acknowledgedFindingAlerts: readonly AlertResource[],
+  openAlertsComplete: boolean,
 ): boolean {
-  if (!areFindingAlertsResolved(findingAlertsState)) {
+  if (!areFindingAlertsResolved(findingAlertsState) || !openAlertsComplete) {
     return false;
   }
   const entityId = findingAlertEntityId(finding);
@@ -483,6 +489,8 @@ export function App() {
   // C20 — standing incident record from GET /v1/alerts (not the runs page window).
   const [openFindingAlerts, setOpenFindingAlerts] = useState<readonly AlertResource[]>([]);
   const [acknowledgedFindingAlerts, setAcknowledgedFindingAlerts] = useState<readonly AlertResource[]>([]);
+  // False until a fetch proves open.total <= fetched length — see isCriticalFindingAcknowledged.
+  const [openFindingAlertsComplete, setOpenFindingAlertsComplete] = useState(false);
   const [findingAlertsState, setFindingAlertsState] = useState<LoadState>('idle');
   const [findingAlertsError, setFindingAlertsError] = useState<string | undefined>();
   const [ackDraftByAlertId, setAckDraftByAlertId] = useState<Readonly<Record<string, string>>>({});
@@ -618,11 +626,14 @@ export function App() {
     if (activeToken.trim() === '') {
       setOpenFindingAlerts([]);
       setAcknowledgedFindingAlerts([]);
+      setOpenFindingAlertsComplete(false);
       setFindingAlertsState('idle');
       setFindingAlertsError(undefined);
       return;
     }
     setFindingAlertsState('loading');
+    // While loading, refuse demotion even if a prior page looked complete.
+    setOpenFindingAlertsComplete(false);
     setFindingAlertsError(undefined);
     try {
       const trimmed = activeToken.trim();
@@ -643,12 +654,15 @@ export function App() {
       ]);
       setOpenFindingAlerts(openPage.data);
       setAcknowledgedFindingAlerts(acknowledgedPage.data);
+      // Demotion needs to prove no open row exists; a truncated open page cannot.
+      setOpenFindingAlertsComplete(openPage.pagination.total <= openPage.data.length);
       setFindingAlertsState(
         openPage.data.length === 0 && acknowledgedPage.data.length === 0 ? 'empty' : 'ready',
       );
     } catch (caught) {
       setOpenFindingAlerts([]);
       setAcknowledgedFindingAlerts([]);
+      setOpenFindingAlertsComplete(false);
       setFindingAlertsError(formatError(caught));
       setFindingAlertsState('error');
     }
@@ -1536,7 +1550,9 @@ export function App() {
                     const otherFindings = findings.filter(
                       (item) => item.severity !== 'critical' && item.severity !== 'warning',
                     );
-                    const alertsResolved = areFindingAlertsResolved(findingAlertsState);
+                    // Truncated open pages cannot prove open-absence — treat like unresolved for demotion/summary.
+                    const alertsResolvedForDemotion =
+                      areFindingAlertsResolved(findingAlertsState) && openFindingAlertsComplete;
                     const unacknowledgedCriticalFindings = criticalFindings.filter(
                       (item) =>
                         !isCriticalFindingAcknowledged(
@@ -1544,6 +1560,7 @@ export function App() {
                           findingAlertsState,
                           openFindingAlerts,
                           acknowledgedFindingAlerts,
+                          openFindingAlertsComplete,
                         ),
                     );
                     const acknowledgedCriticalFindings = criticalFindings.filter((item) =>
@@ -1552,6 +1569,7 @@ export function App() {
                         findingAlertsState,
                         openFindingAlerts,
                         acknowledgedFindingAlerts,
+                        openFindingAlertsComplete,
                       ),
                     );
                     const newestRun = reconciliationRuns[0];
@@ -1561,7 +1579,7 @@ export function App() {
                     const criticalLabel = criticalFindingsSummaryLabel(
                       unacknowledgedCriticalFindings.length,
                       acknowledgedCriticalFindings.length,
-                      alertsResolved,
+                      alertsResolvedForDemotion,
                     );
                     const renderCriticalFinding = (
                       finding: FindingView,
