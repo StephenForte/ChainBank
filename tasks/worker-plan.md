@@ -79,46 +79,46 @@ transactionHash: '0xb10c651e446f00a58b…'}` — twelve minutes after the operat
 **Scope note:** Phase 4 exiting completes this effort. Phases 5–8 remain out of scope;
 TX.15, threshold changes, and any mainnet work are new scope the operator initiates.
 
-| Task                                                          | Status        | Landed in                  |
-| ------------------------------------------------------------- | ------------- | -------------------------- |
-| T1.1 schema + migration `0001`                                | ✅ done       | PR #2                      |
-| T1.2 funding math domain                                      | ✅ done       | PR #2                      |
-| T1.3 wallet registration + policy APIs                        | ✅ done       | PR #7                      |
-| T1.4 signer infrastructure                                    | ✅ done       | PR #2                      |
-| T1.5 funding dispatch engine                                  | ✅ done       | PR #8                      |
-| T1.6 `ensure-funded` endpoint                                 | ✅ done       | PR #13                     |
-| T1.7 funding history API + dashboard                          | ✅ done       | PR #11                     |
-| T1.8 reserve-exhaustion email                                 | ✅ done       | PR #21                     |
-| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done       | PR #7                      |
-| T2.3 operation status + confirmation resume                   | ✅ done       | PR #10                     |
-| T2.4 dashboard project/environment/wallet/policy views        | ✅ done       | PR #20                     |
-| T3.1 alert state machine                                      | ✅ done       | PR #5                      |
-| T3.2 email templates                                          | ✅ done       | PR #6                      |
-| T3.3 alert persistence + cron/manual orchestration            | ✅ done       | PR #12                     |
-| T3.4 operational runbooks (PRD §19)                           | ✅ done       | PR #14                     |
-| TX.1 CI pipeline                                              | ✅ done       | PR #4, fixed in #9         |
-| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done       | Phase 0 + PR #13           |
-| TX.4 credential list / disable / revoke / enable              | ✅ done       | PR #16, #17                |
-| TX.6 alert lookup filtered by alert type                      | ✅ done       | PR #15                     |
-| T1.9 concurrency integration tests                            | ✅ done       | PR #35                     |
-| T2.2 `ensure-ready` endpoint (contract C11)                   | ✅ done       | PR #33                     |
-| TX.5 treasury row lifecycle + ambiguity guard (C12)           | ✅ done       | PR #32                     |
-| TX.7 list-environments route (C13)                            | ✅ done       | PR #34                     |
-| TX.8 confirm-outside-lock race fix (C7 amendment)             | ✅ done       | PR #37                     |
-| TX.3 docs refresh (README + PRD §25)                          | ✅ done       | PR #39                     |
-| T4.1 reconciliation use case (C14, migration `0004`)          | ✅ done       | PR #40                     |
-| T4.2 reconciler cron entry + Render blueprint                 | ✅ done       | PR #41                     |
-| T4.3 reconciliation failure alerting (C15)                    | ✅ done       | PR #42                     |
-| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)  | ✅ done       | PR #44 (two review rounds) |
-| T4.4 cron-vs-API concurrency (C16)                            | ✅ done       | PR #46 (one case `.skip`)  |
-| TX.10 crash-duplicate prevention (C7 amendment)               | ✅ done       | PR #48 (two review rounds) |
-| TX.11 dashboard reconcile toggle + `weiTransferred` log       | ✅ done       | PR #53                     |
-| TX.12 dashboard design-system pass (presentation only)        | ✅ done       | PR #56 (+ #58, #59)        |
-| TX.13 live wallet balances (C17)                              | ✅ done       | PR #61                     |
-| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | ✅ done       | PR #64                     |
-| TX.15 escalate critical reconciliation findings (C18)         | ✅ done       | PR #72                     |
-| TX.16 reconciliation-runs endpoint + dashboard findings (C19) | 🔄 dispatched | — prompt issued 2026-08-06 |
-| TX.17 operator acknowledgement of finding alerts              | 📋 open       | — not yet dispatched       |
+| Task                                                          | Status    | Landed in                             |
+| ------------------------------------------------------------- | --------- | ------------------------------------- |
+| T1.1 schema + migration `0001`                                | ✅ done   | PR #2                                 |
+| T1.2 funding math domain                                      | ✅ done   | PR #2                                 |
+| T1.3 wallet registration + policy APIs                        | ✅ done   | PR #7                                 |
+| T1.4 signer infrastructure                                    | ✅ done   | PR #2                                 |
+| T1.5 funding dispatch engine                                  | ✅ done   | PR #8                                 |
+| T1.6 `ensure-funded` endpoint                                 | ✅ done   | PR #13                                |
+| T1.7 funding history API + dashboard                          | ✅ done   | PR #11                                |
+| T1.8 reserve-exhaustion email                                 | ✅ done   | PR #21                                |
+| T2.1 projects/environments + scoped authz (migration `0002`)  | ✅ done   | PR #7                                 |
+| T2.3 operation status + confirmation resume                   | ✅ done   | PR #10                                |
+| T2.4 dashboard project/environment/wallet/policy views        | ✅ done   | PR #20                                |
+| T3.1 alert state machine                                      | ✅ done   | PR #5                                 |
+| T3.2 email templates                                          | ✅ done   | PR #6                                 |
+| T3.3 alert persistence + cron/manual orchestration            | ✅ done   | PR #12                                |
+| T3.4 operational runbooks (PRD §19)                           | ✅ done   | PR #14                                |
+| TX.1 CI pipeline                                              | ✅ done   | PR #4, fixed in #9                    |
+| TX.2 API hardening (helmet, CORS, rate limit)                 | ✅ done   | Phase 0 + PR #13                      |
+| TX.4 credential list / disable / revoke / enable              | ✅ done   | PR #16, #17                           |
+| TX.6 alert lookup filtered by alert type                      | ✅ done   | PR #15                                |
+| T1.9 concurrency integration tests                            | ✅ done   | PR #35                                |
+| T2.2 `ensure-ready` endpoint (contract C11)                   | ✅ done   | PR #33                                |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)           | ✅ done   | PR #32                                |
+| TX.7 list-environments route (C13)                            | ✅ done   | PR #34                                |
+| TX.8 confirm-outside-lock race fix (C7 amendment)             | ✅ done   | PR #37                                |
+| TX.3 docs refresh (README + PRD §25)                          | ✅ done   | PR #39                                |
+| T4.1 reconciliation use case (C14, migration `0004`)          | ✅ done   | PR #40                                |
+| T4.2 reconciler cron entry + Render blueprint                 | ✅ done   | PR #41                                |
+| T4.3 reconciliation failure alerting (C15)                    | ✅ done   | PR #42                                |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)  | ✅ done   | PR #44 (two review rounds)            |
+| T4.4 cron-vs-API concurrency (C16)                            | ✅ done   | PR #46 (one case `.skip`)             |
+| TX.10 crash-duplicate prevention (C7 amendment)               | ✅ done   | PR #48 (two review rounds)            |
+| TX.11 dashboard reconcile toggle + `weiTransferred` log       | ✅ done   | PR #53                                |
+| TX.12 dashboard design-system pass (presentation only)        | ✅ done   | PR #56 (+ #58, #59)                   |
+| TX.13 live wallet balances (C17)                              | ✅ done   | PR #61                                |
+| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | ✅ done   | PR #64                                |
+| TX.15 escalate critical reconciliation findings (C18)         | ✅ done   | PR #72                                |
+| TX.16 reconciliation-runs endpoint + dashboard findings (C19) | 🔄 review | PR #74 — approved, planner fix pushed |
+| TX.17 operator acknowledgement of finding alerts              | 📋 open   | — not yet dispatched                  |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -995,6 +995,55 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   label** (TX.12's form-not-hue rule).
 
   **Dispatched 2026-08-06.**
+
+  **Delivered — approved at review (planner, 2026-08-06), PR #74.** Gate re-run locally:
+  472 unit / 97 integration, 0 skipped, base non-stale (`merge-base` = `origin/main`),
+  scope held, C19 used as pre-assigned rather than grepped. Authz verified by reading:
+  `assertPermission(role, 'reconciliation:read')` with **no** `authorizeScope` call — the
+  correct shape here rather than an omission — and the role-matrix test seeds a
+  project-service credential **with a scope row**, so it tests the specific bypass rather
+  than the plain denial. `parseFindings` is untouched (a pass-through cast, no filtering),
+  so unknown kinds survive the repository layer before the serializer sees them. Better
+  than spec: `findingToRecord` **wraps** a non-object finding rather than dropping it — a
+  bare string, `null` and a number all come back as tagged `unrecognised_finding_shape`
+  records with the original value preserved.
+
+  **The trap survived in a quieter form, found by probe and fixed at review.** The
+  response schema declared `kind` and `severity` as `type: 'string'`, and
+  **`fast-json-stringify` coerces a declared property rather than rejecting it** — so the
+  declaration silently rewrote values instead of passing them through: `severity: null`
+  returned as `""`, `severity: { level: 'critical' }` as `"[object Object]"`. Nothing
+  500s and nothing is dropped, so this was never the outage the prompt warned about; it is
+  the other half of the same failure, and `severity` is the field the dashboard reads to
+  decide whether a finding is critical. The worker's own comment promised to require
+  nothing beyond object shape, so this was a code/comment mismatch rather than a design
+  call — the planner fixed it on the branch (schema now declares **no** finding
+  properties; passthrough is total) and added two integration tests, both confirmed **red
+  against the previous schema** before being trusted. 99 integration after.
+
+  **Probes that confirmed rather than found:** paging stayed stable across three pages
+  with six runs sharing one `started_at` (total 6, six distinct ids, no duplicates or
+  omissions), and the GET wrote nothing — row counts and `findings_json` byte-identical
+  before and after.
+
+  **Non-blocking, recorded rather than fixed:** `count()` is on the port and implemented
+  but has **no caller** (`list()` computes `total` internally), so every implementer
+  including two test fakes satisfies a dead method — worth deleting. `list()` runs count
+  and rows as two separate queries, so `total` is briefly inconsistent with `items` under
+  a concurrent insert (harmless at four runs a day). `desc(startedAt)` has no tiebreaker;
+  a secondary sort on `id` would make paging deterministic rather than empirically stable.
+  And `findings_json` stored as a bare object rather than an array returns `[]` —
+  pre-existing `parseFindings` behaviour, **unreachable from application code** since
+  `markFinished` only ever writes an array, but it is a silent-drop path in the one
+  subsystem whose purpose is not silently dropping evidence.
+
+  **Unverified by both worker and planner:** the dashboard panel was hand-checked through
+  a CSS fixture using production classes, not the live React app against a tokened API.
+  The worker disclosed this; the planner did **not** close the gap this time (contrast
+  TX.13, where it was closed in a browser). Residual risk is presentation-only — the API
+  path underneath carries 7 integration tests. The hosted smoke that closes it: confirm
+  the 2026-08-05 unexplained transfer (`0xb10c651e…`, nonce 3) appears in the panel after
+  deploy.
 
 - **TX.17** 🔴 Operator acknowledgement of `treasury_finding` alerts `[TX.15/C18, TX.16]`
   — contract number not yet assigned
