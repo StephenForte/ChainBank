@@ -162,4 +162,57 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
     expect(foundReserve?.alertType).toBe('treasury_reserve');
     expect(foundBalance?.id).not.toBe(foundReserve?.id);
   });
+
+  it('findOpenOrAcknowledgedByEntity prefers open over acknowledged for a shared entityId (C20)', async () => {
+    const alerts = createAlertRepository(handle.db);
+    const earlier = new Date('2026-08-05T12:00:00.000Z');
+    const later = new Date('2026-08-06T12:00:00.000Z');
+    const entityId = 'outgoing_scan_incomplete:treasury:RPC_UNAVAILABLE';
+
+    const first = await alerts.insertOpen({
+      alertType: 'treasury_finding',
+      severity: 'critical',
+      entityType: 'treasury_finding',
+      entityId,
+      firstTriggeredAt: earlier,
+      lastEvaluatedAt: earlier,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: first.id,
+      lastSentAt: earlier,
+      lastEvaluatedAt: earlier,
+    });
+    await alerts.recordOperatorAcknowledgement({
+      id: first.id,
+      acknowledgedAt: earlier,
+      acknowledgedBy: 'operator-1',
+      acknowledgementNote: 'aware of outage',
+      lastEvaluatedAt: earlier,
+    });
+
+    const second = await alerts.insertOpen({
+      alertType: 'treasury_finding',
+      severity: 'critical',
+      entityType: 'treasury_finding',
+      entityId,
+      firstTriggeredAt: later,
+      lastEvaluatedAt: later,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+
+    const preferred = await alerts.findOpenOrAcknowledgedByEntity(
+      'treasury_finding',
+      entityId,
+      'treasury_finding',
+    );
+    expect(preferred?.id).toBe(second.id);
+    expect(preferred?.state).toBe('open');
+
+    const prior = await alerts.findById(first.id);
+    expect(prior?.state).toBe('acknowledged');
+    expect(prior?.acknowledgementNote).toBe('aware of outage');
+  });
 });

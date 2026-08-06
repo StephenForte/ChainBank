@@ -7,6 +7,7 @@ import {
   TREASURY_FINDING_ALERT_TYPE,
   TREASURY_FINDING_ENTITY_TYPE,
   treasuryFindingAlertEntityId,
+  type CriticalReconciliationFinding,
 } from '../../../../src/app/alerts/notify-treasury-finding.js';
 import { TREASURY_BALANCE_ALERT_TYPE } from '../../../../src/app/alerts/evaluate-treasury-alerts.js';
 import { classifyReconciliationRun } from '../../../../src/app/alerts/notify-reconciliation-failure.js';
@@ -109,15 +110,20 @@ function createFakeAlerts(): AlertRepository & {
       return Promise.resolve(row === undefined ? undefined : toOpenView(row));
     },
     async findOpenOrAcknowledgedByEntity(entityType, entityId, alertType) {
-      return Promise.resolve(
-        [...rows.values()].find(
-          (row) =>
-            (row.state === 'open' || row.state === 'acknowledged') &&
-            row.entityType === entityType &&
-            row.entityId === entityId &&
-            row.alertType === alertType,
-        ),
+      const matches = [...rows.values()].filter(
+        (row) =>
+          (row.state === 'open' || row.state === 'acknowledged') &&
+          row.entityType === entityType &&
+          row.entityId === entityId &&
+          row.alertType === alertType,
       );
+      matches.sort((a, b) => {
+        if (a.state !== b.state) {
+          return a.state === 'open' ? -1 : 1;
+        }
+        return b.firstTriggeredAt.getTime() - a.firstTriggeredAt.getTime();
+      });
+      return Promise.resolve(matches[0]);
     },
     async findById(id) {
       return Promise.resolve(rows.get(id));
@@ -370,7 +376,7 @@ describe('notifyTreasuryFinding', () => {
   const clock = { now: () => new Date('2026-08-05T18:00:20.000Z') };
   const logger = createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' });
 
-  function baseInput(finding = unexplainedFinding()) {
+  function baseInput(finding: CriticalReconciliationFinding = unexplainedFinding()) {
     return {
       finding,
       treasury,
@@ -624,5 +630,80 @@ describe('notifyTreasuryFinding', () => {
     expect(
       await alerts.findOpenByEntity(TREASURY_FINDING_ENTITY_TYPE, TX_HASH_B, TREASURY_FINDING_ALERT_TYPE),
     ).toBeDefined();
+  });
+
+  it('re-alerts outgoing_scan_incomplete after acknowledgement (condition, not event)', async () => {
+    const alerts = createFakeAlerts();
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+    const incomplete = {
+      kind: 'outgoing_scan_incomplete' as const,
+      severity: 'critical' as const,
+      treasuryId: treasury.id,
+      errorCode: 'RPC_UNAVAILABLE',
+      reason: 'tip read failed',
+    };
+    const note = 'Provider outage — aware; will watch.';
+    const actor = 'operator-cred-1';
+
+    const first = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(incomplete),
+    );
+    expect(first.kind).toBe('opened');
+    expect(messages).toHaveLength(1);
+
+    await alerts.recordOperatorAcknowledgement({
+      id: first.alertId,
+      acknowledgedAt: clock.now(),
+      acknowledgedBy: actor,
+      acknowledgementNote: note,
+      lastEvaluatedAt: clock.now(),
+    });
+
+    const second = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(incomplete),
+    );
+    expect(second.kind).toBe('opened');
+    expect(second.alertId).not.toBe(first.alertId);
+    // Email count — not just result kind (review probe).
+    expect(messages).toHaveLength(2);
+
+    const third = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(incomplete),
+    );
+    // Still-open recurrence dedupes; does not email again until that open is acked.
+    expect(third).toEqual({ kind: 'deduped', alertId: second.alertId });
+    expect(messages).toHaveLength(2);
+
+    const prior = await alerts.findById(first.alertId);
+    expect(prior).toMatchObject({
+      state: 'acknowledged',
+      acknowledgementNote: note,
+      acknowledgedBy: actor,
+    });
+    const open = await alerts.findOpenByEntity(
+      TREASURY_FINDING_ENTITY_TYPE,
+      treasuryFindingAlertEntityId(incomplete),
+      TREASURY_FINDING_ALERT_TYPE,
+    );
+    expect(open?.id).toBe(second.alertId);
+    // Preference: open wins over acknowledged for the shared entityId.
+    expect(
+      (
+        await alerts.findOpenOrAcknowledgedByEntity(
+          TREASURY_FINDING_ENTITY_TYPE,
+          treasuryFindingAlertEntityId(incomplete),
+          TREASURY_FINDING_ALERT_TYPE,
+        )
+      )?.id,
+    ).toBe(second.alertId);
   });
 });

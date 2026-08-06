@@ -1143,7 +1143,7 @@ listAlerts(deps, input): Promise<AlertListPage>;
 acknowledgeAlert(deps, input): Promise<StoredAlert>;
 ```
 
-Local design choices (TX.17, 2026-08-06):
+Local design choices (TX.17, 2026-08-06; amended same day after review probe):
 
 - **`acknowledged` ≠ `resolved`.** C10/C15 `resolved` means the underlying
   condition recovered. An unexplained transfer never recovers; collapsing a
@@ -1153,11 +1153,27 @@ Local design choices (TX.17, 2026-08-06):
   and carry forensic detail; `project-service` is denied even with scope rows.
 - **Required note.** An acknowledgement without a stated reason is deletion with
   extra steps. The note is the incident record.
-- **Dedupe after ack.** `notifyTreasuryFinding` looks up open **or** acknowledged
-  rows (`findOpenOrAcknowledgedByEntity`). Without this, the next reconciler
-  re-observation (TX.14 withholds watermark advance on incomplete/critical
-  finding) would insert a brand-new alert and re-email the same incident.
-  A distinct transaction hash still opens a distinct alert.
+- **Event vs condition under `treasury_finding` (load-bearing).** C18 keys two
+  natures through one alert type:
+  - `unexplained_outgoing_transfer` — **immutable event** (`entityId` =
+    tx hash). Acknowledgement suppresses re-observation of that hash forever
+    (`findOpenOrAcknowledgedByEntity` → dedupe). A distinct hash still opens
+    a distinct alert.
+  - `outgoing_scan_incomplete` — **recurring condition** (`entityId` =
+    `outgoing_scan_incomplete:<treasuryId>:<errorCode>`). Acknowledgement must
+    **not** permanently silence a later re-observation of the same key: while
+    the scan is incomplete the crash-orphan detector is dark, and silencing
+    that signal reintroduces TX.9 defect 2 (silence looks like success) at the
+    alert layer. Chosen behaviour: leave the acknowledged row intact and
+    `insertOpen` a new row + email on re-observation. Rejected alternative:
+    refuse acknowledgement for scan-incomplete (restores the no-close-path
+    complaint that created TX.17). Rejected alternative: flip the same row
+    back to `open` (overwrites `acknowledgement_note` / `acknowledged_by` —
+    the note _is_ the incident record).
+- **Shared-entityId preference.** After a condition recurrence, an open row
+  and an acknowledged row share `entityId`. `findOpenOrAcknowledgedByEntity`
+  prefers `state = 'open'` explicitly (then newest `first_triggered_at`), not
+  whichever row the query happens to return first.
 - **Findings untouched.** Acknowledgement never edits `findings_json` or
   severity — the finding stays `critical` forever.
 - **No un-acknowledge / no bulk.** Acknowledged rows stay visible with note and
@@ -1236,3 +1252,4 @@ Local design choices (TX.17, 2026-08-06):
 - 2026-08-06 — TX.16 published C19: `GET /v1/reconciliation-runs` with `reconciliation:read` (operator/read-only only; project-service denied even with scopes), paginated newest-first runs with findings inline, permissive finding schema, `weiTransferred` as decimal string, and a findings-first dashboard Reconciliation panel.
 - 2026-08-06 — TX.18 amended C17 dashboard clause in place: auto-load balances when ≤25 listed wallets; button-only above that with hint; supersede in-flight on filter/list change; never-render-zero / `unavailable` rule untouched. Reconciliation panel: always-visible summary + collapsible warnings/history; critical findings never gated by collapse (localStorage persists detail expand only).
 - 2026-08-06 — TX.17 published C20: `GET /v1/alerts` + `POST /v1/alerts/:id/acknowledge` with `alert:read` / `alert:acknowledge`, migration `0007` (`acknowledged` state + note/actor/timestamp columns), dedupe lookup extended to acknowledged rows so re-observation cannot re-alert, findings_json immutable, standing dashboard banner independent of the runs page window, no un-acknowledge path.
+- 2026-08-06 — TX.17 review amended C20 in place: acknowledged-dedupe applies only to event-kind findings (`unexplained_outgoing_transfer`); recurring `outgoing_scan_incomplete` re-observation after ack opens a new row + email and leaves the prior acknowledgement note/actor intact (open preferred over acknowledged for a shared entityId). Unscoped ack-dedupe had permanently silenced the "detector is dark" signal — TX.9 defect 2 at the alert layer.

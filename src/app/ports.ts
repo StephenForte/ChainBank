@@ -344,9 +344,9 @@ export interface AlertRepository {
   ): Promise<StoredOpenAlert | undefined>;
   /**
    * Dedupe lookup for finding alerts (C18/C20): matches `open` **or**
-   * `acknowledged`. Resolved rows are excluded so a later genuine cycle can
-   * re-alert. Without the acknowledged match, re-observation after ack would
-   * insert a brand-new alert and re-email the same incident.
+   * `acknowledged`. Resolved rows are excluded. When both states exist for the
+   * same entityId (condition recurrence after ack), **open is preferred** —
+   * ordering is explicit, not "newest firstTriggeredAt wins".
    */
   findOpenOrAcknowledgedByEntity(
     entityType: string,

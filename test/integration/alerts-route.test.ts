@@ -535,4 +535,106 @@ describe.skipIf(!integrationEnabled)('GET/POST /v1/alerts (integration, C20)', (
     expect(second.kind).toBe('opened');
     expect(messages).toHaveLength(2);
   });
+
+  it('re-alerts outgoing_scan_incomplete after acknowledgement without silencing or overwriting the note', async () => {
+    const { notifyTreasuryFinding, treasuryFindingAlertEntityId } =
+      await import('../../src/app/alerts/notify-treasury-finding.js');
+    const alertsRepo = createAlertRepository(handle.db);
+    const auditRepo = createAuditEventRepository(handle.db);
+    const messages: { subject: string }[] = [];
+    const emailSender = {
+      send(message: { subject: string }) {
+        messages.push(message);
+        return Promise.resolve({
+          kind: 'sent' as const,
+          providerMessageId: `msg-${String(messages.length)}`,
+        });
+      },
+    };
+    const clock = createFixedClock(new Date('2026-08-06T12:00:00.000Z'));
+    const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
+    const treasury = await createTreasuryRepository(handle.db).findById(seed.treasuryId);
+    if (treasury === undefined) {
+      throw new Error('seed treasury missing');
+    }
+
+    const finding = {
+      kind: 'outgoing_scan_incomplete' as const,
+      severity: 'critical' as const,
+      treasuryId: treasury.id,
+      errorCode: 'RPC_UNAVAILABLE',
+      reason: 'tip read failed',
+    };
+    const entityId = treasuryFindingAlertEntityId(finding);
+    const deps = { alerts: alertsRepo, emailSender, auditEvents: auditRepo, clock, logger };
+    const note = 'Provider outage — aware; detector may be dark.';
+
+    const first = await notifyTreasuryFinding(deps, {
+      finding,
+      treasury,
+      runId: `run-${randomUUID()}`,
+      operatorRecipients: ['ops@example.com'],
+      dashboardBaseUrl: 'http://localhost:3000',
+      environment: 'test',
+      operationId: `op-${randomUUID()}`,
+      actor: { type: 'cron', id: 'wallet-reconciler' },
+    });
+    expect(first.kind).toBe('opened');
+    expect(messages).toHaveLength(1);
+
+    const ack = await app.inject({
+      method: 'POST',
+      url: `/v1/alerts/${first.alertId}/acknowledge`,
+      headers: { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' },
+      payload: { note },
+    });
+    expect(ack.statusCode).toBe(200);
+
+    const second = await notifyTreasuryFinding(deps, {
+      finding,
+      treasury,
+      runId: `run-${randomUUID()}`,
+      operatorRecipients: ['ops@example.com'],
+      dashboardBaseUrl: 'http://localhost:3000',
+      environment: 'test',
+      operationId: `op-${randomUUID()}`,
+      actor: { type: 'cron', id: 'wallet-reconciler' },
+    });
+    expect(second.kind).toBe('opened');
+    expect(second.alertId).not.toBe(first.alertId);
+    expect(messages).toHaveLength(2);
+
+    const third = await notifyTreasuryFinding(deps, {
+      finding,
+      treasury,
+      runId: `run-${randomUUID()}`,
+      operatorRecipients: ['ops@example.com'],
+      dashboardBaseUrl: 'http://localhost:3000',
+      environment: 'test',
+      operationId: `op-${randomUUID()}`,
+      actor: { type: 'cron', id: 'wallet-reconciler' },
+    });
+    expect(third).toEqual({ kind: 'deduped', alertId: second.alertId });
+    expect(messages).toHaveLength(2);
+
+    const prior = await alertsRepo.findById(first.alertId);
+    expect(prior?.state).toBe('acknowledged');
+    expect(prior?.acknowledgementNote).toBe(note);
+    expect(prior?.acknowledgedBy).toBe(operatorCredentialId);
+
+    const preferred = await alertsRepo.findOpenOrAcknowledgedByEntity(
+      TREASURY_FINDING_ENTITY_TYPE,
+      entityId,
+      TREASURY_FINDING_ALERT_TYPE,
+    );
+    expect(preferred?.id).toBe(second.alertId);
+    expect(preferred?.state).toBe('open');
+
+    const rowCount = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alerts
+       WHERE entity_type = $1 AND entity_id = $2 AND alert_type = $3`,
+      [TREASURY_FINDING_ENTITY_TYPE, entityId, TREASURY_FINDING_ALERT_TYPE],
+    );
+    expect(rowCount.rows[0]?.count).toBe('2');
+  });
 });

@@ -1033,6 +1033,7 @@ function createWorkingAlertRepository(): AlertRepository {
       if (open === undefined) {
         return Promise.resolve(undefined);
       }
+      // Working fake only stores open rows; preference rule is open-first (C20).
       return Promise.resolve({
         ...open,
         state: 'open' as const,

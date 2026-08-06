@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import type {
   AlertLifecycleState,
   AlertListFilters,
@@ -39,6 +39,9 @@ export function createAlertRepository(db: Database): AlertRepository {
 
     async findOpenOrAcknowledgedByEntity(entityType, entityId, alertType): Promise<StoredAlert | undefined> {
       return withDatabaseErrors('alerts.findOpenOrAcknowledgedByEntity', async () => {
+        // When an open row and an acknowledged row share an entityId (condition
+        // recurrence after ack — C20), prefer open. firstTriggeredAt alone is
+        // not the preference rule; open-before-acknowledged is.
         const row = await db.query.alerts.findFirst({
           where: and(
             eq(alerts.entityType, entityType),
@@ -46,7 +49,7 @@ export function createAlertRepository(db: Database): AlertRepository {
             eq(alerts.alertType, alertType),
             inArray(alerts.state, [...DEDUPE_STATES]),
           ),
-          orderBy: [desc(alerts.firstTriggeredAt)],
+          orderBy: [sql`case when ${alerts.state} = 'open' then 0 else 1 end`, desc(alerts.firstTriggeredAt)],
         });
         return row === undefined ? undefined : toStoredAlert(row);
       });
