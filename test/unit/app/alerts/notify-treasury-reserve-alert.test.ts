@@ -60,6 +60,19 @@ function createFakeAlerts(): AlertRepository & {
   return {
     rows,
     resolved,
+
+    async findOpenOrAcknowledgedByEntity() {
+      return Promise.resolve(undefined);
+    },
+    async findById() {
+      return Promise.resolve(undefined);
+    },
+    async list() {
+      return Promise.resolve({ items: [], total: 0 });
+    },
+    async recordOperatorAcknowledgement() {
+      return Promise.reject(new Error('unused'));
+    },
     async findOpenByEntity(entityType, entityId, alertType) {
       return Promise.resolve(
         [...rows.values()].find(

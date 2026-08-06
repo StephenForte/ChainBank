@@ -286,6 +286,44 @@ export interface InsertOpenAlertInput {
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
+/** Persisted alert lifecycle states. `acknowledged` is distinct from `resolved` (C20). */
+export type AlertLifecycleState = 'open' | 'resolved' | 'acknowledged';
+
+/**
+ * Full alert row for list/acknowledge reads (C20). Includes terminal states —
+ * unlike {@link StoredOpenAlert}, which is the open-row mutation view.
+ */
+export interface StoredAlert {
+  readonly id: string;
+  readonly alertType: string;
+  readonly severity: AlertSeverity;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly state: AlertLifecycleState;
+  readonly firstTriggeredAt: Date;
+  readonly lastEvaluatedAt: Date;
+  readonly lastSentAt: Date | undefined;
+  readonly resolvedAt: Date | undefined;
+  readonly acknowledgedAt: Date | undefined;
+  readonly acknowledgedBy: string | undefined;
+  readonly acknowledgementNote: string | undefined;
+  readonly pendingEmail: PendingAlertEmail | undefined;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+export interface AlertListFilters {
+  readonly limit: number;
+  readonly offset: number;
+  readonly alertType?: string;
+  readonly state?: AlertLifecycleState;
+  readonly entityType?: string;
+}
+
+export interface AlertListPage {
+  readonly items: readonly StoredAlert[];
+  readonly total: number;
+}
+
 /**
  * Append-oriented alert persistence (AGENTS.md §9).
  *
@@ -293,6 +331,10 @@ export interface InsertOpenAlertInput {
  * transitions are persisted with `pendingEmail` and without advancing
  * `last_sent_at` until {@link AlertRepository.acknowledgeSend} after a
  * successful send.
+ *
+ * Operator acknowledgement of a finding alert is a distinct terminal state
+ * (`acknowledged`) via {@link AlertRepository.recordOperatorAcknowledgement} —
+ * never overload {@link AlertRepository.acknowledgeSend}.
  */
 export interface AlertRepository {
   findOpenByEntity(
@@ -300,6 +342,19 @@ export interface AlertRepository {
     entityId: string,
     alertType: string,
   ): Promise<StoredOpenAlert | undefined>;
+  /**
+   * Dedupe lookup for finding alerts (C18/C20): matches `open` **or**
+   * `acknowledged`. Resolved rows are excluded so a later genuine cycle can
+   * re-alert. Without the acknowledged match, re-observation after ack would
+   * insert a brand-new alert and re-email the same incident.
+   */
+  findOpenOrAcknowledgedByEntity(
+    entityType: string,
+    entityId: string,
+    alertType: string,
+  ): Promise<StoredAlert | undefined>;
+  findById(id: string): Promise<StoredAlert | undefined>;
+  list(filters: AlertListFilters): Promise<AlertListPage>;
   insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert>;
   /** warning → critical; leaves last_sent_at unchanged. */
   markEscalated(input: {
@@ -323,6 +378,17 @@ export interface AlertRepository {
     readonly lastSentAt: Date;
     readonly lastEvaluatedAt: Date;
   }): Promise<StoredOpenAlert>;
+  /**
+   * Records an operator acknowledgement (C20). Sets `state = 'acknowledged'` —
+   * never `resolved`. Distinct from {@link acknowledgeSend}.
+   */
+  recordOperatorAcknowledgement(input: {
+    readonly id: string;
+    readonly acknowledgedAt: Date;
+    readonly acknowledgedBy: string;
+    readonly acknowledgementNote: string;
+    readonly lastEvaluatedAt: Date;
+  }): Promise<StoredAlert>;
   /** Marks the alert resolved; never deletes the row. */
   resolve(input: {
     readonly id: string;

@@ -50,6 +50,13 @@
       "when": 1785728045603,
       "tag": "0006_colossal_the_call",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786045441738,
+      "tag": "0007_known_wiccan",
+      "breakpoints": true
     }
   ]
 }

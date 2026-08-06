@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ApiClientError,
+  acknowledgeAlert,
   checkTreasury,
   fetchReadiness,
   getEnvironment,
   getWalletBalance,
+  listAlerts,
   listFundingTransactions,
   listProjectEnvironments,
   listProjects,
@@ -17,6 +19,7 @@ import {
   setWalletEnabled,
   setWalletPolicy,
   setWalletReconciliationEnabled,
+  type AlertResource,
   type EnvironmentResource,
   type FundingTransactionResource,
   type ManagedWalletResource,
@@ -345,6 +348,15 @@ export function App() {
     loadReconciliationDetailExpanded,
   );
 
+  // C20 — standing incident record from GET /v1/alerts (not the runs page window).
+  const [openFindingAlerts, setOpenFindingAlerts] = useState<readonly AlertResource[]>([]);
+  const [acknowledgedFindingAlerts, setAcknowledgedFindingAlerts] = useState<readonly AlertResource[]>([]);
+  const [findingAlertsState, setFindingAlertsState] = useState<LoadState>('idle');
+  const [findingAlertsError, setFindingAlertsError] = useState<string | undefined>();
+  const [ackDraftByAlertId, setAckDraftByAlertId] = useState<Readonly<Record<string, string>>>({});
+  const [ackErrorByAlertId, setAckErrorByAlertId] = useState<Readonly<Record<string, string>>>({});
+  const [ackBusyId, setAckBusyId] = useState<string | undefined>();
+
   const [projects, setProjects] = useState<readonly ProjectResource[]>([]);
   const [projectsTotal, setProjectsTotal] = useState(0);
   const [projectsState, setProjectsState] = useState<LoadState>('idle');
@@ -467,6 +479,77 @@ export function App() {
       setReconciliationRunsTotal(0);
       setReconciliationError(formatError(caught));
       setReconciliationState('error');
+    }
+  }
+
+  async function loadFindingAlerts(activeToken: string): Promise<void> {
+    if (activeToken.trim() === '') {
+      setOpenFindingAlerts([]);
+      setAcknowledgedFindingAlerts([]);
+      setFindingAlertsState('idle');
+      setFindingAlertsError(undefined);
+      return;
+    }
+    setFindingAlertsState('loading');
+    setFindingAlertsError(undefined);
+    try {
+      const trimmed = activeToken.trim();
+      // Two filtered pages — standing banner must not depend on the runs window (C20).
+      const [openPage, acknowledgedPage] = await Promise.all([
+        listAlerts(trimmed, {
+          alertType: 'treasury_finding',
+          state: 'open',
+          limit: 50,
+          offset: 0,
+        }),
+        listAlerts(trimmed, {
+          alertType: 'treasury_finding',
+          state: 'acknowledged',
+          limit: 50,
+          offset: 0,
+        }),
+      ]);
+      setOpenFindingAlerts(openPage.data);
+      setAcknowledgedFindingAlerts(acknowledgedPage.data);
+      setFindingAlertsState(
+        openPage.data.length === 0 && acknowledgedPage.data.length === 0 ? 'empty' : 'ready',
+      );
+    } catch (caught) {
+      setOpenFindingAlerts([]);
+      setAcknowledgedFindingAlerts([]);
+      setFindingAlertsError(formatError(caught));
+      setFindingAlertsState('error');
+    }
+  }
+
+  async function onAcknowledgeFinding(alertId: string): Promise<void> {
+    const note = (ackDraftByAlertId[alertId] ?? '').trim();
+    if (note === '') {
+      setAckErrorByAlertId((prev) => ({ ...prev, [alertId]: 'Acknowledgement note is required.' }));
+      return;
+    }
+    if (token.trim() === '') {
+      return;
+    }
+    setAckBusyId(alertId);
+    setAckErrorByAlertId((prev) => {
+      const next = { ...prev };
+      delete next[alertId];
+      return next;
+    });
+    try {
+      await acknowledgeAlert(token.trim(), alertId, note);
+      setAckDraftByAlertId((prev) => {
+        const next = { ...prev };
+        delete next[alertId];
+        return next;
+      });
+      setMessage('Finding alert acknowledged. The incident record stays visible.');
+      await loadFindingAlerts(token);
+    } catch (caught) {
+      setAckErrorByAlertId((prev) => ({ ...prev, [alertId]: formatError(caught) }));
+    } finally {
+      setAckBusyId(undefined);
     }
   }
 
@@ -710,6 +793,7 @@ export function App() {
     void loadReadiness();
     void loadTreasuries(activeToken);
     void loadReconciliationRuns(activeToken);
+    void loadFindingAlerts(activeToken);
     void loadFundingHistory(activeToken);
     void loadProjectsPanel(activeToken);
     void loadWalletsPanel(activeToken);
@@ -730,6 +814,7 @@ export function App() {
     void loadTreasuries(token);
     void loadProjectsPanel(token);
     void loadReconciliationRuns(token);
+    void loadFindingAlerts(token);
   }, [token]);
 
   useEffect(() => {
@@ -1137,7 +1222,14 @@ export function App() {
         <section className="panel">
           <div className="panel-head">
             <h2 className="section-title">Reconciliation</h2>
-            <button type="button" className="secondary" onClick={() => void loadReconciliationRuns(token)}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                void loadReconciliationRuns(token);
+                void loadFindingAlerts(token);
+              }}
+            >
               Reload
             </button>
           </div>
@@ -1145,6 +1237,155 @@ export function App() {
             <p className="muted">Paste an operator token to load reconciliation runs.</p>
           ) : (
             <>
+              {/*
+                Standing banner from GET /v1/alerts — independent of the runs page
+                window so an older critical finding cannot go invisible (C20 / TX.17).
+              */}
+              {findingAlertsState === 'loading' ? <p className="muted">Loading finding alerts…</p> : null}
+              {findingAlertsState === 'error' ? <p className="error-inline">{findingAlertsError}</p> : null}
+              {openFindingAlerts.length > 0 ? (
+                <div className="finding-alert-banner" role="alert">
+                  <p className="finding-alert-banner-title">
+                    {openFindingAlerts.length === 1
+                      ? '1 unacknowledged critical finding'
+                      : `${String(openFindingAlerts.length)} unacknowledged critical findings`}
+                  </p>
+                  <p className="muted">
+                    These stay open until an operator records a note. Re-observation of the same transfer will
+                    not re-alert after acknowledgement.
+                  </p>
+                  <div className="finding-list recon-critical-always">
+                    {openFindingAlerts.map((alert) => {
+                      const meta = alert.metadata;
+                      const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
+                      const toAddress = asOptionalString(meta.toAddress);
+                      const valueWei = asOptionalString(meta.valueWei);
+                      const treasuryId = asOptionalString(meta.treasuryId);
+                      const href = explorerTxUrl(treasuries, treasuryId, transactionHash);
+                      const draft = ackDraftByAlertId[alert.id] ?? '';
+                      const ackError = ackErrorByAlertId[alert.id];
+                      return (
+                        <article key={alert.id} className="finding finding-critical">
+                          <div className="finding-head">
+                            <span className="badge badge-bad badge-square">unacknowledged</span>
+                            <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                          </div>
+                          <dl className="facts">
+                            <div>
+                              <dt>Transaction</dt>
+                              <dd className="mono">
+                                {href === undefined ? (
+                                  transactionHash
+                                ) : (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {shortAddress(transactionHash)}
+                                  </a>
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Destination</dt>
+                              <dd className="mono">
+                                {toAddress === undefined ? '—' : shortAddress(toAddress)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Value</dt>
+                              <dd className="mono">
+                                {valueWei === undefined ? '—' : `${formatWeiAsEther(valueWei)} ETH`}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>First seen</dt>
+                              <dd>{formatTimestamp(alert.firstTriggeredAt)}</dd>
+                            </div>
+                          </dl>
+                          <label className="ack-note-label" htmlFor={`ack-note-${alert.id}`}>
+                            Acknowledgement note (required)
+                          </label>
+                          <textarea
+                            id={`ack-note-${alert.id}`}
+                            className="ack-note"
+                            rows={3}
+                            value={draft}
+                            disabled={ackBusyId === alert.id}
+                            placeholder="Why this signal is stood down (e.g. confirmed operator hand-send)."
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setAckDraftByAlertId((prev) => ({ ...prev, [alert.id]: value }));
+                            }}
+                          />
+                          {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
+                          <button
+                            type="button"
+                            disabled={ackBusyId === alert.id}
+                            onClick={() => void onAcknowledgeFinding(alert.id)}
+                          >
+                            {ackBusyId === alert.id ? 'Acknowledging…' : 'Acknowledge'}
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {acknowledgedFindingAlerts.length > 0 ? (
+                <div className="acknowledged-findings">
+                  <h3 className="subsection-title">Acknowledged findings</h3>
+                  <p className="muted">
+                    Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
+                  </p>
+                  <div className="finding-list">
+                    {acknowledgedFindingAlerts.map((alert) => {
+                      const meta = alert.metadata;
+                      const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
+                      const href = explorerTxUrl(
+                        treasuries,
+                        asOptionalString(meta.treasuryId),
+                        transactionHash,
+                      );
+                      return (
+                        <article key={alert.id} className="finding finding-acknowledged">
+                          <div className="finding-head">
+                            <span className="badge badge-ok badge-square">acknowledged</span>
+                            <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                          </div>
+                          <dl className="facts">
+                            <div>
+                              <dt>Transaction</dt>
+                              <dd className="mono">
+                                {href === undefined ? (
+                                  transactionHash
+                                ) : (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {shortAddress(transactionHash)}
+                                  </a>
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Acknowledged</dt>
+                              <dd>
+                                {alert.acknowledgedAt === null ? '—' : formatTimestamp(alert.acknowledgedAt)}
+                                {alert.acknowledgedBy !== null ? (
+                                  <span className="muted">
+                                    {' '}
+                                    · by <code>{shortAddress(alert.acknowledgedBy)}</code>
+                                  </span>
+                                ) : null}
+                              </dd>
+                            </div>
+                          </dl>
+                          {alert.acknowledgementNote !== null ? (
+                            <p className="ack-note-display">{alert.acknowledgementNote}</p>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
               {reconciliationState === 'loading' ? <p className="muted">Loading…</p> : null}
               {reconciliationState === 'error' ? <p className="error-inline">{reconciliationError}</p> : null}
               {reconciliationState === 'empty' ? (

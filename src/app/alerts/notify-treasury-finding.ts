@@ -145,9 +145,10 @@ export function logCriticalReconciliationFindings(
  *
  * **Event, not state:** an unexplained transfer never becomes explained, so
  * this alert type has **no auto-resolution**. Rows stay `open` after a
- * successful send; closing requires a future operator acknowledgement path
- * (or SQL). Re-observation of the same finding identity dedupes; a distinct
- * finding identity always opens a distinct alert.
+ * successful send; closing requires an operator acknowledgement (C20).
+ * Re-observation of the same finding identity dedupes — including after
+ * acknowledgement, so an ack cannot un-stick into a second incident email.
+ * A distinct finding identity always opens a distinct alert.
  */
 export async function notifyTreasuryFinding(
   dependencies: NotifyTreasuryFindingDependencies,
@@ -169,7 +170,9 @@ export async function notifyTreasuryFinding(
     );
   }
 
-  const existing = await dependencies.alerts.findOpenByEntity(
+  // Open OR acknowledged — never only open. An acknowledged finding that falls
+  // out of the open filter would re-insert and re-email on the next scan (C20).
+  const existing = await dependencies.alerts.findOpenOrAcknowledgedByEntity(
     TREASURY_FINDING_ENTITY_TYPE,
     entityId,
     TREASURY_FINDING_ALERT_TYPE,
@@ -189,6 +192,10 @@ export async function notifyTreasuryFinding(
 
     const email = await sendFindingEmail(dependencies, input, opened);
     return { kind: 'opened', alertId: opened.id, email };
+  }
+
+  if (existing.state === 'acknowledged') {
+    return { kind: 'deduped', alertId: existing.id };
   }
 
   if (existing.pendingEmail !== undefined) {

@@ -17,6 +17,7 @@ import type {
   EmailSender,
   ReconciliationFinding,
   ReconciliationRun,
+  StoredAlert,
   StoredOpenAlert,
   Treasury,
 } from '../../../../src/app/ports.js';
@@ -72,44 +73,86 @@ function unexplainedFinding(
   };
 }
 
+type FakeAlertRow = StoredAlert;
+
+function toOpenView(row: FakeAlertRow): StoredOpenAlert {
+  return {
+    id: row.id,
+    alertType: row.alertType,
+    severity: row.severity,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    firstTriggeredAt: row.firstTriggeredAt,
+    lastEvaluatedAt: row.lastEvaluatedAt,
+    lastSentAt: row.lastSentAt,
+    pendingEmail: row.pendingEmail,
+    metadata: row.metadata,
+  };
+}
+
 function createFakeAlerts(): AlertRepository & {
-  readonly rows: Map<string, StoredOpenAlert>;
+  readonly rows: Map<string, FakeAlertRow>;
 } {
-  const rows = new Map<string, StoredOpenAlert>();
+  const rows = new Map<string, FakeAlertRow>();
   let seq = 0;
 
   return {
     rows,
     async findOpenByEntity(entityType, entityId, alertType) {
+      const row = [...rows.values()].find(
+        (candidate) =>
+          candidate.state === 'open' &&
+          candidate.entityType === entityType &&
+          candidate.entityId === entityId &&
+          candidate.alertType === alertType,
+      );
+      return Promise.resolve(row === undefined ? undefined : toOpenView(row));
+    },
+    async findOpenOrAcknowledgedByEntity(entityType, entityId, alertType) {
       return Promise.resolve(
         [...rows.values()].find(
-          (row) => row.entityType === entityType && row.entityId === entityId && row.alertType === alertType,
+          (row) =>
+            (row.state === 'open' || row.state === 'acknowledged') &&
+            row.entityType === entityType &&
+            row.entityId === entityId &&
+            row.alertType === alertType,
         ),
       );
     },
+    async findById(id) {
+      return Promise.resolve(rows.get(id));
+    },
+    async list() {
+      return Promise.resolve({ items: [...rows.values()], total: rows.size });
+    },
     async insertOpen(input) {
       const id = `alert-${String(++seq)}`;
-      const row: StoredOpenAlert = {
+      const row: FakeAlertRow = {
         id,
         alertType: input.alertType,
         severity: input.severity,
         entityType: input.entityType,
         entityId: input.entityId,
+        state: 'open',
         firstTriggeredAt: input.firstTriggeredAt,
         lastEvaluatedAt: input.lastEvaluatedAt,
         lastSentAt: undefined,
+        resolvedAt: undefined,
+        acknowledgedAt: undefined,
+        acknowledgedBy: undefined,
+        acknowledgementNote: undefined,
         pendingEmail: input.pendingEmail,
         metadata: { ...input.metadata, pendingEmail: input.pendingEmail },
       };
       rows.set(id, row);
-      return Promise.resolve(row);
+      return Promise.resolve(toOpenView(row));
     },
     async markEscalated(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
-      const next: StoredOpenAlert = {
+      const next: FakeAlertRow = {
         ...existing,
         severity: 'critical',
         lastEvaluatedAt: input.lastEvaluatedAt,
@@ -117,14 +160,14 @@ function createFakeAlerts(): AlertRepository & {
         metadata: { ...existing.metadata, pendingEmail: input.pendingEmail },
       };
       rows.set(input.id, next);
-      return Promise.resolve(next);
+      return Promise.resolve(toOpenView(next));
     },
     async markPendingEmail(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
-      const next: StoredOpenAlert = {
+      const next: FakeAlertRow = {
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
         pendingEmail: input.pendingEmail,
@@ -135,34 +178,54 @@ function createFakeAlerts(): AlertRepository & {
         },
       };
       rows.set(input.id, next);
-      return Promise.resolve(next);
+      return Promise.resolve(toOpenView(next));
     },
     async clearPendingEmail(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
       const metadata = { ...existing.metadata };
       delete metadata.pendingEmail;
-      const next: StoredOpenAlert = {
+      const next: FakeAlertRow = {
         ...existing,
         lastEvaluatedAt: input.lastEvaluatedAt,
         pendingEmail: undefined,
         metadata,
       };
       rows.set(input.id, next);
-      return Promise.resolve(next);
+      return Promise.resolve(toOpenView(next));
     },
     async acknowledgeSend(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
       const metadata = { ...existing.metadata };
       delete metadata.pendingEmail;
-      const next: StoredOpenAlert = {
+      const next: FakeAlertRow = {
         ...existing,
         lastSentAt: input.lastSentAt,
+        lastEvaluatedAt: input.lastEvaluatedAt,
+        pendingEmail: undefined,
+        metadata,
+      };
+      rows.set(input.id, next);
+      return Promise.resolve(toOpenView(next));
+    },
+    async recordOperatorAcknowledgement(input) {
+      const existing = rows.get(input.id);
+      if (existing === undefined || existing.state !== 'open') {
+        throw new Error('missing');
+      }
+      const metadata = { ...existing.metadata };
+      delete metadata.pendingEmail;
+      const next: FakeAlertRow = {
+        ...existing,
+        state: 'acknowledged',
+        acknowledgedAt: input.acknowledgedAt,
+        acknowledgedBy: input.acknowledgedBy,
+        acknowledgementNote: input.acknowledgementNote,
         lastEvaluatedAt: input.lastEvaluatedAt,
         pendingEmail: undefined,
         metadata,
@@ -172,15 +235,15 @@ function createFakeAlerts(): AlertRepository & {
     },
     async resolve(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
       rows.delete(input.id);
-      return Promise.resolve(existing);
+      return Promise.resolve(toOpenView(existing));
     },
     async touchLastEvaluated(input) {
       const existing = rows.get(input.id);
-      if (existing === undefined) {
+      if (existing === undefined || existing.state !== 'open') {
         throw new Error('missing');
       }
       rows.set(input.id, {
@@ -472,6 +535,94 @@ describe('notifyTreasuryFinding', () => {
     expect(resolveSpy).not.toHaveBeenCalled();
     expect(
       await alerts.findOpenByEntity(TREASURY_FINDING_ENTITY_TYPE, TX_HASH_A, TREASURY_FINDING_ALERT_TYPE),
+    ).toBeDefined();
+  });
+
+  it('does not re-alert after operator acknowledgement of the same transaction hash (C20)', async () => {
+    const alerts = createFakeAlerts();
+    const audit = createAudit();
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+
+    const opened = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: audit, clock, logger },
+      baseInput(unexplainedFinding({ transactionHash: TX_HASH_A })),
+    );
+    expect(opened.kind).toBe('opened');
+    expect(messages).toHaveLength(1);
+
+    await alerts.recordOperatorAcknowledgement({
+      id: opened.alertId,
+      acknowledgedAt: clock.now(),
+      acknowledgedBy: 'operator-cred-1',
+      acknowledgementNote: 'Confirmed operator hand-send to HARVEST.',
+      lastEvaluatedAt: clock.now(),
+    });
+    expect(
+      await alerts.findOpenByEntity(TREASURY_FINDING_ENTITY_TYPE, TX_HASH_A, TREASURY_FINDING_ALERT_TYPE),
+    ).toBeUndefined();
+    expect(
+      await alerts.findOpenOrAcknowledgedByEntity(
+        TREASURY_FINDING_ENTITY_TYPE,
+        TX_HASH_A,
+        TREASURY_FINDING_ALERT_TYPE,
+      ),
+    ).toMatchObject({ state: 'acknowledged', id: opened.alertId });
+
+    const reobserved = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: audit, clock, logger },
+      baseInput(unexplainedFinding({ transactionHash: TX_HASH_A })),
+    );
+    expect(reobserved).toEqual({ kind: 'deduped', alertId: opened.alertId });
+    expect(messages).toHaveLength(1);
+    expect(alerts.rows.size).toBe(1);
+  });
+
+  it('still alerts a distinct transfer while another finding is acknowledged (C20)', async () => {
+    const alerts = createFakeAlerts();
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+
+    const first = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(unexplainedFinding({ transactionHash: TX_HASH_A })),
+    );
+    await alerts.recordOperatorAcknowledgement({
+      id: first.alertId,
+      acknowledgedAt: clock.now(),
+      acknowledgedBy: 'operator-cred-1',
+      acknowledgementNote: 'A is benign.',
+      lastEvaluatedAt: clock.now(),
+    });
+
+    const second = await notifyTreasuryFinding(
+      { alerts, emailSender, auditEvents: createAudit(), clock, logger },
+      baseInput(unexplainedFinding({ transactionHash: TX_HASH_B, nonce: 4 })),
+    );
+    expect(second.kind).toBe('opened');
+    expect(messages).toHaveLength(2);
+    expect(alerts.rows.size).toBe(2);
+    expect(
+      (
+        await alerts.findOpenOrAcknowledgedByEntity(
+          TREASURY_FINDING_ENTITY_TYPE,
+          TX_HASH_A,
+          TREASURY_FINDING_ALERT_TYPE,
+        )
+      )?.state,
+    ).toBe('acknowledged');
+    expect(
+      await alerts.findOpenByEntity(TREASURY_FINDING_ENTITY_TYPE, TX_HASH_B, TREASURY_FINDING_ALERT_TYPE),
     ).toBeDefined();
   });
 });

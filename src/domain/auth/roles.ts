@@ -39,6 +39,16 @@ export const PERMISSIONS = [
    * treasury-wide forensic data) and never cron roles.
    */
   'reconciliation:read',
+  /**
+   * Treasury-global alert reads (C20). Same role boundary as C19 — alerts span
+   * every project and carry forensic detail; scope cannot express the boundary.
+   */
+  'alert:read',
+  /**
+   * Operator acknowledgement of a security signal (C20). Not granted to
+   * read-only — acknowledgement is a human attestation, not a read.
+   */
+  'alert:acknowledge',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -56,8 +66,10 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
     'credential:read',
     'credential:write',
     'reconciliation:read',
+    'alert:read',
+    'alert:acknowledge',
   ],
-  'read-only': ['treasury:read', 'wallet:read', 'project:read', 'reconciliation:read'],
+  'read-only': ['treasury:read', 'wallet:read', 'project:read', 'reconciliation:read', 'alert:read'],
   // The monitor reads the treasury and records observations. It never signs and
   // never triggers operator-facing administrative actions.
   'cron-treasury-monitor': ['treasury:read', 'treasury:check'],
