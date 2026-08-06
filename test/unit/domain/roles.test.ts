@@ -19,12 +19,14 @@ describe('role permissions', () => {
     expect(roleHasPermission('operator', 'project:write')).toBe(true);
     expect(roleHasPermission('operator', 'credential:read')).toBe(true);
     expect(roleHasPermission('operator', 'credential:write')).toBe(true);
+    expect(roleHasPermission('operator', 'reconciliation:read')).toBe(true);
   });
 
   it('keeps read-only credentials from mutating actions', () => {
     expect(roleHasPermission('read-only', 'treasury:read')).toBe(true);
     expect(roleHasPermission('read-only', 'wallet:read')).toBe(true);
     expect(roleHasPermission('read-only', 'project:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'reconciliation:read')).toBe(true);
     expect(roleHasPermission('read-only', 'treasury:check')).toBe(false);
     expect(roleHasPermission('read-only', 'treasury:write')).toBe(false);
     expect(roleHasPermission('read-only', 'email:test')).toBe(false);
@@ -52,6 +54,7 @@ describe('role permissions', () => {
       'credential:read',
       'credential:write',
       'reconciliation:run',
+      'reconciliation:read',
     ];
     for (const permission of permissions) {
       expect(roleHasPermission('project-service', permission)).toBe(false);
@@ -71,6 +74,7 @@ describe('role permissions', () => {
       'project:write',
       'credential:read',
       'credential:write',
+      'reconciliation:read',
     ];
     for (const permission of denied) {
       expect(roleHasPermission('cron-reconciler', permission)).toBe(false);
@@ -81,6 +85,15 @@ describe('role permissions', () => {
     const apiRoles: readonly Role[] = ['operator', 'project-service', 'read-only'];
     for (const role of apiRoles) {
       expect(roleHasPermission(role, 'reconciliation:run')).toBe(false);
+    }
+  });
+
+  it('grants reconciliation:read only to operator and read-only (C19)', () => {
+    expect(roleHasPermission('operator', 'reconciliation:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'reconciliation:read')).toBe(true);
+    const denied: readonly Role[] = ['project-service', 'cron-reconciler', 'cron-treasury-monitor'];
+    for (const role of denied) {
+      expect(roleHasPermission(role, 'reconciliation:read')).toBe(false);
     }
   });
 

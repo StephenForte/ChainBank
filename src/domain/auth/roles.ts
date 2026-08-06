@@ -33,6 +33,12 @@ export const PERMISSIONS = [
   'credential:write',
   /** Cron reconciler only — no HTTP trigger in MVP (C14). */
   'reconciliation:run',
+  /**
+   * Treasury-global reconciliation run + finding reads (C19).
+   * Operator and read-only only — never project-service (scope cannot buy
+   * treasury-wide forensic data) and never cron roles.
+   */
+  'reconciliation:read',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -49,8 +55,9 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
     'project:write',
     'credential:read',
     'credential:write',
+    'reconciliation:read',
   ],
-  'read-only': ['treasury:read', 'wallet:read', 'project:read'],
+  'read-only': ['treasury:read', 'wallet:read', 'project:read', 'reconciliation:read'],
   // The monitor reads the treasury and records observations. It never signs and
   // never triggers operator-facing administrative actions.
   'cron-treasury-monitor': ['treasury:read', 'treasury:check'],

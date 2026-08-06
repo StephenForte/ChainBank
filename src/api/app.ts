@@ -17,6 +17,7 @@ import { registerFundingOperationRoutes } from './routes/funding-operations.js';
 import { registerFundingTransactionRoutes } from './routes/funding-transactions.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerProjectRoutes } from './routes/projects.js';
+import { registerReconciliationRunRoutes } from './routes/reconciliation-runs.js';
 import { registerTreasuryRoutes } from './routes/treasuries.js';
 import { registerWalletRoutes } from './routes/wallets.js';
 import type { AppInstance } from './types.js';
@@ -106,6 +107,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   registerWalletRoutes(app, container);
   registerFundingOperationRoutes(app, container);
   registerFundingTransactionRoutes(app, container);
+  registerReconciliationRunRoutes(app, container);
   registerAdminRoutes(app, container);
 
   await registerDashboard(app);

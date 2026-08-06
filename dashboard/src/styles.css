@@ -371,6 +371,59 @@ button.secondary:active:not(:disabled) {
   color: var(--unknown-strong);
 }
 
+/* Square severity chip — form-distinct from the pill warn/ok badges (TX.12 / C19). */
+.badge-square {
+  border-radius: var(--r-xs);
+  letter-spacing: 0.06em;
+}
+
+.subsection-title {
+  margin: var(--s-xl) 0 var(--s-sm);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--slate);
+}
+
+.finding-list {
+  display: grid;
+  gap: var(--s-sm);
+}
+
+.finding {
+  padding: var(--s-sm) var(--s-md);
+  border-radius: var(--r-sm);
+}
+
+.finding-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-xs);
+  margin-bottom: var(--s-xs);
+}
+
+/*
+ * Critical vs warning must be tellable without reading the label (form, not hue):
+ * critical = solid left bar + filled soft panel + square badge;
+ * warning  = dashed hairline + open surface + pill badge.
+ */
+.finding-critical {
+  background: var(--bad-soft);
+  border-left: 4px solid var(--bad-strong);
+  box-shadow: inset 0 0 0 1px rgba(138, 31, 28, 0.12);
+}
+
+.finding-warning {
+  background: var(--canvas);
+  border: 1px dashed var(--warn-strong);
+  border-left-width: 2px;
+}
+
+.finding-unknown {
+  background: var(--unknown-soft);
+  border: 1px dotted var(--unknown-strong);
+}
+
 .treasury-list {
   display: grid;
   gap: var(--s-md);

@@ -899,6 +899,11 @@ export interface FinishReconciliationRunInput {
   readonly errorSummary: string | undefined;
 }
 
+export interface ReconciliationRunListPage {
+  readonly items: readonly ReconciliationRun[];
+  readonly total: number;
+}
+
 export interface ReconciliationRunRepository {
   insertStarted(input: InsertReconciliationRunInput): Promise<ReconciliationRun>;
   markFinished(input: FinishReconciliationRunInput): Promise<ReconciliationRun>;
@@ -908,6 +913,13 @@ export interface ReconciliationRunRepository {
    * failure counts without a separate counter column.
    */
   listRecent(limit: number): Promise<readonly ReconciliationRun[]>;
+  /**
+   * Paginated runs newest-first by `started_at` (C19). `total` is the true
+   * matching count, not the page length.
+   */
+  list(pagination: { readonly limit: number; readonly offset: number }): Promise<ReconciliationRunListPage>;
+  /** True count of all reconciliation runs (C19 pagination). */
+  count(): Promise<number>;
 }
 
 /**

@@ -243,6 +243,48 @@ export async function listFundingTransactions(
   return body as FundingTransactionListResponse;
 }
 
+/** C19 — reconciliation run with findings inline. Findings are opaque at rest. */
+export interface ReconciliationRunResource {
+  readonly id: string;
+  readonly runId: string;
+  readonly requestedBy: string;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly walletsAssessed: number;
+  readonly walletsFunded: number;
+  readonly walletsNoop: number;
+  readonly walletsBlocked: number;
+  readonly walletsFailed: number;
+  readonly weiTransferred: string;
+  readonly weiTransferredEther: string;
+  readonly submissionUnknownResolved: number;
+  readonly submissionUnknownLeftPending: number;
+  readonly unexplainedTransferCount: number;
+  readonly outgoingScanStatus: 'complete' | 'incomplete' | 'not-run';
+  readonly findings: readonly Record<string, unknown>[];
+  readonly errorCode: string | null;
+  readonly errorSummary: string | null;
+}
+
+export async function listReconciliationRuns(
+  token: string,
+  query: {
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<PaginatedListResponse<ReconciliationRunResource>> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(token, `/v1/reconciliation-runs${suffix}`);
+  return body as PaginatedListResponse<ReconciliationRunResource>;
+}
+
 export interface ProjectResource {
   readonly id: string;
   readonly slug: string;
