@@ -57,6 +57,13 @@
       "when": 1786045441738,
       "tag": "0007_known_wiccan",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786051192182,
+      "tag": "0008_thin_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

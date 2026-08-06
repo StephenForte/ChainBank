@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "alerts_open_entity_type_entity_id_alert_type_key" ON "alerts" USING btree ("entity_type","entity_id","alert_type") WHERE "alerts"."state" = 'open';

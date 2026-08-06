@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { ChainBankError } from '../../src/domain/errors.js';
+import { isUniqueViolation } from '../../src/shared/postgres-error.js';
 import { createAlertRepository } from '../../src/infrastructure/db/repositories/alert-repository.js';
 import { integrationEnabled } from '../support/integration-setup.js';
 import {
@@ -214,5 +216,80 @@ describe.skipIf(!integrationEnabled)('AlertRepository', () => {
     const prior = await alerts.findById(first.id);
     expect(prior?.state).toBe('acknowledged');
     expect(prior?.acknowledgementNote).toBe('aware of outage');
+  });
+
+  it('rejects a second open row for the same entity key (TX.19 partial unique index)', async () => {
+    const alerts = createAlertRepository(handle.db);
+    const now = new Date('2026-08-06T12:00:00.000Z');
+
+    await alerts.insertOpen({
+      alertType: 'treasury_reserve',
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: seed.treasuryId,
+      firstTriggeredAt: now,
+      lastEvaluatedAt: now,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+
+    await expect(
+      alerts.insertOpen({
+        alertType: 'treasury_reserve',
+        severity: 'critical',
+        entityType: 'treasury',
+        entityId: seed.treasuryId,
+        firstTriggeredAt: now,
+        lastEvaluatedAt: now,
+        pendingEmail: 'critical',
+        metadata: {},
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isUniqueViolation(error) || (error instanceof ChainBankError && isUniqueViolation(error)),
+    );
+  });
+
+  it('allows a resolved reserve alert and a new open row to share entityId (C10)', async () => {
+    const alerts = createAlertRepository(handle.db);
+    const earlier = new Date('2026-08-05T12:00:00.000Z');
+    const later = new Date('2026-08-06T12:00:00.000Z');
+
+    const first = await alerts.insertOpen({
+      alertType: 'treasury_reserve',
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: seed.treasuryId,
+      firstTriggeredAt: earlier,
+      lastEvaluatedAt: earlier,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: first.id,
+      lastSentAt: earlier,
+      lastEvaluatedAt: earlier,
+    });
+    await alerts.resolve({
+      id: first.id,
+      resolvedAt: earlier,
+      lastEvaluatedAt: earlier,
+    });
+
+    const second = await alerts.insertOpen({
+      alertType: 'treasury_reserve',
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: seed.treasuryId,
+      firstTriggeredAt: later,
+      lastEvaluatedAt: later,
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+
+    const open = await alerts.findOpenByEntity('treasury', seed.treasuryId, 'treasury_reserve');
+    expect(open?.id).toBe(second.id);
+    const prior = await alerts.findById(first.id);
+    expect(prior?.state).toBe('resolved');
   });
 });

@@ -20,6 +20,7 @@ import type {
 } from '../../../../src/app/ports.js';
 import { parseEtherToWei } from '../../../../src/domain/wei.js';
 import { createLogger } from '../../../../src/observability/logger.js';
+import { UniqueViolationError } from '../../../support/funding-fakes.js';
 
 const treasury: Treasury = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -686,5 +687,74 @@ describe('maybeNotifyReconciliationFailure', () => {
     expect(
       await alerts.findOpenByEntity('treasury', treasury.id, RECONCILIATION_FAILURE_ALERT_TYPE),
     ).toBeDefined();
+  });
+
+  it('adopts an open row on unique-violation race without sending a second email (TX.19)', async () => {
+    const alerts = createFakeAlerts();
+    const { sender, messages } = createSender('sent');
+    const clock = createClock(new Date('2026-08-01T12:00:00.000Z'));
+
+    const winner = await alerts.insertOpen({
+      alertType: RECONCILIATION_FAILURE_ALERT_TYPE,
+      severity: 'critical',
+      entityType: 'treasury',
+      entityId: treasury.id,
+      firstTriggeredAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+      pendingEmail: 'critical',
+      metadata: {},
+    });
+    await alerts.acknowledgeSend({
+      id: winner.id,
+      lastSentAt: clock.now(),
+      lastEvaluatedAt: clock.now(),
+    });
+
+    let lookups = 0;
+    const racing: AlertRepository = {
+      ...alerts,
+      findOpenByEntity(entityType, entityId, alertType) {
+        lookups += 1;
+        if (lookups === 1) {
+          return Promise.resolve(undefined);
+        }
+        return alerts.findOpenByEntity(entityType, entityId, alertType);
+      },
+      insertOpen() {
+        return Promise.reject(new UniqueViolationError());
+      },
+    };
+
+    const run = makeRun({
+      id: 'id-1',
+      runId: 'run-1',
+      errorCode: 'INTERNAL_ERROR',
+      errorSummary: 'x',
+    });
+    const result = await maybeNotifyReconciliationFailure(
+      {
+        alerts: racing,
+        reconciliationRuns: createRunRepo([run]),
+        managedWallets: createManagedWallets(),
+        emailSender: sender,
+        auditEvents: { record: () => Promise.resolve() },
+        clock,
+        logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
+      },
+      {
+        run,
+        treasury,
+        failureAlertThreshold: 1,
+        operatorRecipients: ['operator@example.com'],
+        dashboardBaseUrl: 'http://localhost:3000',
+        environment: 'test',
+        operationId: 'op-1',
+        actor: { type: 'cron', id: 'cred-1' },
+      },
+    );
+
+    expect(result).toEqual({ kind: 'deduped', alertId: winner.id });
+    expect(messages).toHaveLength(0);
+    expect(alerts.rows.size).toBe(1);
   });
 });

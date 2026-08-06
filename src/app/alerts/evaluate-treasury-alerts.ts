@@ -7,6 +7,7 @@ import {
 } from '../../domain/alerts/index.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
+import { isUniqueViolation } from '../../shared/postgres-error.js';
 import { renderTreasuryCriticalEmail } from '../email/treasury-critical-template.js';
 import { renderTreasuryRecoveryEmail } from '../email/treasury-recovery-template.js';
 import { renderTreasuryUnresolvedReminderEmail } from '../email/treasury-unresolved-reminder-template.js';
@@ -130,11 +131,19 @@ export async function evaluateTreasuryAlerts(
     treasuryId: input.treasury.id,
   });
 
+  // Another writer won the open-insert race (TX.19). The transition above was
+  // computed from a miss — re-enter so we evaluate against the winner (e.g.
+  // escalate warning→critical) rather than adopting a stale `open` and
+  // skipping the email the balance actually requires.
+  if (persisted.kind === 'open-race-lost') {
+    return evaluateTreasuryAlerts(dependencies, input);
+  }
+
   const sendResult = await sendTransitionEmail(dependencies.emailSender, {
     transition,
     pendingEmail,
-    severityForReminder: persisted.severity,
-    firstTriggeredAt: persisted.firstTriggeredAt,
+    severityForReminder: persisted.alert.severity,
+    firstTriggeredAt: persisted.alert.firstTriggeredAt,
     input,
   });
 
@@ -150,7 +159,7 @@ export async function evaluateTreasuryAlerts(
       metadata: {
         transition: transition.kind,
         pendingEmail,
-        alertId: persisted.id,
+        alertId: persisted.alert.id,
         errorCode: sendResult.errorCode,
       },
     });
@@ -163,19 +172,19 @@ export async function evaluateTreasuryAlerts(
         errorCode: sendResult.errorCode,
         reason: sendResult.reason,
       },
-      openAlert: persisted,
+      openAlert: persisted.alert,
     };
   }
 
   const acknowledged =
     transition.kind === 'resolve'
       ? await dependencies.alerts.resolve({
-          id: persisted.id,
+          id: persisted.alert.id,
           resolvedAt: now,
           lastEvaluatedAt: now,
         })
       : await dependencies.alerts.acknowledgeSend({
-          id: persisted.id,
+          id: persisted.alert.id,
           lastSentAt: now,
           lastEvaluatedAt: now,
         });
@@ -191,7 +200,7 @@ export async function evaluateTreasuryAlerts(
     metadata: {
       transition: transition.kind,
       pendingEmail,
-      alertId: persisted.id,
+      alertId: persisted.alert.id,
       balanceWei: input.balanceWei.toString(),
     },
   });
@@ -263,6 +272,10 @@ function transitionFromPendingEmail(
   }
 }
 
+type PersistTransitionResult =
+  | { readonly kind: 'persisted'; readonly alert: StoredOpenAlert }
+  | { readonly kind: 'open-race-lost'; readonly alert: StoredOpenAlert };
+
 async function persistTransition(
   alerts: AlertRepository,
   input: {
@@ -272,7 +285,7 @@ async function persistTransition(
     readonly now: Date;
     readonly treasuryId: string;
   },
-): Promise<StoredOpenAlert> {
+): Promise<PersistTransitionResult> {
   const { existing, transition, pendingEmail, now, treasuryId } = input;
 
   // applyAlertTransition validates escalate/remind/resolve preconditions.
@@ -292,41 +305,67 @@ async function persistTransition(
     case 'open':
       if (existing !== undefined && existing.pendingEmail !== undefined) {
         // Retry of a failed opening send — row already exists.
-        return alerts.markPendingEmail({
-          id: existing.id,
-          lastEvaluatedAt: now,
-          pendingEmail,
-        });
+        return {
+          kind: 'persisted',
+          alert: await alerts.markPendingEmail({
+            id: existing.id,
+            lastEvaluatedAt: now,
+            pendingEmail,
+          }),
+        };
       }
-      return alerts.insertOpen({
-        alertType: TREASURY_BALANCE_ALERT_TYPE,
-        severity: transition.severity,
-        entityType: TREASURY_ALERT_ENTITY_TYPE,
-        entityId: treasuryId,
-        firstTriggeredAt: now,
-        lastEvaluatedAt: now,
-        pendingEmail,
-        metadata: {},
-      });
+      try {
+        return {
+          kind: 'persisted',
+          alert: await alerts.insertOpen({
+            alertType: TREASURY_BALANCE_ALERT_TYPE,
+            severity: transition.severity,
+            entityType: TREASURY_ALERT_ENTITY_TYPE,
+            entityId: treasuryId,
+            firstTriggeredAt: now,
+            lastEvaluatedAt: now,
+            pendingEmail,
+            metadata: {},
+          }),
+        };
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const winner = await alerts.findOpenByEntity(
+            TREASURY_ALERT_ENTITY_TYPE,
+            treasuryId,
+            TREASURY_BALANCE_ALERT_TYPE,
+          );
+          if (winner !== undefined) {
+            return { kind: 'open-race-lost', alert: winner };
+          }
+        }
+        throw error;
+      }
     case 'escalate':
       if (existing === undefined) {
         throw new ChainBankError('INTERNAL_ERROR', 'Cannot escalate without an open alert');
       }
-      return alerts.markEscalated({
-        id: existing.id,
-        lastEvaluatedAt: now,
-        pendingEmail,
-      });
+      return {
+        kind: 'persisted',
+        alert: await alerts.markEscalated({
+          id: existing.id,
+          lastEvaluatedAt: now,
+          pendingEmail,
+        }),
+      };
     case 'remind':
     case 'resolve':
       if (existing === undefined) {
         throw new ChainBankError('INTERNAL_ERROR', `Cannot ${transition.kind} without an open alert`);
       }
-      return alerts.markPendingEmail({
-        id: existing.id,
-        lastEvaluatedAt: now,
-        pendingEmail,
-      });
+      return {
+        kind: 'persisted',
+        alert: await alerts.markPendingEmail({
+          id: existing.id,
+          lastEvaluatedAt: now,
+          pendingEmail,
+        }),
+      };
     case 'none':
       throw new ChainBankError('INTERNAL_ERROR', 'Cannot persist none transition');
     default: {

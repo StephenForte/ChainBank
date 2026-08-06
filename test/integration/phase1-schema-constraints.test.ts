@@ -143,6 +143,66 @@ describe.skipIf(!integrationEnabled)('Phase 1 schema constraints', () => {
         }),
       ).resolves.toBeDefined();
     });
+
+    it('rejects a second open alert for the same entity key (TX.19 partial unique)', async () => {
+      const now = new Date('2026-08-06T12:00:00.000Z');
+      await handle.db.insert(alerts).values({
+        alertType: 'treasury_reserve',
+        severity: 'critical',
+        entityType: 'treasury',
+        entityId: seed.treasuryId,
+        state: 'open',
+        firstTriggeredAt: now,
+        lastEvaluatedAt: now,
+        metadataJson: {},
+      });
+
+      await expect(
+        handle.db.insert(alerts).values({
+          alertType: 'treasury_reserve',
+          severity: 'critical',
+          entityType: 'treasury',
+          entityId: seed.treasuryId,
+          state: 'open',
+          firstTriggeredAt: now,
+          lastEvaluatedAt: now,
+          metadataJson: {},
+        }),
+      ).rejects.toSatisfy((error: unknown) => isPgError(error, '23505'));
+    });
+
+    it('allows acknowledged + open finding alerts to share entityId (C20 / TX.19)', async () => {
+      const earlier = new Date('2026-08-05T12:00:00.000Z');
+      const later = new Date('2026-08-06T12:00:00.000Z');
+      const entityId = 'outgoing_scan_incomplete:treasury:RPC_UNAVAILABLE';
+
+      await handle.db.insert(alerts).values({
+        alertType: 'treasury_finding',
+        severity: 'critical',
+        entityType: 'treasury_finding',
+        entityId,
+        state: 'acknowledged',
+        firstTriggeredAt: earlier,
+        lastEvaluatedAt: earlier,
+        acknowledgedAt: earlier,
+        acknowledgedBy: 'operator-1',
+        acknowledgementNote: 'aware',
+        metadataJson: {},
+      });
+
+      await expect(
+        handle.db.insert(alerts).values({
+          alertType: 'treasury_finding',
+          severity: 'critical',
+          entityType: 'treasury_finding',
+          entityId,
+          state: 'open',
+          firstTriggeredAt: later,
+          lastEvaluatedAt: later,
+          metadataJson: {},
+        }),
+      ).resolves.toBeDefined();
+    });
   });
 
   describe('foreign keys', () => {

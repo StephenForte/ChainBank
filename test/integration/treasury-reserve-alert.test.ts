@@ -195,4 +195,49 @@ describe.skipIf(!integrationEnabled)('treasury reserve alert lifecycle', () => {
     expect(afterRetry?.lastSentAt).toBeDefined();
     expect(afterRetry?.pendingEmail).toBeUndefined();
   });
+
+  it('concurrent open races produce one row and at most one email (TX.19)', async () => {
+    const alerts = createAlertRepository(handle.db);
+    const auditEvents = createAuditEventRepository(handle.db);
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+    const clock = createFixedClock(new Date('2026-08-06T12:00:00.000Z'));
+    const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
+    const treasury = await createTreasuryRepository(handle.db).findById(seed.treasuryId);
+    if (treasury === undefined) {
+      throw new Error('seed treasury missing');
+    }
+    const deps = { alerts, emailSender, auditEvents, clock, logger };
+    const input = {
+      treasury,
+      treasuryBalanceWei: 200_000_000_000_000_000n,
+      managedWalletAddressDisplay: '0x2222222222222222222222222222222222222222',
+      managedWalletId: seed.managedWalletId,
+      requestedAmountWei: 500_000_000_000_000_000n,
+      operatorRecipients: ['operator@example.com'] as const,
+      dashboardBaseUrl: 'http://localhost:3000',
+      environment: 'test',
+      actor: { type: 'api_credential' as const, id: 'cred-1' },
+    };
+
+    const [first, second] = await Promise.all([
+      notifyTreasuryReserveRefusal(deps, { ...input, operationId: 'op-race-a' }),
+      notifyTreasuryReserveRefusal(deps, { ...input, operationId: 'op-race-b' }),
+    ]);
+
+    expect([first.kind, second.kind].sort()).toEqual(['deduped', 'opened']);
+    expect(messages).toHaveLength(1);
+
+    const openRows = await handle.pool.query<{ id: string }>(
+      `SELECT id FROM alerts
+       WHERE entity_type = 'treasury' AND entity_id = $1 AND alert_type = $2 AND state = 'open'`,
+      [seed.treasuryId, TREASURY_RESERVE_ALERT_TYPE],
+    );
+    expect(openRows.rows).toHaveLength(1);
+  });
 });

@@ -1,5 +1,6 @@
 import type { Clock } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
+import { isUniqueViolation } from '../../shared/postgres-error.js';
 import {
   renderReconciliationFailureEmail,
   type ReconciliationAffectedWallet,
@@ -187,23 +188,39 @@ export async function maybeNotifyReconciliationFailure(
   );
 
   if (existing === undefined) {
-    const opened = await dependencies.alerts.insertOpen({
-      alertType: RECONCILIATION_FAILURE_ALERT_TYPE,
-      severity: 'critical',
-      entityType: TREASURY_ALERT_ENTITY_TYPE,
-      entityId: input.treasury.id,
-      firstTriggeredAt: now,
-      lastEvaluatedAt: now,
-      pendingEmail: 'critical',
-      metadata,
-    });
+    try {
+      const opened = await dependencies.alerts.insertOpen({
+        alertType: RECONCILIATION_FAILURE_ALERT_TYPE,
+        severity: 'critical',
+        entityType: TREASURY_ALERT_ENTITY_TYPE,
+        entityId: input.treasury.id,
+        firstTriggeredAt: now,
+        lastEvaluatedAt: now,
+        pendingEmail: 'critical',
+        metadata,
+      });
 
-    const email = await sendFailureEmail(dependencies, input, opened, {
-      consecutiveFailureCount,
-      affectedWallets,
-      errorCategories,
-    });
-    return { kind: 'opened', alertId: opened.id, email };
+      const email = await sendFailureEmail(dependencies, input, opened, {
+        consecutiveFailureCount,
+        affectedWallets,
+        errorCategories,
+      });
+      return { kind: 'opened', alertId: opened.id, email };
+    } catch (error) {
+      // Partial unique index (TX.19): another writer opened first. Adopt and
+      // do not send — a throw here would lose the alert entirely (C18 trap).
+      if (isUniqueViolation(error)) {
+        const winner = await dependencies.alerts.findOpenByEntity(
+          TREASURY_ALERT_ENTITY_TYPE,
+          input.treasury.id,
+          RECONCILIATION_FAILURE_ALERT_TYPE,
+        );
+        if (winner !== undefined) {
+          return { kind: 'deduped', alertId: winner.id };
+        }
+      }
+      throw error;
+    }
   }
 
   if (existing.pendingEmail !== undefined) {

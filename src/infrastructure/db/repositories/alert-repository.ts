@@ -108,6 +108,8 @@ export function createAlertRepository(db: Database): AlertRepository {
     },
 
     async insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert> {
+      // Unique violation on the open partial index (TX.19) propagates so callers
+      // can adopt the winner — do not map 23505 here.
       return withDatabaseErrors('alerts.insertOpen', async () => {
         const [row] = await db
           .insert(alerts)
