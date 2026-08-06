@@ -224,12 +224,30 @@ function toFindingViews(runs: readonly ReconciliationRunResource[]): readonly Fi
   return views;
 }
 
+/** A 32-byte transaction hash. Anything else is not linkable to an explorer. */
+const TRANSACTION_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * C18 routes two natures through `treasury_finding` (C20): an event keyed by
+ * transaction hash, and a condition keyed `outgoing_scan_incomplete:<treasury>:<code>`.
+ * Only the first is a transaction, so only the first gets a "Transaction" label.
+ */
+function findingEntityLabel(entityId: string): string {
+  return TRANSACTION_HASH_PATTERN.test(entityId) ? 'Transaction' : 'Finding key';
+}
+
 function explorerTxUrl(
   treasuries: readonly TreasuryResource[],
   treasuryId: string | undefined,
   transactionHash: string | undefined,
 ): string | undefined {
   if (treasuryId === undefined || transactionHash === undefined) {
+    return undefined;
+  }
+  // Fail closed on anything that is not a transaction hash. A condition-kind
+  // finding key would otherwise render as a live /tx/ link to a transaction
+  // that does not exist, on an incident record.
+  if (!TRANSACTION_HASH_PATTERN.test(transactionHash)) {
     return undefined;
   }
   const treasury = treasuries.find((item) => item.id === treasuryId);
@@ -1272,12 +1290,12 @@ export function App() {
                           </div>
                           <dl className="facts">
                             <div>
-                              <dt>Transaction</dt>
+                              <dt>{findingEntityLabel(transactionHash)}</dt>
                               <dd className="mono">
                                 {href === undefined ? (
-                                  transactionHash
+                                  <span title={transactionHash}>{transactionHash}</span>
                                 ) : (
-                                  <a href={href} target="_blank" rel="noreferrer">
+                                  <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
                                     {shortAddress(transactionHash)}
                                   </a>
                                 )}
@@ -1352,12 +1370,12 @@ export function App() {
                           </div>
                           <dl className="facts">
                             <div>
-                              <dt>Transaction</dt>
+                              <dt>{findingEntityLabel(transactionHash)}</dt>
                               <dd className="mono">
                                 {href === undefined ? (
-                                  transactionHash
+                                  <span title={transactionHash}>{transactionHash}</span>
                                 ) : (
-                                  <a href={href} target="_blank" rel="noreferrer">
+                                  <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
                                     {shortAddress(transactionHash)}
                                   </a>
                                 )}
@@ -1370,7 +1388,10 @@ export function App() {
                                 {alert.acknowledgedBy !== null ? (
                                   <span className="muted">
                                     {' '}
-                                    · by <code>{shortAddress(alert.acknowledgedBy)}</code>
+                                    · by{' '}
+                                    <code title={alert.acknowledgedBy}>
+                                      {shortAddress(alert.acknowledgedBy)}
+                                    </code>
                                   </span>
                                 ) : null}
                               </dd>
