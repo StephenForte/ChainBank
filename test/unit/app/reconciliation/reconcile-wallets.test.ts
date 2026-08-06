@@ -381,6 +381,123 @@ describe('reconcileWallets sweep decisions', () => {
     expect(classifyReconcilerExit(result.run.errorCode)).toBe('success');
     expect(reconcilerExitCode('success')).toBe(0);
   });
+
+  it('still logs and emails critical findings when watermark advance throws', async () => {
+    const sink = collectLogs();
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'ab'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH,
+          nonce: 3,
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: 'msg-1' });
+      },
+    };
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury(), {
+        outgoingScanner: scanner,
+        logger: createLogger({
+          level: 'error',
+          serviceRole: 'test',
+          environment: 'test',
+          destination: sink.stream,
+        }),
+      }),
+      alerts: createWorkingAlertRepository(),
+      emailSender,
+    };
+    deps.treasuries.recordOutgoingScanComplete = vi.fn(() =>
+      Promise.reject(new Error('watermark write failed')),
+    );
+
+    await expect(
+      reconcileWallets(deps, {
+        role: 'cron-reconciler',
+        credentialId: 'cron-cred',
+        correlationId: 'corr-watermark-fail',
+        runId: 'run-watermark-fail',
+      }),
+    ).rejects.toThrow('watermark write failed');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain(orphanHash);
+    const critical = sink.lines().find((line) => line.event === 'reconciliation.critical_finding');
+    expect(critical).toBeDefined();
+    expect(critical?.transactionHash).toBe(orphanHash);
+  });
+
+  it('alerts a later distinct finding when an earlier finding notify throws', async () => {
+    const stores = createInMemoryFundingStores();
+    const hashA = `0x${'a1'.repeat(32)}`;
+    const hashB = `0x${'b2'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      transfers: [
+        {
+          transactionHash: hashA,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH,
+          nonce: 3,
+          blockNumber: 40n,
+        },
+        {
+          transactionHash: hashB,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_B,
+          valueWei: ONE_ETH / 2n,
+          nonce: 4,
+          blockNumber: 50n,
+        },
+      ],
+    });
+    const messages: EmailMessage[] = [];
+    const emailSender: EmailSender = {
+      send(message) {
+        messages.push(message);
+        return Promise.resolve({ kind: 'sent', providerMessageId: `msg-${String(messages.length)}` });
+      },
+    };
+    const alerts = createWorkingAlertRepository();
+    const originalFind = alerts.findOpenByEntity.bind(alerts);
+    alerts.findOpenByEntity = (entityType, entityId, alertType) => {
+      if (entityId === hashA) {
+        return Promise.reject(new Error('first finding alert store down'));
+      }
+      return originalFind(entityType, entityId, alertType);
+    };
+
+    const deps = {
+      ...buildDeps(stores, [], buildTreasury(), { outgoingScanner: scanner }),
+      alerts,
+      emailSender,
+    };
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-finding-partial',
+      runId: 'run-finding-partial',
+    });
+
+    expect(result.unexplainedTransferCount).toBe(2);
+    expect(result.run.errorCode).toBeUndefined();
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain(hashB);
+    expect(messages[0]?.text).not.toContain(hashA);
+  });
 });
 
 describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {

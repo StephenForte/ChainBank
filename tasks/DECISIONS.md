@@ -1046,9 +1046,12 @@ Local design choices (TX.15, 2026-08-06):
   treasury, and explorer link. Audit actions match C10/C15:
   `treasury.alert.email.sent` / `.failed` (audit entity remains `treasury` for
   operator queries; finding identity lives in metadata).
-- **Call site:** failure-isolated hook at the end of `reconcileWallets` after
-  `markFinished` and after the C15 hook. Alert-store / email errors are logged
-  and must not change run outcome, C15 classification, or cron exit code.
+- **Call site:** after `markFinished` and the C15 hook, **before** watermark
+  advances — a `recordOutgoingScanComplete` failure must not silence critical
+  finding logs/emails. Alert-store / email errors are logged and must not change
+  run outcome, C15 classification, or cron exit code. Each finding is notified
+  in its own try/catch so one store failure cannot suppress a later distinct
+  incident in the same run.
 - **Severity:** unexplained transfers stay `critical` even when later confirmed
   benign — the system cannot safely distinguish operator action from compromise.
 - **Out of scope:** scanner / watermark / C14 classification; dashboard

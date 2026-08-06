@@ -358,9 +358,31 @@ export async function reconcileWallets(
     errorSummary: runErrorSummary,
   });
 
-  // Findings are durable; now advance watermarks. A failure here leaves the
-  // next run re-scanning the same window (fail closed — duplicate findings
-  // beat a lost key-compromise signal).
+  // Escalate while findings are durable and *before* watermark writes. A
+  // recordOutgoingScanComplete failure must not silence the key-compromise
+  // signal (TX.15 / C18) — the next run can re-scan; an unlogged finding cannot
+  // be recovered from Render logs.
+  logCriticalReconciliationFindings(dependencies.logger, {
+    findings: finished.findings,
+    correlationId: input.correlationId,
+    runId: finished.runId,
+  });
+
+  await maybeNotifyReconciliationFailureAfterRun(dependencies, {
+    run: finished,
+    credentialId: input.credentialId,
+    correlationId: input.correlationId,
+  });
+
+  await maybeNotifyTreasuryFindingsAfterRun(dependencies, {
+    run: finished,
+    credentialId: input.credentialId,
+    correlationId: input.correlationId,
+  });
+
+  // Findings + escalation are done; now advance watermarks. A failure here
+  // leaves the next run re-scanning the same window (fail closed — duplicate
+  // findings beat a lost key-compromise signal).
   for (const advance of pendingWatermarkAdvances) {
     await dependencies.treasuries.recordOutgoingScanComplete({
       treasuryId: advance.treasuryId,
@@ -379,26 +401,6 @@ export async function reconcileWallets(
       'Treasury outgoing-scan watermark advanced',
     );
   }
-
-  // Cheap half of TX.15: surface critical findings in logs even when the run
-  // is a C15 success (funded correctly / no error_code). Independent of email.
-  logCriticalReconciliationFindings(dependencies.logger, {
-    findings: finished.findings,
-    correlationId: input.correlationId,
-    runId: finished.runId,
-  });
-
-  await maybeNotifyReconciliationFailureAfterRun(dependencies, {
-    run: finished,
-    credentialId: input.credentialId,
-    correlationId: input.correlationId,
-  });
-
-  await maybeNotifyTreasuryFindingsAfterRun(dependencies, {
-    run: finished,
-    credentialId: input.credentialId,
-    correlationId: input.correlationId,
-  });
 
   return {
     run: finished,
@@ -478,6 +480,9 @@ async function maybeNotifyReconciliationFailureAfterRun(
 /**
  * C18 failure-isolated hook: critical finding alerts must never change the
  * finished run's outcome, C15 classification, or cron exit code.
+ *
+ * Each finding is notified in its own try/catch so one alert-store/email
+ * failure cannot suppress a later distinct incident in the same run.
  */
 async function maybeNotifyTreasuryFindingsAfterRun(
   dependencies: ReconcileWalletsDependencies,
@@ -492,27 +497,43 @@ async function maybeNotifyTreasuryFindingsAfterRun(
     return;
   }
 
+  let treasuriesById: ReadonlyMap<string, Treasury>;
   try {
     const treasuries = await dependencies.treasuries.listEnabled();
-    const treasuriesById = new Map(treasuries.map((treasury) => [treasury.id, treasury]));
-    const actor = { type: 'cron' as const, id: input.credentialId };
+    treasuriesById = new Map(treasuries.map((treasury) => [treasury.id, treasury]));
+  } catch (error) {
+    dependencies.logger.error(
+      {
+        event: 'treasury.finding_alert.notification_failed',
+        correlationId: input.correlationId,
+        runId: input.run.runId,
+        err:
+          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      },
+      'Treasury finding alert notification failed; run outcome unchanged',
+    );
+    return;
+  }
 
-    for (const finding of criticalFindings) {
-      const treasury = treasuriesById.get(finding.treasuryId);
-      if (treasury === undefined) {
-        dependencies.logger.warn(
-          {
-            event: 'treasury.finding_alert.treasury_missing',
-            correlationId: input.correlationId,
-            runId: input.run.runId,
-            treasuryId: finding.treasuryId,
-            findingKind: finding.kind,
-          },
-          'Treasury finding alert skipped: finding treasury is not in the enabled set',
-        );
-        continue;
-      }
+  const actor = { type: 'cron' as const, id: input.credentialId };
 
+  for (const finding of criticalFindings) {
+    const treasury = treasuriesById.get(finding.treasuryId);
+    if (treasury === undefined) {
+      dependencies.logger.warn(
+        {
+          event: 'treasury.finding_alert.treasury_missing',
+          correlationId: input.correlationId,
+          runId: input.run.runId,
+          treasuryId: finding.treasuryId,
+          findingKind: finding.kind,
+        },
+        'Treasury finding alert skipped: finding treasury is not in the enabled set',
+      );
+      continue;
+    }
+
+    try {
       await notifyTreasuryFinding(
         {
           alerts: dependencies.alerts,
@@ -532,18 +553,22 @@ async function maybeNotifyTreasuryFindingsAfterRun(
           actor,
         },
       );
+    } catch (error) {
+      dependencies.logger.error(
+        {
+          event: 'treasury.finding_alert.notification_failed',
+          correlationId: input.correlationId,
+          runId: input.run.runId,
+          treasuryId: finding.treasuryId,
+          findingKind: finding.kind,
+          err:
+            error instanceof Error
+              ? { message: error.message, name: error.name }
+              : { message: String(error) },
+        },
+        'Treasury finding alert notification failed for one finding; continuing with remaining findings',
+      );
     }
-  } catch (error) {
-    dependencies.logger.error(
-      {
-        event: 'treasury.finding_alert.notification_failed',
-        correlationId: input.correlationId,
-        runId: input.run.runId,
-        err:
-          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
-      },
-      'Treasury finding alert notification failed; run outcome unchanged',
-    );
   }
 }
 
