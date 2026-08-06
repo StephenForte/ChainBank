@@ -314,6 +314,28 @@ function formatWeiAsEther(weiDecimal: string): string {
   return `${whole.toString()}.${fractionText}`;
 }
 
+/**
+ * Wei arriving from a fail-permissive source — a C19 finding or C20 alert
+ * metadata — where the value is passed through unvalidated by design.
+ *
+ * `formatWeiAsEther` calls `BigInt()`, which throws on anything that is not a
+ * decimal integer. There is no error boundary in this dashboard, so a throw
+ * during render unmounts the whole console, not just the panel: a single
+ * malformed `valueWei` on one critical finding blanks the operator's only
+ * non-SQL view of treasury state. Verified in a browser — `valueWei: "1.5"`
+ * produced zero rendered panels.
+ *
+ * So: never throw, and never invent a number. An unparseable amount is shown
+ * verbatim and labelled, the same way TX.18 treats a severity it cannot
+ * classify — the system must not pretend to understand evidence it doesn't.
+ */
+function formatFindingWei(value: unknown): string {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return `${String(value)} (unparseable wei)`;
+  }
+  return `${formatWeiAsEther(value)} ETH`;
+}
+
 function parseEtherInputToWei(value: string): { ok: true; wei: string } | { ok: false; message: string } {
   const trimmed = value.trim();
   if (trimmed === '') {
@@ -1310,7 +1332,7 @@ export function App() {
                             <div>
                               <dt>Value</dt>
                               <dd className="mono">
-                                {valueWei === undefined ? '—' : `${formatWeiAsEther(valueWei)} ETH`}
+                                {valueWei === undefined ? '—' : formatFindingWei(valueWei)}
                               </dd>
                             </div>
                             <div>
@@ -1525,7 +1547,7 @@ export function App() {
                                       <dd className="mono">
                                         {finding.valueWei === undefined
                                           ? '—'
-                                          : `${formatWeiAsEther(finding.valueWei)} ETH`}
+                                          : formatFindingWei(finding.valueWei)}
                                       </dd>
                                     </div>
                                     <div>
