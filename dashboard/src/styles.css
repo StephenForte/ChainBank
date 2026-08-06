@@ -390,6 +390,60 @@ button.secondary:active:not(:disabled) {
   gap: var(--s-sm);
 }
 
+.recon-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-sm);
+  margin-bottom: var(--s-sm);
+  padding: var(--s-sm) var(--s-md);
+  border-radius: var(--r-sm);
+  background: var(--surface-soft);
+  border: 1px solid var(--hairline);
+}
+
+.recon-summary-alert {
+  background: var(--bad-soft);
+  border-color: rgba(138, 31, 28, 0.28);
+  border-left: 4px solid var(--bad-strong);
+}
+
+.recon-toggle {
+  flex: 0 0 auto;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--slate);
+  background: var(--canvas);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+}
+
+.recon-toggle:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.recon-summary-text {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--slate);
+}
+
+.recon-critical-callout {
+  font-weight: 700;
+  color: var(--bad-strong);
+  letter-spacing: 0.01em;
+}
+
+.recon-critical-always {
+  margin-bottom: var(--s-sm);
+}
+
 .finding {
   padding: var(--s-sm) var(--s-md);
   border-radius: var(--r-sm);
