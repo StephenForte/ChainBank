@@ -11,11 +11,21 @@ the report handed back on completion.
 
 ## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
 
-`main` is at **449 unit tests plus 91 integration tests, 0 skipped** (both counts
+`main` is at **464 unit tests plus 92 integration tests, 0 skipped** (both counts
 re-run by the planner against `origin/main`), with CI (format, lint,
 typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
 
-**No open PRs. Every planned Phase 1–4 task is merged. No known open defects.**
+**No open PRs. Every planned Phase 1–4 task is merged, plus the post-exit operability
+wave TX.11–TX.15. No known open defects.** TX.16 is dispatched (2026-08-06) and TX.17 is
+open but not dispatched — both are post-exit operability, not Phase 1–4 scope.
+
+**A GitHub Actions infrastructure outage on 2026-08-06** made action downloads fail; the
+Trivy "failure" on PR #72 was a setup failure, not a security finding. Re-read any scan
+result from that day before treating it as signal.
+
+**BATCHER's policy was raised to min 0.6 / target 1.2 / maxTopUp 0.6** — roughly a
+three-day floor at the measured 0.142–0.181 ETH/day burn. Confirm the first top-up under
+the new policy moves `target − balance` and no more.
 
 **PHASE 4 IS EXITED (2026-08-06).** All three §20 exit criteria are met with evidence,
 not assertion. Four ForteL2 wallets are enrolled (HARVEST, ADMIN, BATCHER, PROPOSER) in
@@ -104,9 +114,11 @@ TX.15, threshold changes, and any mainnet work are new scope the operator initia
 | TX.10 crash-duplicate prevention (C7 amendment)               | ✅ done       | PR #48 (two review rounds) |
 | TX.11 dashboard reconcile toggle + `weiTransferred` log       | ✅ done       | PR #53                     |
 | TX.12 dashboard design-system pass (presentation only)        | ✅ done       | PR #56 (+ #58, #59)        |
-| TX.13 live wallet balances (C17)                              | 🔄 review     | PR #61 — approved          |
-| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | 🔄 review     | PR #64 — approved          |
-| TX.15 escalate critical reconciliation findings (C18)         | 🔄 dispatched | — prompt issued 2026-08-06 |
+| TX.13 live wallet balances (C17)                              | ✅ done       | PR #61                     |
+| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`) | ✅ done       | PR #64                     |
+| TX.15 escalate critical reconciliation findings (C18)         | ✅ done       | PR #72                     |
+| TX.16 reconciliation-runs endpoint + dashboard findings (C19) | 🔄 dispatched | — prompt issued 2026-08-06 |
+| TX.17 operator acknowledgement of finding alerts              | 📋 open       | — not yet dispatched       |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -926,6 +938,78 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   up. Identity should therefore be per-finding (transaction hash), and the worker must
   justify what closes the alert. Dashboard surfacing is **out of scope** — it needs a
   reconciliation-runs HTTP endpoint that C14 deliberately omits; note as a follow-up.
+
+  **Merged as PR #72 (2026-08-06).** C18 published: `treasury_finding` alerts keyed per
+  finding (`transactionHash.toLowerCase()`), so a second distinct transfer alerts while
+  the first is still open; critical findings log at `error` with the full forensic payload
+  before the alert hook runs; escalation is isolated from watermark and peer failures so
+  one store failure cannot suppress a later incident in the same run. **No auto-resolution
+  by design** — an unexplained transfer is an immutable event, never becomes explained,
+  and inventing a recovery condition would clear a key-compromise signal. Open rows
+  accumulate as the durable incident record. The follow-up TX.15 named is **TX.16**;
+  closing those rows is **TX.17**.
+
+- **TX.16** 🔴 Reconciliation-runs read endpoint + dashboard findings surface
+  `[T4.1/C14, TX.15/C18, TX.12, TX.13]` — contract **C19** (pre-assigned: new API route
+  `GET /v1/reconciliation-runs`), **no migration**
+  The third and last channel for critical findings. TX.15 landed log and email; the
+  dashboard — the surface the operator actually uses — still shows nothing, because
+  findings live only in `reconciliation_runs.findings_json` and C14 deliberately publishes
+  no HTTP endpoint for runs. `src/api/routes/` has no route for them.
+
+  **The authorization grain is the security-relevant decision, and it is deliberately
+  unlike every other read endpoint here.** C13/C17's `resolveReadableProjectIds` pattern
+  does not apply: reconciliation runs are **treasury-global**, spanning every project, and
+  a finding payload carries destination addresses, values, nonces and hashes. There is no
+  project to scope to, so scope-based authz cannot express the boundary. New permission
+  `reconciliation:read` granted to `operator` and `read-only` **only** — `project-service`
+  denied even when holding scope rows, so a scope grant cannot buy treasury-wide forensic
+  data. `PERMISSIONS` is an app-level const (additive, no migration); `ROLES` is the
+  persisted enum and is untouched.
+
+  **Two traps flagged in the prompt.** (1) `ReconciliationRun.weiTransferred` is a
+  `bigint`, and a raw bigint reaching Fastify's serializer **throws** — the same hazard
+  TX.11 hit on the logging path, one layer over, and here it would 500 the read of the
+  incident record. Type-enforce the conversion the way TX.11's
+  `buildReconcilerCompletionLogFields` does. (2) `findings_json` is unvalidated data at
+  rest, written across TX.9/TX.14/TX.15 code versions; a response schema with
+  `additionalProperties: false` over the `ReconciliationFinding` union would make the
+  endpoint **500 on old rows** — failing hardest on the oldest evidence. Direction of
+  failure matters: permissive on presentation, never on content. An unrecognised finding
+  kind must still appear in the response and must never be silently dropped. A finding
+  that cannot be parsed is more interesting than one that can.
+
+  **Stated limitation, not a defect:** the panel shows findings within the runs page it
+  fetched — at one run per six hours a 50-run page is ~12 days, so an older critical
+  finding will not appear. A standing unresolved-findings banner belongs to TX.17, which
+  owns the alerts read surface.
+
+  Explorer links have a wrinkle: a finding carries `transactionHash` and `treasuryId` but
+  the run row carries no chain data, while the dashboard already loads
+  `TreasuryResource.explorerUrl`. Match client-side on `treasuryId`; render the raw hash
+  rather than a guessed link when there is no match.
+
+  No dashboard component-test harness exists and this task must not build one — hand-
+  verify and disclose exactly what was exercised, per TX.11/TX.12/TX.13 precedent,
+  including that critical and warning findings are tellable apart **without reading the
+  label** (TX.12's form-not-hue rule).
+
+  **Dispatched 2026-08-06.**
+
+- **TX.17** 🔴 Operator acknowledgement of `treasury_finding` alerts `[TX.15/C18, TX.16]`
+  — contract number not yet assigned
+  C18 gives these alerts no close path by design, so open rows accumulate as the durable
+  incident record. There is no supported way to close one — and no `alerts` HTTP route at
+  all, so an operator cannot even list them without SQL.
+
+  Split out of TX.16 at the operator's decision (2026-08-06) rather than folded in: it
+  needs an alerts read endpoint plus a **mutating** close on a possible-key-compromise
+  record, with its own audit trail and authz story. Entangling that security review with a
+  read-only surface would make both harder to review. Scope when dispatched: list open
+  alerts, acknowledge one with an operator note and an `audit_events` row, and a standing
+  unresolved-findings banner in the dashboard that does not depend on the runs page
+  window. **Acknowledgement must not delete or rewrite the finding** — append-oriented,
+  the way C10/C15 resolution already is.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
