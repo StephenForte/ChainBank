@@ -33,7 +33,7 @@ const credentialResponseSchema = {
 export function registerAdminRoutes(app: AppInstance, container: Container): void {
   const credentialDeps = {
     apiCredentials: container.repositories.apiCredentials,
-    auditEvents: container.repositories.auditEvents,
+    operatorMutations: container.operatorMutations,
     clock: container.clock,
   };
 

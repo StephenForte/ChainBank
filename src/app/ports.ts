@@ -786,6 +786,33 @@ export interface FundingDispatchUnitOfWork {
 }
 
 /**
+ * Runs an operator-facing database mutation and its audit entry in one
+ * transaction (C21). Repository methods on the unit of work share that
+ * connection — either both commit or neither does.
+ *
+ * Constructed from the pool-backed Database only. Nested `run` calls open an
+ * independent transaction on another pooled connection; they do not join an
+ * ambient transaction (including FundingDispatchLock). None of the C21 call
+ * sites are reachable from inside funding dispatch.
+ */
+export interface OperatorMutationTransaction {
+  run<T>(work: (uow: OperatorMutationUnitOfWork) => Promise<T>): Promise<T>;
+}
+
+export interface OperatorMutationUnitOfWork {
+  readonly alerts: AlertRepository;
+  readonly auditEvents: AuditEventRepository;
+  readonly apiCredentials: ApiCredentialRepository;
+  readonly treasuries: TreasuryRepository;
+  readonly balanceObservations: BalanceObservationRepository;
+  readonly managedWallets: ManagedWalletRepository;
+  readonly fundingPolicies: FundingPolicyRepository;
+  readonly projects: ProjectRepository;
+  readonly environments: EnvironmentRepository;
+  readonly chains: ChainRepository;
+}
+
+/**
  * Waits for an on-chain receipt. Submission success must never be treated as
  * confirmation — callers persist `submitted` first, then invoke this.
  */

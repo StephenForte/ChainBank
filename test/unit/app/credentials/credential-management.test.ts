@@ -5,9 +5,11 @@ import type {
   ApiCredentialRepository,
   ApiCredentialSummary,
   AuditEventRepository,
+  OperatorMutationTransaction,
 } from '../../../../src/app/ports.js';
 import { ROLES, type Role } from '../../../../src/domain/auth/roles.js';
 import { createFixedClock } from '../../../support/clock.js';
+import { createInlineOperatorMutations } from '../../../support/operator-mutations.js';
 
 const now = new Date('2026-07-30T12:00:00.000Z');
 const clock = createFixedClock(now);
@@ -58,6 +60,19 @@ function buildAuditEvents(): AuditEventRepository {
   return { record: vi.fn(() => Promise.resolve(undefined)) };
 }
 
+function mutateDeps(
+  apiCredentials: ApiCredentialRepository,
+  auditEvents: AuditEventRepository = buildAuditEvents(),
+  depsClock = clock,
+) {
+  return {
+    operatorMutations: createInlineOperatorMutations({ apiCredentials, auditEvents }),
+    clock: depsClock,
+    auditEvents,
+    apiCredentials,
+  };
+}
+
 describe('listCredentials authorization', () => {
   const nonOperatorRoles = ROLES.filter((role): role is Role => role !== 'operator');
 
@@ -101,9 +116,10 @@ describe('mutateCredential authorization', () => {
   ];
 
   it.each(mutateRoles.map((role) => [role] as const))('denies %s from mutating credentials', async (role) => {
+    const { operatorMutations } = mutateDeps(buildRepository());
     await expect(
       mutateCredential(
-        { apiCredentials: buildRepository(), auditEvents: buildAuditEvents(), clock },
+        { operatorMutations, clock },
         {
           role,
           credentialId: targetCredential.id,
@@ -119,9 +135,10 @@ describe('mutateCredential authorization', () => {
   it.each(['disable', 'revoke'] as const)('allows operator to %s a credential', async (action) => {
     const apiCredentials = buildRepository();
     const auditEvents = buildAuditEvents();
+    const { operatorMutations } = mutateDeps(apiCredentials, auditEvents);
 
     const result = await mutateCredential(
-      { apiCredentials, auditEvents, clock },
+      { operatorMutations, clock },
       {
         role: 'operator',
         credentialId: targetCredential.id,
@@ -158,13 +175,10 @@ describe('mutateCredential authorization', () => {
 
 describe('mutateCredential guards', () => {
   it('refuses self-disable to prevent operator lockout', async () => {
+    const { operatorMutations } = mutateDeps(buildRepository());
     await expect(
       mutateCredential(
-        {
-          apiCredentials: buildRepository(),
-          auditEvents: buildAuditEvents(),
-          clock,
-        },
+        { operatorMutations, clock },
         {
           role: 'operator',
           credentialId: operatorCredentialId,
@@ -181,13 +195,10 @@ describe('mutateCredential guards', () => {
   });
 
   it('refuses self-revoke to prevent operator lockout', async () => {
+    const { operatorMutations } = mutateDeps(buildRepository());
     await expect(
       mutateCredential(
-        {
-          apiCredentials: buildRepository(),
-          auditEvents: buildAuditEvents(),
-          clock,
-        },
+        { operatorMutations, clock },
         {
           role: 'operator',
           credentialId: operatorCredentialId,
@@ -204,10 +215,11 @@ describe('mutateCredential guards', () => {
     const apiCredentials = buildRepository({
       findById: vi.fn(() => Promise.resolve(undefined)),
     });
+    const { operatorMutations } = mutateDeps(apiCredentials);
 
     await expect(
       mutateCredential(
-        { apiCredentials, auditEvents: buildAuditEvents(), clock },
+        { operatorMutations, clock },
         {
           role: 'operator',
           credentialId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
@@ -224,9 +236,10 @@ describe('mutateCredential guards', () => {
 describe('mutateCredential audit metadata', () => {
   it('records previous and next state with the acting credential', async () => {
     const auditEvents = buildAuditEvents();
+    const { operatorMutations } = mutateDeps(buildRepository(), auditEvents);
 
     await mutateCredential(
-      { apiCredentials: buildRepository(), auditEvents, clock },
+      { operatorMutations, clock },
       {
         role: 'operator',
         credentialId: targetCredential.id,
@@ -262,9 +275,10 @@ describe('mutateCredential enable', () => {
       findById: vi.fn(() => Promise.resolve(disabled)),
     });
     const auditEvents = buildAuditEvents();
+    const { operatorMutations } = mutateDeps(repository, auditEvents, createFixedClock(now));
 
     const result = await mutateCredential(
-      { apiCredentials: repository, auditEvents, clock: createFixedClock(now) },
+      { operatorMutations, clock: createFixedClock(now) },
       {
         role: 'operator',
         credentialId: targetCredential.id,
@@ -294,10 +308,11 @@ describe('mutateCredential enable', () => {
       findById: vi.fn(() => Promise.resolve(revoked)),
     });
     const auditEvents = buildAuditEvents();
+    const { operatorMutations } = mutateDeps(repository, auditEvents, createFixedClock(now));
 
     await expect(
       mutateCredential(
-        { apiCredentials: repository, auditEvents, clock: createFixedClock(now) },
+        { operatorMutations, clock: createFixedClock(now) },
         {
           role: 'operator',
           credentialId: targetCredential.id,
@@ -315,9 +330,10 @@ describe('mutateCredential enable', () => {
 
   it('denies enabling the credential making the request', async () => {
     const repository = buildRepository();
+    const { operatorMutations } = mutateDeps(repository);
     await expect(
       mutateCredential(
-        { apiCredentials: repository, auditEvents: buildAuditEvents(), clock: createFixedClock(now) },
+        { operatorMutations, clock: createFixedClock(now) },
         {
           role: 'operator',
           credentialId: operatorCredentialId,
@@ -334,9 +350,10 @@ describe('mutateCredential enable', () => {
   it('denies every non-operator role from enabling', async () => {
     for (const role of ROLES.filter((r): r is Role => r !== 'operator')) {
       const repository = buildRepository();
+      const { operatorMutations } = mutateDeps(repository);
       await expect(
         mutateCredential(
-          { apiCredentials: repository, auditEvents: buildAuditEvents(), clock: createFixedClock(now) },
+          { operatorMutations, clock: createFixedClock(now) },
           {
             role,
             credentialId: targetCredential.id,
@@ -349,5 +366,75 @@ describe('mutateCredential enable', () => {
       ).rejects.toMatchObject({ code: 'INSUFFICIENT_ROLE' });
       expect(repository.enable).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('mutateCredential atomicity (C21)', () => {
+  it('rolls back credential revoke when the audit insert fails', async () => {
+    let current: ApiCredentialSummary = { ...targetCredential };
+    const apiCredentials: ApiCredentialRepository = {
+      ...buildRepository(),
+      findById: vi.fn(() => Promise.resolve(current)),
+      revoke: vi.fn((_id: string, at: Date) => {
+        current = { ...current, enabled: false, revokedAt: at };
+        return Promise.resolve(current);
+      }),
+    };
+    const auditEvents: AuditEventRepository = {
+      record: vi.fn(() => Promise.reject(new Error('forced audit failure'))),
+    };
+    const inline = createInlineOperatorMutations({ apiCredentials, auditEvents });
+    const operatorMutations: OperatorMutationTransaction = {
+      async run(work) {
+        const snapshot = { ...current };
+        try {
+          return await inline.run(work);
+        } catch (error) {
+          current = snapshot;
+          throw error;
+        }
+      },
+    };
+
+    await expect(
+      mutateCredential(
+        { operatorMutations, clock },
+        {
+          role: 'operator',
+          credentialId: targetCredential.id,
+          actorCredentialId: operatorCredentialId,
+          action: 'revoke',
+          operationId: 'req-audit-fail',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toThrow('forced audit failure');
+
+    expect(current.enabled).toBe(true);
+    expect(current.revokedAt).toBeUndefined();
+  });
+
+  it('writes no audit entry when the mutation fails', async () => {
+    const apiCredentials = buildRepository({
+      revoke: vi.fn(() => Promise.reject(new Error('forced mutation failure'))),
+    });
+    const auditEvents = buildAuditEvents();
+    const { operatorMutations } = mutateDeps(apiCredentials, auditEvents);
+
+    await expect(
+      mutateCredential(
+        { operatorMutations, clock },
+        {
+          role: 'operator',
+          credentialId: targetCredential.id,
+          actorCredentialId: operatorCredentialId,
+          action: 'revoke',
+          operationId: 'req-mutation-fail',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toThrow('forced mutation failure');
+
+    expect(auditEvents.record).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,9 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
-import type { AuditEventRepository, Project, ProjectRepository } from '../ports.js';
+import type { OperatorMutationTransaction, Project } from '../ports.js';
 
 export interface SetProjectEnabledDependencies {
-  readonly projects: ProjectRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface SetProjectEnabledInput {
@@ -18,6 +17,7 @@ export interface SetProjectEnabledInput {
 
 /**
  * Enables or disables a project without deleting historical rows.
+ * The enablement write and its audit entry commit atomically (C21).
  */
 export async function setProjectEnabled(
   dependencies: SetProjectEnabledDependencies,
@@ -25,23 +25,25 @@ export async function setProjectEnabled(
 ): Promise<Project> {
   assertPermission(input.role, 'project:write');
 
-  const existing = await dependencies.projects.findById(input.projectId);
-  if (existing === undefined) {
-    throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
-  }
+  return dependencies.operatorMutations.run(async (uow) => {
+    const existing = await uow.projects.findById(input.projectId);
+    if (existing === undefined) {
+      throw new ChainBankError('PROJECT_NOT_FOUND', `Project ${input.projectId} does not exist`);
+    }
 
-  const project = await dependencies.projects.setEnabled(input.projectId, input.enabled);
+    const project = await uow.projects.setEnabled(input.projectId, input.enabled);
 
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorId,
-    action: input.enabled ? 'project.enabled' : 'project.disabled',
-    entityType: 'project',
-    entityId: project.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: { slug: project.slug, enabled: project.enabled },
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorId,
+      action: input.enabled ? 'project.enabled' : 'project.disabled',
+      entityType: 'project',
+      entityId: project.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: { slug: project.slug, enabled: project.enabled },
+    });
+
+    return project;
   });
-
-  return project;
 }

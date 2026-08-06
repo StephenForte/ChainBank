@@ -2,13 +2,16 @@ import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock } from '../../domain/ports.js';
-import type { ApiCredentialRepository, ApiCredentialSummary, AuditEventRepository } from '../ports.js';
+import type {
+  ApiCredentialSummary,
+  OperatorMutationTransaction,
+  OperatorMutationUnitOfWork,
+} from '../ports.js';
 
 export type CredentialMutationAction = 'disable' | 'revoke' | 'enable';
 
 export interface MutateCredentialDependencies {
-  readonly apiCredentials: ApiCredentialRepository;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
   readonly clock: Clock;
 }
 
@@ -33,6 +36,8 @@ export interface MutateCredentialInput {
  * rejects disabled and revoked credentials alike, so a self-mutation would
  * leave the operator locked out with no in-product way back; a second operator
  * credential is the intended recovery path.
+ *
+ * The credential write and its audit entry commit atomically (C21).
  */
 export async function mutateCredential(
   dependencies: MutateCredentialDependencies,
@@ -50,52 +55,54 @@ export async function mutateCredential(
     );
   }
 
-  const existing = await dependencies.apiCredentials.findById(input.credentialId);
-  if (existing === undefined) {
-    throw new ChainBankError('CREDENTIAL_NOT_FOUND', `Credential ${input.credentialId} does not exist`);
-  }
+  return dependencies.operatorMutations.run(async (uow) => {
+    const existing = await uow.apiCredentials.findById(input.credentialId);
+    if (existing === undefined) {
+      throw new ChainBankError('CREDENTIAL_NOT_FOUND', `Credential ${input.credentialId} does not exist`);
+    }
 
-  // Revocation is terminal. Allowing `enable` to clear it would turn the
-  // compromise response into a reversible toggle, so a revoked credential can
-  // only be replaced by issuing a new one.
-  if (input.action === 'enable' && existing.revokedAt !== undefined) {
-    throw new ChainBankError(
-      'CREDENTIAL_REVOKED',
-      `Credential ${input.credentialId} was revoked at ${existing.revokedAt.toISOString()} and cannot be re-enabled`,
-      {
-        publicMessage: 'A revoked credential cannot be re-enabled. Issue a new credential instead.',
-      },
-    );
-  }
+    // Revocation is terminal. Allowing `enable` to clear it would turn the
+    // compromise response into a reversible toggle, so a revoked credential can
+    // only be replaced by issuing a new one.
+    if (input.action === 'enable' && existing.revokedAt !== undefined) {
+      throw new ChainBankError(
+        'CREDENTIAL_REVOKED',
+        `Credential ${input.credentialId} was revoked at ${existing.revokedAt.toISOString()} and cannot be re-enabled`,
+        {
+          publicMessage: 'A revoked credential cannot be re-enabled. Issue a new credential instead.',
+        },
+      );
+    }
 
-  const at = dependencies.clock.now();
-  const credential = await applyAction(dependencies, input.action, input.credentialId, at);
+    const at = dependencies.clock.now();
+    const credential = await applyAction(uow.apiCredentials, input.action, input.credentialId, at);
 
-  const auditAction = AUDIT_ACTION_BY_MUTATION[input.action];
-  await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.actorCredentialId,
-    action: auditAction,
-    entityType: 'api_credential',
-    entityId: credential.id,
-    requestId: input.operationId,
-    sourceIp: input.sourceIp,
-    metadata: {
-      name: credential.name,
-      role: credential.role,
-      tokenPrefix: credential.tokenPrefix,
-      previous: {
-        enabled: existing.enabled,
-        revokedAt: existing.revokedAt?.toISOString() ?? null,
+    const auditAction = AUDIT_ACTION_BY_MUTATION[input.action];
+    await uow.auditEvents.record({
+      actorType: 'api_credential',
+      actorId: input.actorCredentialId,
+      action: auditAction,
+      entityType: 'api_credential',
+      entityId: credential.id,
+      requestId: input.operationId,
+      sourceIp: input.sourceIp,
+      metadata: {
+        name: credential.name,
+        role: credential.role,
+        tokenPrefix: credential.tokenPrefix,
+        previous: {
+          enabled: existing.enabled,
+          revokedAt: existing.revokedAt?.toISOString() ?? null,
+        },
+        next: {
+          enabled: credential.enabled,
+          revokedAt: credential.revokedAt?.toISOString() ?? null,
+        },
       },
-      next: {
-        enabled: credential.enabled,
-        revokedAt: credential.revokedAt?.toISOString() ?? null,
-      },
-    },
+    });
+
+    return credential;
   });
-
-  return credential;
 }
 
 const AUDIT_ACTION_BY_MUTATION: Readonly<Record<CredentialMutationAction, string>> = {
@@ -106,18 +113,18 @@ const AUDIT_ACTION_BY_MUTATION: Readonly<Record<CredentialMutationAction, string
 
 /** Exhaustive so a new action cannot silently fall through to a wrong write. */
 async function applyAction(
-  dependencies: MutateCredentialDependencies,
+  apiCredentials: OperatorMutationUnitOfWork['apiCredentials'],
   action: CredentialMutationAction,
   credentialId: string,
   at: Date,
 ): Promise<ApiCredentialSummary> {
   switch (action) {
     case 'disable':
-      return dependencies.apiCredentials.disable(credentialId, at);
+      return apiCredentials.disable(credentialId, at);
     case 'revoke':
-      return dependencies.apiCredentials.revoke(credentialId, at);
+      return apiCredentials.revoke(credentialId, at);
     case 'enable':
-      return dependencies.apiCredentials.enable(credentialId, at);
+      return apiCredentials.enable(credentialId, at);
     default:
       return assertNever(action, 'CredentialMutationAction');
   }

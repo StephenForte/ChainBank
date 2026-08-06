@@ -9,6 +9,7 @@ import type {
 } from '../../../src/app/ports.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
+import { createInlineOperatorMutations } from '../../support/operator-mutations.js';
 
 const treasury: Treasury = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -44,6 +45,7 @@ function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalan
   balanceObservations: BalanceObservationRepository;
   balanceReader: BalanceReader;
   auditEvents: AuditEventRepository;
+  operatorMutations: ReturnType<typeof createInlineOperatorMutations>;
 } {
   const observedAt = new Date('2026-07-26T12:00:00.000Z');
   const reading =
@@ -55,35 +57,43 @@ function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalan
       observedAt,
     } as const);
 
+  const treasuries: TreasuryRepository = {
+    upsert: vi.fn(),
+    findById: vi.fn(() => Promise.resolve(treasury)),
+    listEnabled: vi.fn(() => Promise.resolve([treasury])),
+    setEnabled: vi.fn(),
+    recordCheckSuccess: vi.fn(() =>
+      Promise.resolve({
+        ...treasury,
+        status: 'healthy' as const,
+        lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined,
+      }),
+    ),
+    recordCheckFailure: vi.fn(() =>
+      Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' }),
+    ),
+    recordOutgoingScanComplete: vi.fn(),
+  };
+  const balanceObservations: BalanceObservationRepository = {
+    record: vi.fn(() => Promise.resolve(undefined)),
+    findLatest: vi.fn(() => Promise.resolve(undefined)),
+  };
+  const auditEvents: AuditEventRepository = {
+    record: vi.fn(() => Promise.resolve(undefined)),
+  };
   return {
-    treasuries: {
-      upsert: vi.fn(),
-      findById: vi.fn(() => Promise.resolve(treasury)),
-      listEnabled: vi.fn(() => Promise.resolve([treasury])),
-      setEnabled: vi.fn(),
-      recordCheckSuccess: vi.fn(() =>
-        Promise.resolve({
-          ...treasury,
-          status: 'healthy' as const,
-          lastObservedBalanceWei: reading.kind === 'observed' ? reading.balanceWei : undefined,
-        }),
-      ),
-      recordCheckFailure: vi.fn(() =>
-        Promise.resolve({ ...treasury, status: 'unknown' as const, lastCheckErrorCode: 'RPC_UNAVAILABLE' }),
-      ),
-      recordOutgoingScanComplete: vi.fn(),
-    },
-    balanceObservations: {
-      record: vi.fn(() => Promise.resolve(undefined)),
-      findLatest: vi.fn(() => Promise.resolve(undefined)),
-    },
+    treasuries,
+    balanceObservations,
     balanceReader: {
       readBalance: vi.fn(() => Promise.resolve(reading)),
       verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11155111 })),
     },
-    auditEvents: {
-      record: vi.fn(() => Promise.resolve(undefined)),
-    },
+    auditEvents,
+    operatorMutations: createInlineOperatorMutations({
+      treasuries,
+      balanceObservations,
+      auditEvents,
+    }),
   };
 }
 

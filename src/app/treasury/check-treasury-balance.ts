@@ -2,19 +2,13 @@ import type { BalanceReading } from '../../domain/balance-reading.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { evaluateTreasuryStatus } from '../../domain/treasury/treasury-status.js';
-import type {
-  AuditEventRepository,
-  BalanceObservationRepository,
-  BalanceReader,
-  Treasury,
-  TreasuryRepository,
-} from '../ports.js';
+import type { BalanceReader, OperatorMutationTransaction, Treasury, TreasuryRepository } from '../ports.js';
 
 export interface CheckTreasuryBalanceDependencies {
+  /** Pre-RPC lookup only; persistence goes through {@link operatorMutations}. */
   readonly treasuries: TreasuryRepository;
-  readonly balanceObservations: BalanceObservationRepository;
   readonly balanceReader: BalanceReader;
-  readonly auditEvents: AuditEventRepository;
+  readonly operatorMutations: OperatorMutationTransaction;
 }
 
 export interface CheckTreasuryBalanceInput {
@@ -34,9 +28,13 @@ export interface CheckTreasuryBalanceResult {
 /**
  * Reads a treasury balance from the chain and records the outcome.
  *
- * This is read-only. It observes and reports; it never moves funds. A failed
- * read is persisted as a failed check with status `unknown`, leaving the last
- * known balance intact, so an RPC outage can never present as an empty treasury.
+ * This is read-only against the chain. It observes and reports; it never moves
+ * funds. A failed read is persisted as a failed check with status `unknown`,
+ * leaving the last known balance intact, so an RPC outage can never present as
+ * an empty treasury.
+ *
+ * The RPC read stays outside the database transaction. Observation / summary
+ * writes and the audit entry commit atomically (C21).
  */
 export async function checkTreasuryBalance(
   dependencies: CheckTreasuryBalanceDependencies,
@@ -50,24 +48,29 @@ export async function checkTreasuryBalance(
     throw new ChainBankError('TREASURY_NOT_FOUND', `Treasury ${input.treasuryId} does not exist`);
   }
 
+  // Hold no DB transaction across the RPC round trip.
   const reading = await dependencies.balanceReader.readBalance(treasury.address);
 
   if (reading.kind === 'unavailable') {
-    const updated = await dependencies.treasuries.recordCheckFailure({
-      treasuryId: treasury.id,
-      errorCode: reading.errorCode,
-      checkedAt: reading.observedAt,
-    });
+    const updated = await dependencies.operatorMutations.run(async (uow) => {
+      const failed = await uow.treasuries.recordCheckFailure({
+        treasuryId: treasury.id,
+        errorCode: reading.errorCode,
+        checkedAt: reading.observedAt,
+      });
 
-    await dependencies.auditEvents.record({
-      actorType: input.actor.type,
-      actorId: input.actor.id,
-      action: 'treasury.check.failed',
-      entityType: 'treasury',
-      entityId: treasury.id,
-      requestId: input.operationId,
-      sourceIp: undefined,
-      metadata: { errorCode: reading.errorCode, chainId: treasury.chain.chainId },
+      await uow.auditEvents.record({
+        actorType: input.actor.type,
+        actorId: input.actor.id,
+        action: 'treasury.check.failed',
+        entityType: 'treasury',
+        entityId: treasury.id,
+        requestId: input.operationId,
+        sourceIp: undefined,
+        metadata: { errorCode: reading.errorCode, chainId: treasury.chain.chainId },
+      });
+
+      return failed;
     });
 
     return { treasury: updated, reading };
@@ -75,42 +78,46 @@ export async function checkTreasuryBalance(
 
   const status = evaluateTreasuryStatus(reading.balanceWei, treasury.thresholds);
 
-  // The observation is written before the treasury summary is updated. If the
-  // process dies between the two, the ledger still holds the reading and the
-  // next check reconciles the summary.
-  await dependencies.balanceObservations.record({
-    chainRowId: treasury.chain.id,
-    walletAddress: treasury.address,
-    walletType: 'treasury',
-    balanceWei: reading.balanceWei,
-    blockNumber: reading.blockNumber,
-    observedAt: reading.observedAt,
-    sourceOperationId: input.operationId,
-  });
+  const updated = await dependencies.operatorMutations.run(async (uow) => {
+    // Observation and summary share the transaction with the audit entry so a
+    // failed audit cannot leave an unaudited status change (C21). The prior
+    // "observation before summary" ordering is preserved inside the txn.
+    await uow.balanceObservations.record({
+      chainRowId: treasury.chain.id,
+      walletAddress: treasury.address,
+      walletType: 'treasury',
+      balanceWei: reading.balanceWei,
+      blockNumber: reading.blockNumber,
+      observedAt: reading.observedAt,
+      sourceOperationId: input.operationId,
+    });
 
-  const updated = await dependencies.treasuries.recordCheckSuccess({
-    treasuryId: treasury.id,
-    balanceWei: reading.balanceWei,
-    status,
-    observedAt: reading.observedAt,
-  });
-
-  await dependencies.auditEvents.record({
-    actorType: input.actor.type,
-    actorId: input.actor.id,
-    action: 'treasury.check.succeeded',
-    entityType: 'treasury',
-    entityId: treasury.id,
-    requestId: input.operationId,
-    sourceIp: undefined,
-    // The balance is recorded as a decimal string; audit metadata is JSON and
-    // must not depend on bigint serialization.
-    metadata: {
-      balanceWei: reading.balanceWei.toString(),
-      blockNumber: reading.blockNumber.toString(),
+    const success = await uow.treasuries.recordCheckSuccess({
+      treasuryId: treasury.id,
+      balanceWei: reading.balanceWei,
       status,
-      previousStatus: treasury.status,
-    },
+      observedAt: reading.observedAt,
+    });
+
+    await uow.auditEvents.record({
+      actorType: input.actor.type,
+      actorId: input.actor.id,
+      action: 'treasury.check.succeeded',
+      entityType: 'treasury',
+      entityId: treasury.id,
+      requestId: input.operationId,
+      sourceIp: undefined,
+      // The balance is recorded as a decimal string; audit metadata is JSON and
+      // must not depend on bigint serialization.
+      metadata: {
+        balanceWei: reading.balanceWei.toString(),
+        blockNumber: reading.blockNumber.toString(),
+        status,
+        previousStatus: treasury.status,
+      },
+    });
+
+    return success;
   });
 
   return { treasury: updated, reading };

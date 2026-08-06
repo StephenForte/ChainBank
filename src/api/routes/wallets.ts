@@ -185,7 +185,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
     environments: container.repositories.environments,
     chains: container.repositories.chains,
     fundingPolicies: container.repositories.fundingPolicies,
-    auditEvents: container.repositories.auditEvents,
+    operatorMutations: container.operatorMutations,
   };
 
   app.post(
@@ -411,8 +411,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
 
       const wallet = await updateWallet(
         {
-          managedWallets: container.repositories.managedWallets,
-          auditEvents: container.repositories.auditEvents,
+          operatorMutations: container.operatorMutations,
         },
         {
           role: actor.role,
@@ -472,9 +471,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
       // Parse once at the HTTP boundary; services receive bigint only.
       const wallet = await setWalletPolicy(
         {
-          managedWallets: container.repositories.managedWallets,
-          fundingPolicies: container.repositories.fundingPolicies,
-          auditEvents: container.repositories.auditEvents,
+          operatorMutations: container.operatorMutations,
         },
         {
           role: actor.role,

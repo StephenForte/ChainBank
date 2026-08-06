@@ -14,6 +14,7 @@ import type {
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransactionRepository,
+  OperatorMutationTransaction,
   ReconciliationFundingQuery,
   ReconciliationRunRepository,
   ServiceHeartbeatRepository,
@@ -26,6 +27,7 @@ import { getTreasuryPrivateKey, isSigningCapableRole, type ChainBankConfig } fro
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
 import { createFundingDispatchLock } from './infrastructure/db/funding-dispatch-lock.js';
+import { createOperatorMutationTransaction } from './infrastructure/db/operator-mutation-transaction.js';
 import { createAlertRepository } from './infrastructure/db/repositories/alert-repository.js';
 import { createApiCredentialRepository } from './infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from './infrastructure/db/repositories/audit-event-repository.js';
@@ -87,6 +89,8 @@ export interface Container {
   readonly treasurySigner: TreasurySigner | undefined;
   /** Per-treasury/chain advisory lock for funding dispatch (D7). */
   readonly fundingDispatchLock: FundingDispatchLock;
+  /** Atomic operator mutation + audit unit of work (C21). */
+  readonly operatorMutations: OperatorMutationTransaction;
   /** Public-client receipt waiter; never holds signing credentials. */
   readonly transactionReceiptTracker: TransactionReceiptTracker;
   /** Public-client scanner for reconciler outgoing settlement / crash-orphan detection. */
@@ -145,6 +149,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),
     fundingDispatchLock: createFundingDispatchLock(database.db),
+    operatorMutations: createOperatorMutationTransaction(database.db),
     transactionReceiptTracker: createTransactionReceiptTracker({
       chain: config.chain,
       clock,

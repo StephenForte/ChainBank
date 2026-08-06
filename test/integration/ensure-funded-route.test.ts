@@ -5,6 +5,7 @@ import type { Container } from '../../src/container.js';
 import { loadConfig } from '../../src/config/index.js';
 import type { BalanceReader, TreasurySigner } from '../../src/app/ports.js';
 import { createFundingDispatchLock } from '../../src/infrastructure/db/funding-dispatch-lock.js';
+import { createOperatorMutationTransaction } from '../../src/infrastructure/db/operator-mutation-transaction.js';
 import { createApiCredentialRepository } from '../../src/infrastructure/db/repositories/api-credential-repository.js';
 import { createAuditEventRepository } from '../../src/infrastructure/db/repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from '../../src/infrastructure/db/repositories/balance-observation-repository.js';
@@ -141,6 +142,7 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
       balanceReader,
       treasurySigner: signer,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
+      operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({
         kind: 'confirmed',
         confirmedAt: new Date('2026-07-29T12:00:01.000Z'),

@@ -1216,6 +1216,66 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
   requires. Leaving the race unhandled would turn a duplicate email into a
   lost critical alert (C18).
 
+### C21 — Atomic operator mutation + audit (owner: TX.21)
+
+```ts
+// src/app/ports.ts
+interface OperatorMutationTransaction {
+  run<T>(work: (uow: OperatorMutationUnitOfWork) => Promise<T>): Promise<T>;
+}
+interface OperatorMutationUnitOfWork {
+  readonly alerts: AlertRepository;
+  readonly auditEvents: AuditEventRepository;
+  readonly apiCredentials: ApiCredentialRepository;
+  readonly treasuries: TreasuryRepository;
+  readonly balanceObservations: BalanceObservationRepository;
+  readonly managedWallets: ManagedWalletRepository;
+  readonly fundingPolicies: FundingPolicyRepository;
+  readonly projects: ProjectRepository;
+  readonly environments: EnvironmentRepository;
+  readonly chains: ChainRepository;
+}
+
+// src/infrastructure/db/operator-mutation-transaction.ts
+function createOperatorMutationTransaction(db: Database): OperatorMutationTransaction;
+// Opens db.transaction, rebinds repository factories to the tx client
+// (same pattern as createFundingDispatchLock / FundingDispatchUnitOfWork).
+```
+
+Local design choices (TX.21, 2026-08-06):
+
+- **Invariant:** an operator-facing database mutation and its `audit_events`
+  row commit atomically, or neither commits (AGENTS.md §7.7). Mutate-then-audit
+  without a transaction left acknowledgements (and every other operator write)
+  durable while the audit insert failed — the handler returned 500, retries
+  hit `INVALID_STATUS_TRANSITION`, and the security action had no audit trail.
+- **Generalizes an existing pattern.** `createFundingDispatchLock` already opens
+  a transaction, casts the Drizzle tx client to `Database`, and hands the
+  caller transaction-bound repositories. C21 does the same without changing
+  repository implementations.
+- **In scope (database-only):** `acknowledgeAlert`, `mutateCredential`,
+  `setTreasuryEnabled`, `setWalletPolicy`, `registerWallet`, `updateWallet`,
+  `createProject`, `createEnvironment`, `setProjectEnabled`,
+  `setEnvironmentEnabled`, `checkTreasuryBalance`. RPC _reads_ in
+  `checkTreasuryBalance` stay outside the transaction; observation / summary
+  writes and the audit entry share it.
+- **Out of scope (persist-then-send / external side effect):**
+  `notifyTreasuryFinding`, `notifyTreasuryReserveRefusal` /
+  `resolveTreasuryReserveAlert`, `maybeNotifyReconciliationFailure`,
+  `evaluateTreasuryAlerts`, `sendTestEmail`, `ensureWalletFunded`,
+  `reconcileWallets`. Those must keep alert/operation rows durable across a
+  failed email or broadcast — rolling them back would destroy the recovery
+  record (C10 / C15 / C18).
+- **Not audit-then-mutate.** A failed mutation must not leave an audit entry
+  asserting a change that never happened.
+- **Nesting:** construct from the pool-backed `Database` only. Nested `run`
+  opens an independent pooled transaction; it does not join
+  `FundingDispatchLock`. None of the eleven call sites are reachable from
+  inside funding dispatch.
+- **Unchanged:** C20 acknowledgement semantics; every existing audit `action`,
+  `entityType`, and metadata shape; authorization remains in the application
+  service.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -1286,3 +1346,4 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
 - 2026-08-06 — TX.17 review amended C20 in place: acknowledged-dedupe applies only to event-kind findings (`unexplained_outgoing_transfer`); recurring `outgoing_scan_incomplete` re-observation after ack opens a new row + email and leaves the prior acknowledgement note/actor intact (open preferred over acknowledged for a shared entityId). Unscoped ack-dedupe had permanently silenced the "detector is dark" signal — TX.9 defect 2 at the alert layer.
 - 2026-08-06 — TX.19 amended C20 in place: partial unique index on `alerts (entity_type, entity_id, alert_type) WHERE state = 'open'` (migration `0008`); all `insertOpen` callers adopt on `23505` rather than throwing (lost-alert trap). Full uniqueness rejected — it breaks C20 condition recurrence and C10/C15 reopen-after-resolve.
 - 2026-08-06 — TX.20 amended C17 reconciliation always-visible clause in place (no new number): demote acknowledged critical findings from the always-visible block into the collapsible detail after a C20 acknowledgement; fail closed when alerts are unresolved or no alert row matches; summary distinguishes unacknowledged vs acknowledged. Interacts with C20's standing banner (unchanged) — the panel reads the same open/acknowledged alert lists client-side.
+- 2026-08-06 — TX.21 published C21: `OperatorMutationTransaction` / `OperatorMutationUnitOfWork` so database-only operator mutations and their audit entries commit atomically (generalizes `createFundingDispatchLock`); persist-then-send alert/funding paths remain out of scope.

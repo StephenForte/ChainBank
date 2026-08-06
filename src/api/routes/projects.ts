@@ -77,7 +77,7 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
     projects: container.repositories.projects,
     environments: container.repositories.environments,
     credentialScopes: container.repositories.credentialScopes,
-    auditEvents: container.repositories.auditEvents,
+    operatorMutations: container.operatorMutations,
   };
 
   app.get(

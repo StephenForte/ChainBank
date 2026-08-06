@@ -176,8 +176,7 @@ export function registerAlertRoutes(app: AppInstance, container: Container): voi
 
       const alert = await acknowledgeAlert(
         {
-          alerts: container.repositories.alerts,
-          auditEvents: container.repositories.auditEvents,
+          operatorMutations: container.operatorMutations,
           clock: container.clock,
         },
         {
