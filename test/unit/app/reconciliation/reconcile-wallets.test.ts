@@ -365,7 +365,8 @@ describe('reconcileWallets sweep decisions', () => {
       ],
     });
     const deps = buildDeps(stores, [], buildTreasury(), { outgoingScanner: scanner });
-    deps.alerts.findOpenByEntity = () => Promise.reject(new Error('finding alert store down'));
+    // Finding notify uses findOpenOrAcknowledgedByEntity (C20 dedupe); stub that path.
+    deps.alerts.findOpenOrAcknowledgedByEntity = () => Promise.reject(new Error('finding alert store down'));
 
     const result = await reconcileWallets(deps, {
       role: 'cron-reconciler',
@@ -471,8 +472,8 @@ describe('reconcileWallets sweep decisions', () => {
       },
     };
     const alerts = createWorkingAlertRepository();
-    const originalFind = alerts.findOpenByEntity.bind(alerts);
-    alerts.findOpenByEntity = (entityType, entityId, alertType) => {
+    const originalFind = alerts.findOpenOrAcknowledgedByEntity.bind(alerts);
+    alerts.findOpenOrAcknowledgedByEntity = (entityType, entityId, alertType) => {
       if (entityId === hashA) {
         return Promise.reject(new Error('first finding alert store down'));
       }
@@ -1025,6 +1026,29 @@ function createWorkingAlertRepository(): AlertRepository {
         ),
       );
     },
+    findOpenOrAcknowledgedByEntity(entityType, entityId, alertType) {
+      const open = [...rows.values()].find(
+        (row) => row.entityType === entityType && row.entityId === entityId && row.alertType === alertType,
+      );
+      if (open === undefined) {
+        return Promise.resolve(undefined);
+      }
+      // Working fake only stores open rows; preference rule is open-first (C20).
+      return Promise.resolve({
+        ...open,
+        state: 'open' as const,
+        resolvedAt: undefined,
+        acknowledgedAt: undefined,
+        acknowledgedBy: undefined,
+        acknowledgementNote: undefined,
+      });
+    },
+    findById() {
+      return Promise.resolve(undefined);
+    },
+    list() {
+      return Promise.resolve({ items: [], total: 0 });
+    },
     insertOpen(input: InsertOpenAlertInput) {
       const id = `alert-${String(++seq)}`;
       const row: StoredOpenAlert = {
@@ -1082,6 +1106,9 @@ function createWorkingAlertRepository(): AlertRepository {
       };
       rows.set(input.id, next);
       return Promise.resolve(next);
+    },
+    recordOperatorAcknowledgement() {
+      return Promise.reject(new Error('unused'));
     },
     resolve() {
       return Promise.reject(new Error('unused'));
@@ -1157,11 +1184,15 @@ function buildDeps(
 
   const alerts: AlertRepository = {
     findOpenByEntity: () => Promise.resolve(undefined),
+    findOpenOrAcknowledgedByEntity: () => Promise.resolve(undefined),
+    findById: () => Promise.resolve(undefined),
+    list: () => Promise.resolve({ items: [], total: 0 }),
     insertOpen: vi.fn(),
     markEscalated: vi.fn(),
     markPendingEmail: vi.fn(),
     clearPendingEmail: vi.fn(),
     acknowledgeSend: vi.fn(),
+    recordOperatorAcknowledgement: vi.fn(),
     resolve: vi.fn(),
     touchLastEvaluated: vi.fn(),
   };

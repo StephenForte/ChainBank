@@ -1114,6 +1114,77 @@ Local design choices (TX.16, 2026-08-06):
 - **Out of scope:** scanner / watermark / C14–C15–C18 semantics; alert ack
   (TX.17); any write path; dashboard component-test harness.
 
+### C20 — Operator acknowledgement of treasury finding alerts (owner: TX.17)
+
+```ts
+// Permission (src/domain/auth/roles.ts) — additive; ROLES untouched
+'alert:read'; // operator + read-only only
+'alert:acknowledge'; // operator only — not read-only
+// Denied: project-service (even with scope rows), cron-reconciler,
+// cron-treasury-monitor.
+
+// Migration 0007 — nullable columns, no backfill
+// alerts.acknowledged_at, alerts.acknowledged_by, alerts.acknowledgement_note
+
+// HTTP
+// GET /v1/alerts?limit&offset&alertType&state&entityType
+// Response: { data: AlertResource[], pagination: { limit, offset, total } }
+// POST /v1/alerts/:id/acknowledge  body: { note: string }  // required, non-empty after trim, max 2000
+// State transition: open → acknowledged (never resolved)
+
+// Application ports (src/app/ports.ts) — AlertRepository additive
+findOpenOrAcknowledgedByEntity(entityType, entityId, alertType): Promise<StoredAlert | undefined>;
+findById(id): Promise<StoredAlert | undefined>;
+list(filters): Promise<AlertListPage>; // newest-first by first_triggered_at; total matches filters
+recordOperatorAcknowledgement(input): Promise<StoredAlert>; // ≠ acknowledgeSend
+
+// Application use cases
+listAlerts(deps, input): Promise<AlertListPage>;
+acknowledgeAlert(deps, input): Promise<StoredAlert>;
+```
+
+Local design choices (TX.17, 2026-08-06; amended same day after review probe):
+
+- **`acknowledged` ≠ `resolved`.** C10/C15 `resolved` means the underlying
+  condition recovered. An unexplained transfer never recovers; collapsing a
+  human stand-down into the same value destroys the incident-review distinction
+  C18 refused to invent.
+- **Authz is role denial, not scope** (C19 precedent). Alerts are treasury-global
+  and carry forensic detail; `project-service` is denied even with scope rows.
+- **Required note.** An acknowledgement without a stated reason is deletion with
+  extra steps. The note is the incident record.
+- **Event vs condition under `treasury_finding` (load-bearing).** C18 keys two
+  natures through one alert type:
+  - `unexplained_outgoing_transfer` — **immutable event** (`entityId` =
+    tx hash). Acknowledgement suppresses re-observation of that hash forever
+    (`findOpenOrAcknowledgedByEntity` → dedupe). A distinct hash still opens
+    a distinct alert.
+  - `outgoing_scan_incomplete` — **recurring condition** (`entityId` =
+    `outgoing_scan_incomplete:<treasuryId>:<errorCode>`). Acknowledgement must
+    **not** permanently silence a later re-observation of the same key: while
+    the scan is incomplete the crash-orphan detector is dark, and silencing
+    that signal reintroduces TX.9 defect 2 (silence looks like success) at the
+    alert layer. Chosen behaviour: leave the acknowledged row intact and
+    `insertOpen` a new row + email on re-observation. Rejected alternative:
+    refuse acknowledgement for scan-incomplete (restores the no-close-path
+    complaint that created TX.17). Rejected alternative: flip the same row
+    back to `open` (overwrites `acknowledgement_note` / `acknowledged_by` —
+    the note _is_ the incident record).
+- **Shared-entityId preference.** After a condition recurrence, an open row
+  and an acknowledged row share `entityId`. `findOpenOrAcknowledgedByEntity`
+  prefers `state = 'open'` explicitly (then newest `first_triggered_at`), not
+  whichever row the query happens to return first.
+- **Findings untouched.** Acknowledgement never edits `findings_json` or
+  severity — the finding stays `critical` forever.
+- **No un-acknowledge / no bulk.** Acknowledged rows stay visible with note and
+  actor so a mistake is correctable by reading the record, not by a second
+  attestation surface.
+- **Audit:** `treasury.alert.acknowledged` with actor, alert id, and note.
+- **Dashboard:** standing banner from `GET /v1/alerts` (no runs-page window);
+  acknowledge control with required note; acknowledged section remains visible.
+- **Only `treasury_finding` may be acknowledged** — balance/reserve/recon-failure
+  alerts keep resolving via their existing recovery paths.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -1180,3 +1251,5 @@ Local design choices (TX.16, 2026-08-06):
 - 2026-08-06 — TX.15 published C18: critical reconciliation finding alert (`treasury_finding`) with finding-keyed identity (tx hash for unexplained transfers), persist-then-send dedupe, **no auto-resolution** (event, not recoverable state), `logger.error` per critical finding, forensic email template + explorer link, audit `treasury.alert.email.sent`/`.failed`, failure-isolated from C15 run outcome / cron exit.
 - 2026-08-06 — TX.16 published C19: `GET /v1/reconciliation-runs` with `reconciliation:read` (operator/read-only only; project-service denied even with scopes), paginated newest-first runs with findings inline, permissive finding schema, `weiTransferred` as decimal string, and a findings-first dashboard Reconciliation panel.
 - 2026-08-06 — TX.18 amended C17 dashboard clause in place: auto-load balances when ≤25 listed wallets; button-only above that with hint; supersede in-flight on filter/list change; never-render-zero / `unavailable` rule untouched. Reconciliation panel: always-visible summary + collapsible warnings/history; critical findings never gated by collapse (localStorage persists detail expand only).
+- 2026-08-06 — TX.17 published C20: `GET /v1/alerts` + `POST /v1/alerts/:id/acknowledge` with `alert:read` / `alert:acknowledge`, migration `0007` (`acknowledged` state + note/actor/timestamp columns), dedupe lookup extended to acknowledged rows so re-observation cannot re-alert, findings_json immutable, standing dashboard banner independent of the runs page window, no un-acknowledge path.
+- 2026-08-06 — TX.17 review amended C20 in place: acknowledged-dedupe applies only to event-kind findings (`unexplained_outgoing_transfer`); recurring `outgoing_scan_incomplete` re-observation after ack opens a new row + email and leaves the prior acknowledgement note/actor intact (open preferred over acknowledged for a shared entityId). Unscoped ack-dedupe had permanently silenced the "detector is dark" signal — TX.9 defect 2 at the alert layer.

@@ -285,6 +285,63 @@ export async function listReconciliationRuns(
   return body as PaginatedListResponse<ReconciliationRunResource>;
 }
 
+/** C20 — alert row including operator acknowledgement fields. */
+export interface AlertResource {
+  readonly id: string;
+  readonly alertType: string;
+  readonly severity: string;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly state: string;
+  readonly firstTriggeredAt: string;
+  readonly lastEvaluatedAt: string;
+  readonly lastSentAt: string | null;
+  readonly resolvedAt: string | null;
+  readonly acknowledgedAt: string | null;
+  readonly acknowledgedBy: string | null;
+  readonly acknowledgementNote: string | null;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+export async function listAlerts(
+  token: string,
+  query: {
+    readonly limit?: number;
+    readonly offset?: number;
+    readonly alertType?: string;
+    readonly state?: string;
+    readonly entityType?: string;
+  } = {},
+): Promise<PaginatedListResponse<AlertResource>> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+  if (query.alertType !== undefined) {
+    params.set('alertType', query.alertType);
+  }
+  if (query.state !== undefined) {
+    params.set('state', query.state);
+  }
+  if (query.entityType !== undefined) {
+    params.set('entityType', query.entityType);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(token, `/v1/alerts${suffix}`);
+  return body as PaginatedListResponse<AlertResource>;
+}
+
+export async function acknowledgeAlert(token: string, alertId: string, note: string): Promise<AlertResource> {
+  const body = await authorizedJson(token, `/v1/alerts/${alertId}/acknowledge`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+  return (body as { data: AlertResource }).data;
+}
+
 export interface ProjectResource {
   readonly id: string;
   readonly slug: string;

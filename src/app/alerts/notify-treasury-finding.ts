@@ -143,11 +143,14 @@ export function logCriticalReconciliationFindings(
 /**
  * Persist-then-send a critical finding alert (PRD P4-US3 companion / C18).
  *
- * **Event, not state:** an unexplained transfer never becomes explained, so
- * this alert type has **no auto-resolution**. Rows stay `open` after a
- * successful send; closing requires a future operator acknowledgement path
- * (or SQL). Re-observation of the same finding identity dedupes; a distinct
- * finding identity always opens a distinct alert.
+ * C18 routes two natures through `treasury_finding` (C20 amendment):
+ * - **Event** (`unexplained_outgoing_transfer`): immutable; acknowledgement
+ *   suppresses re-observation of the same hash forever.
+ * - **Condition** (`outgoing_scan_incomplete`): recurring; acknowledgement
+ *   must not permanently silence a later re-observation of the same
+ *   `(treasury, errorCode)` key — the detector is dark while the condition
+ *   persists. Re-observation opens a new row and leaves the acknowledged
+ *   record (note + actor) intact.
  */
 export async function notifyTreasuryFinding(
   dependencies: NotifyTreasuryFindingDependencies,
@@ -169,26 +172,24 @@ export async function notifyTreasuryFinding(
     );
   }
 
-  const existing = await dependencies.alerts.findOpenByEntity(
+  // Prefer open over acknowledged when both exist for the same entityId (C20).
+  const existing = await dependencies.alerts.findOpenOrAcknowledgedByEntity(
     TREASURY_FINDING_ENTITY_TYPE,
     entityId,
     TREASURY_FINDING_ALERT_TYPE,
   );
 
   if (existing === undefined) {
-    const opened = await dependencies.alerts.insertOpen({
-      alertType: TREASURY_FINDING_ALERT_TYPE,
-      severity: 'critical',
-      entityType: TREASURY_FINDING_ENTITY_TYPE,
-      entityId,
-      firstTriggeredAt: now,
-      lastEvaluatedAt: now,
-      pendingEmail: 'critical',
-      metadata,
-    });
+    return openAndSendFindingAlert(dependencies, input, entityId, now, metadata);
+  }
 
-    const email = await sendFindingEmail(dependencies, input, opened);
-    return { kind: 'opened', alertId: opened.id, email };
+  if (existing.state === 'acknowledged') {
+    // Event: ack sticks. Condition: open a new row; do not flip or overwrite
+    // the prior acknowledgement note (append-oriented incident record).
+    if (input.finding.kind === 'unexplained_outgoing_transfer') {
+      return { kind: 'deduped', alertId: existing.id };
+    }
+    return openAndSendFindingAlert(dependencies, input, entityId, now, metadata);
   }
 
   if (existing.pendingEmail !== undefined) {
@@ -208,6 +209,27 @@ export async function notifyTreasuryFinding(
     metadata,
   });
   return { kind: 'deduped', alertId: existing.id };
+}
+
+async function openAndSendFindingAlert(
+  dependencies: NotifyTreasuryFindingDependencies,
+  input: NotifyTreasuryFindingInput,
+  entityId: string,
+  now: Date,
+  metadata: Readonly<Record<string, unknown>>,
+): Promise<Extract<NotifyTreasuryFindingResult, { kind: 'opened' }>> {
+  const opened = await dependencies.alerts.insertOpen({
+    alertType: TREASURY_FINDING_ALERT_TYPE,
+    severity: 'critical',
+    entityType: TREASURY_FINDING_ENTITY_TYPE,
+    entityId,
+    firstTriggeredAt: now,
+    lastEvaluatedAt: now,
+    pendingEmail: 'critical',
+    metadata,
+  });
+  const email = await sendFindingEmail(dependencies, input, opened);
+  return { kind: 'opened', alertId: opened.id, email };
 }
 
 function findingMetadata(input: NotifyTreasuryFindingInput): Readonly<Record<string, unknown>> {

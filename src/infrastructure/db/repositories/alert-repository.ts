@@ -1,8 +1,12 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import type {
+  AlertLifecycleState,
+  AlertListFilters,
+  AlertListPage,
   AlertRepository,
   InsertOpenAlertInput,
   PendingAlertEmail,
+  StoredAlert,
   StoredOpenAlert,
 } from '../../../app/ports.js';
 import type { AlertSeverity } from '../../../domain/alerts/treasury-alert.js';
@@ -13,6 +17,8 @@ import { alerts, type AlertRow } from '../schema.js';
 const PENDING_EMAIL_KEY = 'pendingEmail';
 
 const PENDING_EMAIL_VALUES = new Set<PendingAlertEmail>(['warning', 'critical', 'reminder', 'recovery']);
+
+const DEDUPE_STATES = ['open', 'acknowledged'] as const;
 
 export function createAlertRepository(db: Database): AlertRepository {
   return {
@@ -31,6 +37,76 @@ export function createAlertRepository(db: Database): AlertRepository {
       });
     },
 
+    async findOpenOrAcknowledgedByEntity(entityType, entityId, alertType): Promise<StoredAlert | undefined> {
+      return withDatabaseErrors('alerts.findOpenOrAcknowledgedByEntity', async () => {
+        // When an open row and an acknowledged row share an entityId (condition
+        // recurrence after ack — C20), prefer open. firstTriggeredAt alone is
+        // not the preference rule; open-before-acknowledged is.
+        const row = await db.query.alerts.findFirst({
+          where: and(
+            eq(alerts.entityType, entityType),
+            eq(alerts.entityId, entityId),
+            eq(alerts.alertType, alertType),
+            inArray(alerts.state, [...DEDUPE_STATES]),
+          ),
+          orderBy: [sql`case when ${alerts.state} = 'open' then 0 else 1 end`, desc(alerts.firstTriggeredAt)],
+        });
+        return row === undefined ? undefined : toStoredAlert(row);
+      });
+    },
+
+    async findById(id): Promise<StoredAlert | undefined> {
+      return withDatabaseErrors('alerts.findById', async () => {
+        const row = await db.query.alerts.findFirst({
+          where: eq(alerts.id, id),
+        });
+        return row === undefined ? undefined : toStoredAlert(row);
+      });
+    },
+
+    async list(filters: AlertListFilters): Promise<AlertListPage> {
+      return withDatabaseErrors('alerts.list', async () => {
+        if (!Number.isInteger(filters.limit) || filters.limit < 1) {
+          throw new ChainBankError(
+            'INVALID_REQUEST',
+            `list limit must be a positive integer; got ${String(filters.limit)}`,
+          );
+        }
+        if (!Number.isInteger(filters.offset) || filters.offset < 0) {
+          throw new ChainBankError(
+            'INVALID_REQUEST',
+            `list offset must be a non-negative integer; got ${String(filters.offset)}`,
+          );
+        }
+
+        const conditions = [];
+        if (filters.alertType !== undefined) {
+          conditions.push(eq(alerts.alertType, filters.alertType));
+        }
+        if (filters.state !== undefined) {
+          conditions.push(eq(alerts.state, filters.state));
+        }
+        if (filters.entityType !== undefined) {
+          conditions.push(eq(alerts.entityType, filters.entityType));
+        }
+        const where = conditions.length === 0 ? undefined : and(...conditions);
+
+        const [totalRow] = await db.select({ value: count() }).from(alerts).where(where);
+        const rows = await db
+          .select()
+          .from(alerts)
+          .where(where)
+          .orderBy(desc(alerts.firstTriggeredAt))
+          .limit(filters.limit)
+          .offset(filters.offset);
+
+        return {
+          items: rows.map(toStoredAlert),
+          total: totalRow?.value ?? 0,
+        };
+      });
+    },
+
     async insertOpen(input: InsertOpenAlertInput): Promise<StoredOpenAlert> {
       return withDatabaseErrors('alerts.insertOpen', async () => {
         const [row] = await db
@@ -45,6 +121,9 @@ export function createAlertRepository(db: Database): AlertRepository {
             lastEvaluatedAt: input.lastEvaluatedAt,
             lastSentAt: null,
             resolvedAt: null,
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            acknowledgementNote: null,
             metadataJson: withPendingEmail(input.metadata, input.pendingEmail),
           })
           .returning();
@@ -172,6 +251,45 @@ export function createAlertRepository(db: Database): AlertRepository {
       });
     },
 
+    async recordOperatorAcknowledgement(input): Promise<StoredAlert> {
+      return withDatabaseErrors('alerts.recordOperatorAcknowledgement', async () => {
+        const existing = await db.query.alerts.findFirst({
+          where: and(eq(alerts.id, input.id), eq(alerts.state, 'open')),
+        });
+        if (existing === undefined) {
+          throw new ChainBankError(
+            'INVALID_STATUS_TRANSITION',
+            `Alert ${input.id} is not open and cannot be acknowledged`,
+            {
+              publicMessage: 'Only an open alert can be acknowledged.',
+              context: { alertId: input.id },
+            },
+          );
+        }
+
+        const [row] = await db
+          .update(alerts)
+          .set({
+            state: 'acknowledged',
+            acknowledgedAt: input.acknowledgedAt,
+            acknowledgedBy: input.acknowledgedBy,
+            acknowledgementNote: input.acknowledgementNote,
+            lastEvaluatedAt: input.lastEvaluatedAt,
+            metadataJson: clearPendingEmail(asMetadataRecord(existing.metadataJson)),
+          })
+          .where(and(eq(alerts.id, input.id), eq(alerts.state, 'open')))
+          .returning();
+
+        if (row === undefined) {
+          throw new ChainBankError(
+            'DATABASE_UNAVAILABLE',
+            'Alert operator-acknowledgement update returned no row',
+          );
+        }
+        return toStoredAlert(row);
+      });
+    },
+
     async resolve(input): Promise<StoredOpenAlert> {
       return withDatabaseErrors('alerts.resolve', async () => {
         const existing = await db.query.alerts.findFirst({
@@ -249,11 +367,39 @@ function toStoredOpenAlert(row: AlertRow): StoredOpenAlert {
   };
 }
 
+function toStoredAlert(row: AlertRow): StoredAlert {
+  const metadata = asMetadataRecord(row.metadataJson);
+  return {
+    id: row.id,
+    alertType: row.alertType,
+    severity: parseSeverity(row.severity),
+    entityType: row.entityType,
+    entityId: row.entityId,
+    state: parseLifecycleState(row.state),
+    firstTriggeredAt: row.firstTriggeredAt,
+    lastEvaluatedAt: row.lastEvaluatedAt,
+    lastSentAt: row.lastSentAt ?? undefined,
+    resolvedAt: row.resolvedAt ?? undefined,
+    acknowledgedAt: row.acknowledgedAt ?? undefined,
+    acknowledgedBy: row.acknowledgedBy ?? undefined,
+    acknowledgementNote: row.acknowledgementNote ?? undefined,
+    pendingEmail: readPendingEmail(metadata),
+    metadata,
+  };
+}
+
 function parseSeverity(value: string): AlertSeverity {
   if (value === 'warning' || value === 'critical') {
     return value;
   }
   throw new ChainBankError('INTERNAL_ERROR', `Alert row has unsupported severity: ${value}`);
+}
+
+function parseLifecycleState(value: string): AlertLifecycleState {
+  if (value === 'open' || value === 'resolved' || value === 'acknowledged') {
+    return value;
+  }
+  throw new ChainBankError('INTERNAL_ERROR', `Alert row has unsupported state: ${value}`);
 }
 
 function asMetadataRecord(value: unknown): Record<string, unknown> {

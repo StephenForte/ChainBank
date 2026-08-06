@@ -44,6 +44,7 @@ export type ErrorCode =
   | 'SCOPE_DENIED'
   | 'FUNDING_OPERATION_NOT_FOUND'
   | 'FUNDING_TRANSACTION_NOT_FOUND'
+  | 'ALERT_NOT_FOUND'
   // conflicts
   | 'PENDING_FUNDING_EXISTS'
   | 'FUNDING_BLOCKED_RESERVE'
@@ -90,6 +91,7 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   SCOPE_DENIED: 'authorization',
   FUNDING_OPERATION_NOT_FOUND: 'not_found',
   FUNDING_TRANSACTION_NOT_FOUND: 'not_found',
+  ALERT_NOT_FOUND: 'not_found',
   PENDING_FUNDING_EXISTS: 'conflict',
   FUNDING_BLOCKED_RESERVE: 'conflict',
   INVALID_STATUS_TRANSITION: 'conflict',

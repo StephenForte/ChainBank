@@ -359,6 +359,14 @@ export const alerts = pgTable('alerts', {
   lastEvaluatedAt: timestamp('last_evaluated_at', { withTimezone: true }).notNull(),
   lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  /**
+   * Operator acknowledgement of a treasury_finding (C20). Distinct from
+   * `resolved` — acknowledgement is a human attestation, not condition recovery.
+   * Nullable; no backfill (migration 0007).
+   */
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+  acknowledgedBy: text('acknowledged_by'),
+  acknowledgementNote: text('acknowledgement_note'),
   metadataJson: jsonb('metadata_json').notNull().default({}),
 });
 

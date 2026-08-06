@@ -20,6 +20,8 @@ describe('role permissions', () => {
     expect(roleHasPermission('operator', 'credential:read')).toBe(true);
     expect(roleHasPermission('operator', 'credential:write')).toBe(true);
     expect(roleHasPermission('operator', 'reconciliation:read')).toBe(true);
+    expect(roleHasPermission('operator', 'alert:read')).toBe(true);
+    expect(roleHasPermission('operator', 'alert:acknowledge')).toBe(true);
   });
 
   it('keeps read-only credentials from mutating actions', () => {
@@ -27,6 +29,8 @@ describe('role permissions', () => {
     expect(roleHasPermission('read-only', 'wallet:read')).toBe(true);
     expect(roleHasPermission('read-only', 'project:read')).toBe(true);
     expect(roleHasPermission('read-only', 'reconciliation:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'alert:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'alert:acknowledge')).toBe(false);
     expect(roleHasPermission('read-only', 'treasury:check')).toBe(false);
     expect(roleHasPermission('read-only', 'treasury:write')).toBe(false);
     expect(roleHasPermission('read-only', 'email:test')).toBe(false);
@@ -55,6 +59,8 @@ describe('role permissions', () => {
       'credential:write',
       'reconciliation:run',
       'reconciliation:read',
+      'alert:read',
+      'alert:acknowledge',
     ];
     for (const permission of permissions) {
       expect(roleHasPermission('project-service', permission)).toBe(false);
@@ -75,6 +81,8 @@ describe('role permissions', () => {
       'credential:read',
       'credential:write',
       'reconciliation:read',
+      'alert:read',
+      'alert:acknowledge',
     ];
     for (const permission of denied) {
       expect(roleHasPermission('cron-reconciler', permission)).toBe(false);
@@ -94,6 +102,29 @@ describe('role permissions', () => {
     const denied: readonly Role[] = ['project-service', 'cron-reconciler', 'cron-treasury-monitor'];
     for (const role of denied) {
       expect(roleHasPermission(role, 'reconciliation:read')).toBe(false);
+    }
+  });
+
+  it('grants alert:read to operator and read-only only (C20)', () => {
+    expect(roleHasPermission('operator', 'alert:read')).toBe(true);
+    expect(roleHasPermission('read-only', 'alert:read')).toBe(true);
+    const denied: readonly Role[] = ['project-service', 'cron-reconciler', 'cron-treasury-monitor'];
+    for (const role of denied) {
+      expect(roleHasPermission(role, 'alert:read')).toBe(false);
+    }
+  });
+
+  it('grants alert:acknowledge to operator only — read-only is denied (C20)', () => {
+    expect(roleHasPermission('operator', 'alert:acknowledge')).toBe(true);
+    expect(roleHasPermission('read-only', 'alert:acknowledge')).toBe(false);
+    const denied: readonly Role[] = [
+      'read-only',
+      'project-service',
+      'cron-reconciler',
+      'cron-treasury-monitor',
+    ];
+    for (const role of denied) {
+      expect(roleHasPermission(role, 'alert:acknowledge')).toBe(false);
     }
   });
 

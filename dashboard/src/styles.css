@@ -478,6 +478,62 @@ button.secondary:active:not(:disabled) {
   border: 1px dotted var(--unknown-strong);
 }
 
+.finding-alert-banner {
+  margin-bottom: var(--s-md);
+  padding: var(--s-md);
+  background: var(--bad-soft);
+  border-left: 4px solid var(--bad-strong);
+  box-shadow: inset 0 0 0 1px rgba(138, 31, 28, 0.12);
+}
+
+.finding-alert-banner-title {
+  margin: 0 0 var(--s-xs);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--bad-strong);
+}
+
+.acknowledged-findings {
+  margin-bottom: var(--s-md);
+}
+
+.finding-acknowledged {
+  background: var(--canvas);
+  border: 1px solid var(--hairline-strong);
+  border-left: 4px solid var(--ok-strong);
+}
+
+.ack-note-label {
+  display: block;
+  margin: var(--s-sm) 0 var(--s-xs);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--slate);
+}
+
+.ack-note {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--s-xs);
+  padding: var(--s-xs) var(--s-sm);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.ack-note-display {
+  margin: var(--s-xs) 0 0;
+  padding: var(--s-xs) var(--s-sm);
+  background: var(--surface);
+  border-left: 2px solid var(--hairline-strong);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .treasury-list {
   display: grid;
   gap: var(--s-md);
