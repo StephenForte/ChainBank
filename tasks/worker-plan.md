@@ -12,11 +12,13 @@ the report handed back on completion.
 ## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
 
 `main` is at **498 unit tests plus 118 integration tests, 0 skipped** (both counts re-run
-by the planner against `origin/main` on 2026-08-06), latest migration `0008`, contracts
-through **C21**.
+by the planner against `origin/main` on 2026-08-06), latest migration `0008` (next free
+`0009`), contracts through **C22** (next free **C23**).
 
 **No open PRs. Every planned Phase 1–4 task is merged, plus the full post-exit operability
-wave TX.11–TX.21. No known open defects.**
+wave TX.11–TX.24.** No known open _defects_ — but one known open **gap**: `dashboard/` has
+zero automated tests, so every dashboard invariant is verified only by hand. See the task
+tree entry at the end.
 
 > ⚠️ **Nothing merged on 2026-08-06 was verified by CI.** GitHub Actions did not dispatch a
 > hosted runner all day — jobs queued and were cancelled, and the two runs that report
@@ -140,6 +142,9 @@ TX.15, threshold changes, and any mainnet work are new scope the operator initia
 | TX.20 demote acknowledged criticals from always-visible block (C17)    | ✅ done | PR #82 (planner rebase kept #84's guard)                  |
 | TX.21 atomic operator mutation + audit (**C21**)                       | ✅ done | PR #85 — closes the #79 bot finding                       |
 | TX.22 acknowledge any finding + compact critical card                  | ✅ done | PR #87                                                    |
+| TX.23 per-panel error boundaries (**C22**)                             | ✅ done | PR #90                                                    |
+| TX.24 split App.tsx into per-panel components (pure refactor)          | ✅ done | PR #91                                                    |
+| dashboard has no automated tests                                       | 🔴 open | not dispatched — see task tree                            |
 | condition-key ack silently created a phantom row                       | ✅ done | PR #88 — reported after TX.22, confirmed and fixed        |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
@@ -1417,6 +1422,65 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
   Acknowledged findings also moved behind a persisted `+`/`−`, defaulting to collapsed with
   the count in the heading. Unacknowledged criticals remain outside every collapse (C17).
+
+- **TX.23** ✅ 🟢 Per-panel React error boundaries — DONE (PR #90, **C22**)
+  There was no error boundary anywhere in `dashboard/`, so any render throw unmounted the whole
+  console — measured on PR #84, where one malformed `valueWei` produced `panelsRendered: 0` and
+  an empty `<body>`. That fix closed one route, not the class.
+
+  Nine per-panel boundaries plus a root backstop. Severity is deliberate, not uniform: **alarm**
+  for Reconciliation and Treasuries, **elevated** for Session, Service readiness and Managed
+  wallets, **quiet** for the rest. The Reconciliation fallback reads _"Unacknowledged critical
+  findings may exist and are not being shown. This is a console defect, not a quiet empty
+  state."_ — the prompt's central trap was that a calm "something went wrong" there would be a
+  regression dressed as robustness.
+
+  **`PanelBody` is load-bearing, and the reviewer confirmed it independently.** Panel JSX
+  evaluates during `App`'s render, so a wrapping boundary cannot catch it; the render-prop
+  defers evaluation into the boundary's subtree. Measured, same throw, two placements:
+
+  | Placement                                | Panels rendered                      |
+  | ---------------------------------------- | ------------------------------------ |
+  | inside `PanelBody`                       | **9** — isolates, root untouched     |
+  | inside the boundary, outside `PanelBody` | **0** — escapes to the root backstop |
+
+  Without the deferral, per-panel boundaries are a **placebo**: they review as correct and catch
+  nothing. That is the single most valuable fact in this entry.
+
+  **Cleanup miss:** the worker left `dashboard/scripts/tx23-boundary-probe.mjs` untracked in the
+  shared checkout. Not in the PR, but it broke `format:check` and `lint` for anyone running the
+  gate there — which is how the reviewer found it. Removed.
+
+- **TX.24** ✅ 🟢 Split `App.tsx` into per-panel components — DONE (PR #91, pure refactor)
+  2926 lines, 71 `useState`, nine panels in one component. Split into `dashboard/src/panels/*` plus
+  `dashboard-shared.ts`. No behaviour change, no contract change; **`PanelBody` kept**.
+
+  **All nine panels are invoked as components** (`<ReconciliationPanel …/>`), never as inline
+  function calls — the failure mode that would have silently reverted C22 per panel. C22
+  isolation re-verified after the split: 9 panels rendered, 1 failure, root backstop untouched.
+
+  Verified by fingerprint rather than by reading: seven of nine invariant symbols identical, and
+  both deltas were disclosed by the worker and confirmed benign by the reviewer —
+  `openFindingAlertsComplete` 4→7 (type + destructure + prop pass; the three fail-closed logic
+  uses unchanged) and `BALANCE_AUTO_LOAD_MAX` 4→5 (import after moving the const; guard still
+  `<= 25`, inclusive). All three `localStorage` keys byte-identical. PR #88's
+  `findingAlertEntityId` / `findingAlertMatchKey` split and PR #84's `formatFindingWei` sites
+  both intact — the two invariants most easily destroyed by a move, because both look like
+  redundancy.
+
+  **Residual risk, stated plainly:** the browser matrix was not exercised by either worker or
+  reviewer on this branch — alerts-failure and truncated-page demotion, the 25/26 balance
+  boundary, `unavailable` rendering, collapse persistence, and the acknowledge round-trip. What
+  exists is static evidence the implementing code is present and unchanged. With **zero
+  automated tests for `dashboard/`**, that is weaker than running them, and it is the strongest
+  argument for the dashboard-test task below.
+
+- **OPEN — dashboard has no automated tests.** 🔴 Not dispatched.
+  `dashboard/` has zero test files. Every invariant from TX.13, TX.16, TX.18, TX.20, TX.22, TX.23
+  and TX.24 is held in place by the code alone, and each has been verified only by hand in a
+  browser. TX.24 made the cost concrete: a 2445-line refactor whose behavioural verification had
+  to be argued from grep counts. A component harness would let the fail-closed demotion rules,
+  the 25/26 boundary and the case-preservation rule be asserted rather than re-observed.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
