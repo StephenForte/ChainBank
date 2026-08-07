@@ -413,9 +413,11 @@ describe.skipIf(!integrationEnabled)('GET/POST /v1/alerts (integration, C20)', (
     expect(ackBody.data.acknowledgementNote).toBe('Confirmed operator hand-send to HARVEST on 2026-08-05.');
     expect(ackBody.data.acknowledgedBy).toBe(operatorCredentialId);
 
+    // audit_events is not truncated between tests — scope to this alert id.
     const audit = await handle.db.query.auditEvents.findFirst({
-      where: eq(auditEvents.action, 'treasury.alert.acknowledged'),
+      where: eq(auditEvents.entityId, alertId),
     });
+    expect(audit?.action).toBe('treasury.alert.acknowledged');
     expect(audit?.actorId).toBe(operatorCredentialId);
     expect(audit?.entityId).toBe(alertId);
     expect(audit?.metadata).toMatchObject({
@@ -638,5 +640,181 @@ describe.skipIf(!integrationEnabled)('GET/POST /v1/alerts (integration, C20)', (
       [TREASURY_FINDING_ENTITY_TYPE, entityId, TREASURY_FINDING_ALERT_TYPE],
     );
     expect(rowCount.rows[0]?.count).toBe('2');
+  });
+
+  it('acknowledges a finding with no alert row (persist-only, audits, no email path)', async () => {
+    const hash = `0x${'ef'.repeat(32)}`;
+
+    const beforeCount = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alerts WHERE entity_id = $1`,
+      [hash],
+    );
+    expect(beforeCount.rows[0]?.count).toBe('0');
+
+    const readOnlyDenied = await app.inject({
+      method: 'POST',
+      url: '/v1/alerts/acknowledge-finding',
+      headers: { authorization: `Bearer ${readOnlyToken}`, 'content-type': 'application/json' },
+      payload: { entityId: hash, note: 'read-only must not acknowledge' },
+    });
+    expect(readOnlyDenied.statusCode).toBe(403);
+
+    const emptyNote = await app.inject({
+      method: 'POST',
+      url: '/v1/alerts/acknowledge-finding',
+      headers: { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' },
+      payload: { entityId: hash, note: '   ' },
+    });
+    expect([400, 422]).toContain(emptyNote.statusCode);
+
+    const ack = await app.inject({
+      method: 'POST',
+      url: '/v1/alerts/acknowledge-finding',
+      headers: { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' },
+      payload: {
+        entityId: hash,
+        note: 'Historical finding from before TX.15 — confirmed operator hand-send.',
+        metadata: {
+          findingKind: 'unexplained_outgoing_transfer',
+          transactionHash: hash,
+          valueWei: '1000000000000000000',
+        },
+      },
+    });
+    expect(ack.statusCode).toBe(200);
+    const ackBody = ack.json<{
+      data: {
+        state: string;
+        entityId: string;
+        acknowledgementNote: string;
+        acknowledgedBy: string;
+      };
+    }>();
+    expect(ackBody.data.state).toBe('acknowledged');
+    expect(ackBody.data.entityId).toBe(hash);
+    expect(ackBody.data.acknowledgementNote).toBe(
+      'Historical finding from before TX.15 — confirmed operator hand-send.',
+    );
+    expect(ackBody.data.acknowledgedBy).toBe(operatorCredentialId);
+
+    const rowCount = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alerts
+       WHERE entity_type = $1 AND entity_id = $2 AND alert_type = $3`,
+      [TREASURY_FINDING_ENTITY_TYPE, hash, TREASURY_FINDING_ALERT_TYPE],
+    );
+    expect(rowCount.rows[0]?.count).toBe('1');
+
+    const row = await handle.db.query.alerts.findFirst({
+      where: eq(alerts.entityId, hash),
+    });
+    expect(row?.state).toBe('acknowledged');
+    // pendingEmail must not survive acknowledgement (would train ignore-the-inbox).
+    const metadata = row?.metadataJson;
+    expect(
+      metadata !== null &&
+        metadata !== undefined &&
+        typeof metadata === 'object' &&
+        !Array.isArray(metadata) &&
+        'pendingEmail' in metadata,
+    ).toBe(false);
+
+    const auditRows = await handle.pool.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM audit_events
+       WHERE action = 'treasury.alert.acknowledged'
+         AND metadata->>'findingEntityId' = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [hash],
+    );
+    expect(auditRows.rows[0]?.metadata).toMatchObject({
+      findingEntityId: hash,
+      acknowledgementPath: 'finding-identity',
+    });
+
+    // No email audit for this finding — persist-only, distinct from
+    // notifyTreasuryFinding's persist-then-send.
+    const emailAudits = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM audit_events
+       WHERE action IN ('treasury.alert.email.sent', 'treasury.alert.email.failed')
+         AND (
+           metadata->>'findingEntityId' = $1
+           OR metadata->>'alertId' = $2
+         )`,
+      [hash, row?.id ?? ''],
+    );
+    expect(emailAudits.rows[0]?.count).toBe('0');
+  });
+
+  it('finding-identity ack of an existing open alert does not create a second row', async () => {
+    const hash = `0x${'ab'.repeat(32)}`;
+    const alertId = await seedAlert({
+      alertType: TREASURY_FINDING_ALERT_TYPE,
+      entityType: TREASURY_FINDING_ENTITY_TYPE,
+      entityId: hash,
+      state: 'open',
+      firstTriggeredAt: new Date('2026-08-06T08:13:00.000Z'),
+      lastSentAt: new Date('2026-08-06T08:13:01.000Z'),
+      metadata: { transactionHash: hash, pendingEmail: 'critical' },
+    });
+
+    const ack = await app.inject({
+      method: 'POST',
+      url: '/v1/alerts/acknowledge-finding',
+      headers: { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' },
+      payload: { entityId: hash, note: 'Acknowledge the existing open row.' },
+    });
+    expect(ack.statusCode).toBe(200);
+    const ackBody = ack.json<{ data: { id: string; state: string } }>();
+    expect(ackBody.data.id).toBe(alertId);
+    expect(ackBody.data.state).toBe('acknowledged');
+
+    const rowCount = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alerts
+       WHERE entity_type = $1 AND entity_id = $2 AND alert_type = $3`,
+      [TREASURY_FINDING_ENTITY_TYPE, hash, TREASURY_FINDING_ALERT_TYPE],
+    );
+    expect(rowCount.rows[0]?.count).toBe('1');
+  });
+
+  it('finding-identity path rolls back a created open row when audit insert fails (C21)', async () => {
+    const hash = `0x${'11'.repeat(32)}`;
+    const { acknowledgeFinding } = await import('../../src/app/alerts/acknowledge-finding.js');
+
+    // Real Postgres transaction + failing audit inside the same UoW — proves
+    // the created open row cannot survive without its audit entry.
+    await expect(
+      acknowledgeFinding(
+        {
+          operatorMutations: {
+            async run(work) {
+              return createOperatorMutationTransaction(handle.db).run(async (uow) =>
+                work({
+                  ...uow,
+                  auditEvents: {
+                    record: () => Promise.reject(new Error('forced audit failure')),
+                  },
+                }),
+              );
+            },
+          },
+          clock: createFixedClock(new Date('2026-08-06T12:00:00.000Z')),
+        },
+        {
+          role: 'operator',
+          entityId: hash,
+          note: 'must roll back',
+          operationId: `op-${randomUUID()}`,
+          actorId: operatorCredentialId,
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toThrow(/operator\.mutationTransaction|forced audit failure/);
+
+    const rowCount = await handle.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alerts
+       WHERE entity_type = $1 AND entity_id = $2 AND alert_type = $3`,
+      [TREASURY_FINDING_ENTITY_TYPE, hash, TREASURY_FINDING_ALERT_TYPE],
+    );
+    expect(rowCount.rows[0]?.count).toBe('0');
   });
 });

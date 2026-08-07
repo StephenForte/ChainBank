@@ -342,6 +342,29 @@ export async function acknowledgeAlert(token: string, alertId: string, note: str
   return (body as { data: AlertResource }).data;
 }
 
+/**
+ * C20 finding-identity acknowledgement — works whether or not an alert row
+ * already exists (persist-only open + ack when creating; no email).
+ */
+export async function acknowledgeFinding(
+  token: string,
+  input: {
+    readonly entityId: string;
+    readonly note: string;
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  },
+): Promise<AlertResource> {
+  const body = await authorizedJson(token, '/v1/alerts/acknowledge-finding', {
+    method: 'POST',
+    body: JSON.stringify({
+      entityId: input.entityId,
+      note: input.note,
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+    }),
+  });
+  return (body as { data: AlertResource }).data;
+}
+
 export interface ProjectResource {
   readonly id: string;
   readonly slug: string;

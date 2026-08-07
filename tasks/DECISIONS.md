@@ -1010,22 +1010,28 @@ Local design choices (TX.13, 2026-08-02):
   policy / unavailable. **Never render an unreadable balance as `0 ETH`** —
   `outcome: 'unavailable'` stays explicit (unchanged from TX.13; more
   load-bearing under auto-load rate limits).
-- **Reconciliation panel (TX.18 / TX.20):** always-visible summary + collapsible
-  warnings/history; localStorage persists detail expand only and never gates a
-  critical. **Invariant (amended TX.20):** never hide an **unacknowledged**
-  critical finding behind collapse. Acknowledgement is the deliberate C20 human
-  act (required note, no un-acknowledge); the dashboard joins run findings to
-  `GET /v1/alerts` client-side. Fail closed on every ambiguous case: no matching
-  alert row ⇒ unacknowledged; alerts fetch loading/error ⇒ every critical stays
-  always-visible; truncated open-alerts page (`total` > fetched) ⇒ never demote
-  (absence of an open row cannot be proven — C20 condition recurrence can leave
-  open + acknowledged on the same entityId); match entityIds case-insensitively
-  (tx hash and `outgoing_scan_incomplete:<treasuryId>:<errorCode>`); open
-  preferred over acknowledged for a shared entityId. Acknowledged criticals
-  remain in the collapsible detail with note/actor — never removed. Unclassified
-  severities stay always-visible (no alert row ⇒ unacknowledged). Summary
-  distinguishes unacknowledged from acknowledged counts so it cannot claim
-  "1 critical finding" while the always-visible block is empty.
+- **Reconciliation panel (TX.18 / TX.20 / TX.22):** always-visible summary +
+  collapsible warnings/history; localStorage persists detail expand only and
+  never gates a critical. **Invariant (amended TX.20):** never hide an
+  **unacknowledged** critical finding behind collapse. Acknowledgement is the
+  deliberate C20 human act (required note, no un-acknowledge); the dashboard
+  joins run findings to `GET /v1/alerts` client-side. Fail closed on every
+  ambiguous case: no matching alert row ⇒ unacknowledged; alerts fetch
+  loading/error ⇒ every critical stays always-visible; truncated open-alerts
+  page (`total` > fetched) ⇒ never demote (absence of an open row cannot be
+  proven — C20 condition recurrence can leave open + acknowledged on the same
+  entityId); match entityIds case-insensitively (tx hash and
+  `outgoing_scan_incomplete:<treasuryId>:<errorCode>`); open preferred over
+  acknowledged for a shared entityId. Acknowledged criticals remain in the
+  collapsible detail with note/actor — never removed. Unclassified severities
+  stay always-visible (no alert row ⇒ unacknowledged). Summary distinguishes
+  unacknowledged from acknowledged counts so it cannot claim "1 critical
+  finding" while the always-visible block is empty. **Compact presentation
+  (TX.22):** an unacknowledged critical renders as one dense always-visible row
+  (severity chip, kind, shortened transaction/key, value, Acknowledge control)
+  that expands on demand to the full field grid. Compact reduces height, not
+  presence — the collapsed row remains visible and counted; requiring a click
+  merely to notice an unacknowledged critical is forbidden.
 
 ### C18 — Critical reconciliation finding alert (owner: TX.15)
 
@@ -1147,6 +1153,7 @@ Local design choices (TX.16, 2026-08-06):
 // GET /v1/alerts?limit&offset&alertType&state&entityType
 // Response: { data: AlertResource[], pagination: { limit, offset, total } }
 // POST /v1/alerts/:id/acknowledge  body: { note: string }  // required, non-empty after trim, max 2000
+// POST /v1/alerts/acknowledge-finding  body: { entityId, note, metadata? }  // TX.22
 // State transition: open → acknowledged (never resolved)
 
 // Application ports (src/app/ports.ts) — AlertRepository additive
@@ -1158,9 +1165,11 @@ recordOperatorAcknowledgement(input): Promise<StoredAlert>; // ≠ acknowledgeSe
 // Application use cases
 listAlerts(deps, input): Promise<AlertListPage>;
 acknowledgeAlert(deps, input): Promise<StoredAlert>;
+acknowledgeFinding(deps, input): Promise<StoredAlert>; // TX.22 finding-identity path
 ```
 
-Local design choices (TX.17, 2026-08-06; amended same day after review probe):
+Local design choices (TX.17, 2026-08-06; amended same day after review probe;
+amended TX.22 for finding-identity acknowledgement):
 
 - **`acknowledged` ≠ `resolved`.** C10/C15 `resolved` means the underlying
   condition recovered. An unexplained transfer never recovers; collapsing a
@@ -1215,6 +1224,20 @@ Local design choices (TX.17, 2026-08-06; amended same day after review probe):
   miss-computed `open` cannot skip an escalate the winner's severity still
   requires. Leaving the race unhandled would turn a duplicate email into a
   lost critical alert (C18).
+- **Finding-identity acknowledgement (TX.22).** Acknowledgement is keyed on the
+  C18 entity id, not only on an alert UUID. `POST /v1/alerts/acknowledge-finding`
+  accepts `{ entityId, note, metadata? }`. When an open row already exists,
+  acknowledges that row (same `open → acknowledged` transition; no second
+  insert). When no row exists — historical findings that predate TX.15, or a
+  failed alert insert — creates an `open` row and acknowledges it in one
+  `OperatorMutationTransaction` (C21) so a partial failure cannot leave a bare
+  open alert. **Persist-only:** creating the row must not send email (distinct
+  from `notifyTreasuryFinding`'s persist-then-send). Refuses when the only
+  match is already `acknowledged`. Same authz, required note, no
+  un-acknowledge, and findings_json immutability as the alert-id path.
+  Dashboard always-visible criticals expose Acknowledge via this path so a
+  finding without an alert row is not permanently stuck (TX.20 fail-closed
+  demotion otherwise has no control).
 
 ### C21 — Atomic operator mutation + audit (owner: TX.21)
 
@@ -1253,12 +1276,12 @@ Local design choices (TX.21, 2026-08-06):
   a transaction, casts the Drizzle tx client to `Database`, and hands the
   caller transaction-bound repositories. C21 does the same without changing
   repository implementations.
-- **In scope (database-only):** `acknowledgeAlert`, `mutateCredential`,
-  `setTreasuryEnabled`, `setWalletPolicy`, `registerWallet`, `updateWallet`,
-  `createProject`, `createEnvironment`, `setProjectEnabled`,
-  `setEnvironmentEnabled`, `checkTreasuryBalance`. RPC _reads_ in
-  `checkTreasuryBalance` stay outside the transaction; observation / summary
-  writes and the audit entry share it.
+- **In scope (database-only):** `acknowledgeAlert`, `acknowledgeFinding`
+  (TX.22), `mutateCredential`, `setTreasuryEnabled`, `setWalletPolicy`,
+  `registerWallet`, `updateWallet`, `createProject`, `createEnvironment`,
+  `setProjectEnabled`, `setEnvironmentEnabled`, `checkTreasuryBalance`. RPC
+  _reads_ in `checkTreasuryBalance` stay outside the transaction; observation /
+  summary writes and the audit entry share it.
 - **Out of scope (persist-then-send / external side effect):**
   `notifyTreasuryFinding`, `notifyTreasuryReserveRefusal` /
   `resolveTreasuryReserveAlert`, `maybeNotifyReconciliationFailure`,
@@ -1347,3 +1370,4 @@ Local design choices (TX.21, 2026-08-06):
 - 2026-08-06 — TX.19 amended C20 in place: partial unique index on `alerts (entity_type, entity_id, alert_type) WHERE state = 'open'` (migration `0008`); all `insertOpen` callers adopt on `23505` rather than throwing (lost-alert trap). Full uniqueness rejected — it breaks C20 condition recurrence and C10/C15 reopen-after-resolve.
 - 2026-08-06 — TX.20 amended C17 reconciliation always-visible clause in place (no new number): demote acknowledged critical findings from the always-visible block into the collapsible detail after a C20 acknowledgement; fail closed when alerts are unresolved or no alert row matches; summary distinguishes unacknowledged vs acknowledged. Interacts with C20's standing banner (unchanged) — the panel reads the same open/acknowledged alert lists client-side.
 - 2026-08-06 — TX.21 published C21: `OperatorMutationTransaction` / `OperatorMutationUnitOfWork` so database-only operator mutations and their audit entries commit atomically (generalizes `createFundingDispatchLock`); persist-then-send alert/funding paths remain out of scope.
+- 2026-08-06 — TX.22 amended C20 (finding-identity acknowledgement) and C17 (compact always-visible critical) in place: `POST /v1/alerts/acknowledge-finding` creates persist-only open+ack when no alert row exists (C21 atomic, no email), acknowledges an existing open row rather than inserting a second (TX.19 `23505` adopt), and the dashboard always-visible critical is one dense expandable row with Acknowledge — reducing height, not presence.
