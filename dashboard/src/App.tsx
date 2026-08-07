@@ -29,6 +29,7 @@ import {
   type ReconciliationRunResource,
   type TreasuryResource,
 } from './api';
+import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 
 const TOKEN_STORAGE_KEY = 'chainbank.operatorToken';
 /** Collapsed/expanded for Reconciliation warnings + run history only (TX.18). */
@@ -452,11 +453,10 @@ function formatWeiAsEther(weiDecimal: string): string {
  * metadata — where the value is passed through unvalidated by design.
  *
  * `formatWeiAsEther` calls `BigInt()`, which throws on anything that is not a
- * decimal integer. There is no error boundary in this dashboard, so a throw
- * during render unmounts the whole console, not just the panel: a single
- * malformed `valueWei` on one critical finding blanks the operator's only
- * non-SQL view of treasury state. Verified in a browser — `valueWei: "1.5"`
- * produced zero rendered panels.
+ * decimal integer. Panel boundaries (C22) are the last line of defence; this
+ * helper stays fail-permissive so hostile shapes degrade to labelled text
+ * instead of a permanent "unavailable" box. Verified pre-boundary: a single
+ * malformed `valueWei` (`"1.5"`) produced zero rendered panels.
  *
  * So: never throw, and never invent a number. An unparseable amount is shown
  * verbatim and labelled, the same way TX.18 treats a severity it cannot
@@ -1310,670 +1310,741 @@ export function App() {
       </header>
 
       <main className="page-body">
-        <section className="panel">
-          <h2 className="section-title">Session</h2>
-          <form className="token-form" onSubmit={onSaveToken}>
-            <label htmlFor="token">Operator bearer token</label>
-            <input
-              id="token"
-              name="token"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="cb_…"
-              value={tokenInput}
-              onChange={(event) => setTokenInput(event.target.value)}
-            />
-            <div className="row">
-              <button type="submit" disabled={sessionBusy}>
-                Save for this tab
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={sessionBusy}
-                onClick={() => {
-                  refreshAll(token);
-                }}
-              >
-                Refresh all
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={sessionBusy || token === ''}
-                onClick={() => void onTestEmail()}
-              >
-                Send test email
-              </button>
-            </div>
-            <p className="hint">Stored in sessionStorage only. Never put a private key here.</p>
-            {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
-          </form>
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Service readiness</h2>
-            <button type="button" className="secondary" onClick={() => void loadReadiness()}>
-              Reload
-            </button>
-          </div>
-          {readinessState === 'loading' || readinessState === 'idle' ? (
-            <p className="muted">Loading…</p>
-          ) : null}
-          {readinessState === 'error' ? <p className="error-inline">{readinessError}</p> : null}
-          {readinessState === 'ready' && readiness !== undefined ? (
-            <>
-              <p>
-                Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
-                <span className="muted"> · checked {new Date(readiness.checkedAt).toLocaleString()}</span>
-              </p>
-              <ul className="plain">
-                {readiness.components.map((component) => (
-                  <li key={component.name}>
-                    <span className={statusClass(component.status)}>{component.status}</span> {component.name}
-                    {component.detail !== null ? <span className="muted"> — {component.detail}</span> : null}
-                  </li>
-                ))}
-              </ul>
-              <h3>Heartbeats</h3>
-              {readiness.heartbeats.length === 0 ? (
-                <p className="muted">No heartbeats recorded yet.</p>
-              ) : (
-                <ul className="plain">
-                  {readiness.heartbeats.map((heartbeat) => (
-                    <li key={heartbeat.serviceRole}>
-                      <code>{heartbeat.serviceRole}</code>
-                      <span className="muted"> · {new Date(heartbeat.lastSeenAt).toLocaleString()}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          ) : null}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Treasuries</h2>
-            <button type="button" className="secondary" onClick={() => void loadTreasuries(token)}>
-              Reload
-            </button>
-          </div>
-          {token === '' ? <p className="muted">Paste an operator token to load treasuries.</p> : null}
-          {token !== '' && treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
-          {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
-          {treasuriesState === 'empty' ? <p className="muted">No enabled treasuries returned.</p> : null}
-          {treasuriesState === 'ready' ? (
-            <div className="treasury-list">
-              {treasuries.map((treasury) => (
-                <article key={treasury.id} className="treasury">
-                  <div className="treasury-head">
-                    <span className={statusClass(treasury.status)}>{treasury.status}</span>
-                    <h3>{treasury.chain.displayName}</h3>
+        <PanelErrorBoundary panelName="Session" severity="elevated">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <h2 className="section-title">Session</h2>
+                <form className="token-form" onSubmit={onSaveToken}>
+                  <label htmlFor="token">Operator bearer token</label>
+                  <input
+                    id="token"
+                    name="token"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="cb_…"
+                    value={tokenInput}
+                    onChange={(event) => setTokenInput(event.target.value)}
+                  />
+                  <div className="row">
+                    <button type="submit" disabled={sessionBusy}>
+                      Save for this tab
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={sessionBusy}
+                      onClick={() => {
+                        refreshAll(token);
+                      }}
+                    >
+                      Refresh all
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={sessionBusy || token === ''}
+                      onClick={() => void onTestEmail()}
+                    >
+                      Send test email
+                    </button>
                   </div>
-                  <p className="mono">
-                    <a href={treasury.explorerUrl} target="_blank" rel="noreferrer">
-                      {treasury.address}
-                    </a>
-                  </p>
-                  <dl className="facts">
-                    <div>
-                      <dt>Balance</dt>
-                      <dd className="mono">
-                        {treasury.balance.ether === null
-                          ? 'unavailable'
-                          : `${treasury.balance.ether} ${treasury.chain.nativeSymbol}`}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Spendable</dt>
-                      <dd className="mono">
-                        {treasury.spendable.ether === null
-                          ? '—'
-                          : `${treasury.spendable.ether} ${treasury.chain.nativeSymbol}`}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Last checked</dt>
-                      <dd>
-                        {treasury.lastCheckedAt === null
-                          ? 'never'
-                          : new Date(treasury.lastCheckedAt).toLocaleString()}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Thresholds</dt>
-                      <dd className="mono">
-                        warn {treasury.thresholds.warningEther} · crit {treasury.thresholds.criticalEther} ·
-                        reserve {treasury.thresholds.minimumReserveEther}
-                      </dd>
-                    </div>
-                  </dl>
-                  {treasury.lastCheckErrorCode !== null ? (
-                    <p className="error-inline">Last error: {treasury.lastCheckErrorCode}</p>
-                  ) : null}
+                  <p className="hint">Stored in sessionStorage only. Never put a private key here.</p>
+                  {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
+                </form>
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Service readiness" severity="elevated">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Service readiness</h2>
+                  <button type="button" className="secondary" onClick={() => void loadReadiness()}>
+                    Reload
+                  </button>
+                </div>
+                {readinessState === 'loading' || readinessState === 'idle' ? (
+                  <p className="muted">Loading…</p>
+                ) : null}
+                {readinessState === 'error' ? <p className="error-inline">{readinessError}</p> : null}
+                {readinessState === 'ready' && readiness !== undefined ? (
+                  <>
+                    <p>
+                      Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
+                      <span className="muted">
+                        {' '}
+                        · checked {new Date(readiness.checkedAt).toLocaleString()}
+                      </span>
+                    </p>
+                    <ul className="plain">
+                      {readiness.components.map((component) => (
+                        <li key={component.name}>
+                          <span className={statusClass(component.status)}>{component.status}</span>{' '}
+                          {component.name}
+                          {component.detail !== null ? (
+                            <span className="muted"> — {component.detail}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <h3>Heartbeats</h3>
+                    {readiness.heartbeats.length === 0 ? (
+                      <p className="muted">No heartbeats recorded yet.</p>
+                    ) : (
+                      <ul className="plain">
+                        {readiness.heartbeats.map((heartbeat) => (
+                          <li key={heartbeat.serviceRole}>
+                            <code>{heartbeat.serviceRole}</code>
+                            <span className="muted">
+                              {' '}
+                              · {new Date(heartbeat.lastSeenAt).toLocaleString()}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Treasuries" severity="alarm">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Treasuries</h2>
+                  <button type="button" className="secondary" onClick={() => void loadTreasuries(token)}>
+                    Reload
+                  </button>
+                </div>
+                {token === '' ? <p className="muted">Paste an operator token to load treasuries.</p> : null}
+                {token !== '' && treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
+                {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
+                {treasuriesState === 'empty' ? (
+                  <p className="muted">No enabled treasuries returned.</p>
+                ) : null}
+                {treasuriesState === 'ready' ? (
+                  <div className="treasury-list">
+                    {treasuries.map((treasury) => (
+                      <article key={treasury.id} className="treasury">
+                        <div className="treasury-head">
+                          <span className={statusClass(treasury.status)}>{treasury.status}</span>
+                          <h3>{treasury.chain.displayName}</h3>
+                        </div>
+                        <p className="mono">
+                          <a href={treasury.explorerUrl} target="_blank" rel="noreferrer">
+                            {treasury.address}
+                          </a>
+                        </p>
+                        <dl className="facts">
+                          <div>
+                            <dt>Balance</dt>
+                            <dd className="mono">
+                              {treasury.balance.ether === null
+                                ? 'unavailable'
+                                : `${treasury.balance.ether} ${treasury.chain.nativeSymbol}`}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Spendable</dt>
+                            <dd className="mono">
+                              {treasury.spendable.ether === null
+                                ? '—'
+                                : `${treasury.spendable.ether} ${treasury.chain.nativeSymbol}`}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Last checked</dt>
+                            <dd>
+                              {treasury.lastCheckedAt === null
+                                ? 'never'
+                                : new Date(treasury.lastCheckedAt).toLocaleString()}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Thresholds</dt>
+                            <dd className="mono">
+                              warn {treasury.thresholds.warningEther} · crit{' '}
+                              {treasury.thresholds.criticalEther} · reserve{' '}
+                              {treasury.thresholds.minimumReserveEther}
+                            </dd>
+                          </div>
+                        </dl>
+                        {treasury.lastCheckErrorCode !== null ? (
+                          <p className="error-inline">Last error: {treasury.lastCheckErrorCode}</p>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={treasuryBusyId === treasury.id}
+                          onClick={() => void onCheck(treasury.id)}
+                        >
+                          Check now
+                        </button>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Reconciliation" severity="alarm">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Reconciliation</h2>
                   <button
                     type="button"
-                    disabled={treasuryBusyId === treasury.id}
-                    onClick={() => void onCheck(treasury.id)}
+                    className="secondary"
+                    onClick={() => {
+                      void loadReconciliationRuns(token);
+                      void loadFindingAlerts(token);
+                    }}
                   >
-                    Check now
+                    Reload
                   </button>
-                </article>
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Reconciliation</h2>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                void loadReconciliationRuns(token);
-                void loadFindingAlerts(token);
-              }}
-            >
-              Reload
-            </button>
-          </div>
-          {token === '' ? (
-            <p className="muted">Paste an operator token to load reconciliation runs.</p>
-          ) : (
-            <>
-              {/*
+                </div>
+                {token === '' ? (
+                  <p className="muted">Paste an operator token to load reconciliation runs.</p>
+                ) : (
+                  <>
+                    {/*
                 Standing banner from GET /v1/alerts — independent of the runs page
                 window so an older critical finding cannot go invisible (C20 / TX.17).
               */}
-              {findingAlertsState === 'loading' ? <p className="muted">Loading finding alerts…</p> : null}
-              {findingAlertsState === 'error' ? <p className="error-inline">{findingAlertsError}</p> : null}
-              {openFindingAlerts.length > 0 ? (
-                <div className="finding-alert-banner" role="alert">
-                  <p className="finding-alert-banner-title">
-                    {openFindingAlerts.length === 1
-                      ? '1 unacknowledged critical finding'
-                      : `${String(openFindingAlerts.length)} unacknowledged critical findings`}
-                  </p>
-                  <p className="muted">
-                    These stay open until an operator records a note. Re-observation of the same transfer will
-                    not re-alert after acknowledgement.
-                  </p>
-                  <div className="finding-list recon-critical-always">
-                    {openFindingAlerts.map((alert) => {
-                      const meta = alert.metadata;
-                      const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
-                      const toAddress = asOptionalString(meta.toAddress);
-                      const valueWei = asOptionalString(meta.valueWei);
-                      const treasuryId = asOptionalString(meta.treasuryId);
-                      const href = explorerTxUrl(treasuries, treasuryId, transactionHash);
-                      const draft = ackDraftByAlertId[alert.id] ?? '';
-                      const ackError = ackErrorByAlertId[alert.id];
-                      return (
-                        <article key={alert.id} className="finding finding-critical">
-                          <div className="finding-head">
-                            <span className="badge badge-bad badge-square">unacknowledged</span>
-                            <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
-                          </div>
-                          <dl className="facts">
-                            <div>
-                              <dt>{findingEntityLabel(transactionHash)}</dt>
-                              <dd className="mono">
-                                {href === undefined ? (
-                                  <span title={transactionHash}>{transactionHash}</span>
-                                ) : (
-                                  <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
-                                    {shortAddress(transactionHash)}
-                                  </a>
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Destination</dt>
-                              <dd className="mono">
-                                {toAddress === undefined ? '—' : shortAddress(toAddress)}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Value</dt>
-                              <dd className="mono">
-                                {valueWei === undefined ? '—' : formatFindingWei(valueWei)}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>First seen</dt>
-                              <dd>{formatTimestamp(alert.firstTriggeredAt)}</dd>
-                            </div>
-                          </dl>
-                          <label className="ack-note-label" htmlFor={`ack-note-${alert.id}`}>
-                            Acknowledgement note (required)
-                          </label>
-                          <textarea
-                            id={`ack-note-${alert.id}`}
-                            className="ack-note"
-                            rows={3}
-                            value={draft}
-                            disabled={ackBusyId === alert.id}
-                            placeholder="Why this signal is stood down (e.g. confirmed operator hand-send)."
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setAckDraftByAlertId((prev) => ({ ...prev, [alert.id]: value }));
-                            }}
-                          />
-                          {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
+                    {findingAlertsState === 'loading' ? (
+                      <p className="muted">Loading finding alerts…</p>
+                    ) : null}
+                    {findingAlertsState === 'error' ? (
+                      <p className="error-inline">{findingAlertsError}</p>
+                    ) : null}
+                    {openFindingAlerts.length > 0 ? (
+                      <div className="finding-alert-banner" role="alert">
+                        <p className="finding-alert-banner-title">
+                          {openFindingAlerts.length === 1
+                            ? '1 unacknowledged critical finding'
+                            : `${String(openFindingAlerts.length)} unacknowledged critical findings`}
+                        </p>
+                        <p className="muted">
+                          These stay open until an operator records a note. Re-observation of the same
+                          transfer will not re-alert after acknowledgement.
+                        </p>
+                        <div className="finding-list recon-critical-always">
+                          {openFindingAlerts.map((alert) => {
+                            const meta = alert.metadata;
+                            const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
+                            const toAddress = asOptionalString(meta.toAddress);
+                            const valueWei = asOptionalString(meta.valueWei);
+                            const treasuryId = asOptionalString(meta.treasuryId);
+                            const href = explorerTxUrl(treasuries, treasuryId, transactionHash);
+                            const draft = ackDraftByAlertId[alert.id] ?? '';
+                            const ackError = ackErrorByAlertId[alert.id];
+                            return (
+                              <article key={alert.id} className="finding finding-critical">
+                                <div className="finding-head">
+                                  <span className="badge badge-bad badge-square">unacknowledged</span>
+                                  <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                                </div>
+                                <dl className="facts">
+                                  <div>
+                                    <dt>{findingEntityLabel(transactionHash)}</dt>
+                                    <dd className="mono">
+                                      {href === undefined ? (
+                                        <span title={transactionHash}>{transactionHash}</span>
+                                      ) : (
+                                        <a
+                                          href={href}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          title={transactionHash}
+                                        >
+                                          {shortAddress(transactionHash)}
+                                        </a>
+                                      )}
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Destination</dt>
+                                    <dd className="mono">
+                                      {toAddress === undefined ? '—' : shortAddress(toAddress)}
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Value</dt>
+                                    <dd className="mono">
+                                      {valueWei === undefined ? '—' : formatFindingWei(valueWei)}
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>First seen</dt>
+                                    <dd>{formatTimestamp(alert.firstTriggeredAt)}</dd>
+                                  </div>
+                                </dl>
+                                <label className="ack-note-label" htmlFor={`ack-note-${alert.id}`}>
+                                  Acknowledgement note (required)
+                                </label>
+                                <textarea
+                                  id={`ack-note-${alert.id}`}
+                                  className="ack-note"
+                                  rows={3}
+                                  value={draft}
+                                  disabled={ackBusyId === alert.id}
+                                  placeholder="Why this signal is stood down (e.g. confirmed operator hand-send)."
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setAckDraftByAlertId((prev) => ({ ...prev, [alert.id]: value }));
+                                  }}
+                                />
+                                {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
+                                <button
+                                  type="button"
+                                  disabled={ackBusyId === alert.id}
+                                  onClick={() => void onAcknowledgeFinding(alert.id)}
+                                >
+                                  {ackBusyId === alert.id ? 'Acknowledging…' : 'Acknowledge'}
+                                </button>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                    {acknowledgedFindingAlerts.length > 0 ? (
+                      <div className="acknowledged-findings">
+                        <div className="acknowledged-findings-head">
                           <button
                             type="button"
-                            disabled={ackBusyId === alert.id}
-                            onClick={() => void onAcknowledgeFinding(alert.id)}
+                            className="recon-toggle"
+                            aria-expanded={acknowledgedFindingsExpanded}
+                            aria-controls="acknowledged-findings-list"
+                            title={
+                              acknowledgedFindingsExpanded
+                                ? 'Collapse acknowledged findings'
+                                : 'Expand acknowledged findings'
+                            }
+                            onClick={onToggleAcknowledgedFindings}
                           >
-                            {ackBusyId === alert.id ? 'Acknowledging…' : 'Acknowledge'}
+                            {acknowledgedFindingsExpanded ? '−' : '+'}
                           </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-              {acknowledgedFindingAlerts.length > 0 ? (
-                <div className="acknowledged-findings">
-                  <div className="acknowledged-findings-head">
-                    <button
-                      type="button"
-                      className="recon-toggle"
-                      aria-expanded={acknowledgedFindingsExpanded}
-                      aria-controls="acknowledged-findings-list"
-                      title={
-                        acknowledgedFindingsExpanded
-                          ? 'Collapse acknowledged findings'
-                          : 'Expand acknowledged findings'
-                      }
-                      onClick={onToggleAcknowledgedFindings}
-                    >
-                      {acknowledgedFindingsExpanded ? '−' : '+'}
-                    </button>
-                    <h3 className="subsection-title">
-                      {acknowledgedFindingAlerts.length === 1
-                        ? '1 acknowledged finding'
-                        : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`}
-                    </h3>
-                  </div>
-                  {acknowledgedFindingsExpanded ? (
-                    <>
+                          <h3 className="subsection-title">
+                            {acknowledgedFindingAlerts.length === 1
+                              ? '1 acknowledged finding'
+                              : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`}
+                          </h3>
+                        </div>
+                        {acknowledgedFindingsExpanded ? (
+                          <>
+                            <p className="muted">
+                              Acknowledged incidents stay visible with their note — there is no un-acknowledge
+                              path.
+                            </p>
+                            <div className="finding-list" id="acknowledged-findings-list">
+                              {acknowledgedFindingAlerts.map((alert) => {
+                                const meta = alert.metadata;
+                                const transactionHash =
+                                  asOptionalString(meta.transactionHash) ?? alert.entityId;
+                                const href = explorerTxUrl(
+                                  treasuries,
+                                  asOptionalString(meta.treasuryId),
+                                  transactionHash,
+                                );
+                                return (
+                                  <article key={alert.id} className="finding finding-acknowledged">
+                                    <div className="finding-head">
+                                      <span className="badge badge-ok badge-square">acknowledged</span>
+                                      <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                                    </div>
+                                    <dl className="facts">
+                                      <div>
+                                        <dt>{findingEntityLabel(transactionHash)}</dt>
+                                        <dd className="mono">
+                                          {href === undefined ? (
+                                            <span title={transactionHash}>{transactionHash}</span>
+                                          ) : (
+                                            <a
+                                              href={href}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              title={transactionHash}
+                                            >
+                                              {shortAddress(transactionHash)}
+                                            </a>
+                                          )}
+                                        </dd>
+                                      </div>
+                                      <div>
+                                        <dt>Acknowledged</dt>
+                                        <dd>
+                                          {alert.acknowledgedAt === null
+                                            ? '—'
+                                            : formatTimestamp(alert.acknowledgedAt)}
+                                          {alert.acknowledgedBy !== null ? (
+                                            <span className="muted">
+                                              {' '}
+                                              · by{' '}
+                                              <code title={alert.acknowledgedBy}>
+                                                {shortAddress(alert.acknowledgedBy)}
+                                              </code>
+                                            </span>
+                                          ) : null}
+                                        </dd>
+                                      </div>
+                                    </dl>
+                                    {alert.acknowledgementNote !== null ? (
+                                      <p className="ack-note-display">{alert.acknowledgementNote}</p>
+                                    ) : null}
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {reconciliationState === 'loading' ? <p className="muted">Loading…</p> : null}
+                    {reconciliationState === 'error' ? (
+                      <p className="error-inline">{reconciliationError}</p>
+                    ) : null}
+                    {reconciliationState === 'empty' ? (
                       <p className="muted">
-                        Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
+                        No reconciliation runs returned ({String(reconciliationRunsTotal)} total).
                       </p>
-                      <div className="finding-list" id="acknowledged-findings-list">
-                        {acknowledgedFindingAlerts.map((alert) => {
-                          const meta = alert.metadata;
-                          const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
-                          const href = explorerTxUrl(
-                            treasuries,
-                            asOptionalString(meta.treasuryId),
-                            transactionHash,
+                    ) : null}
+                    {reconciliationState === 'ready'
+                      ? (() => {
+                          const findings = toFindingViews(reconciliationRuns);
+                          const criticalFindings = findings.filter((item) => item.severity === 'critical');
+                          const warningFindings = findings.filter((item) => item.severity === 'warning');
+                          const otherFindings = findings.filter(
+                            (item) => item.severity !== 'critical' && item.severity !== 'warning',
                           );
-                          return (
-                            <article key={alert.id} className="finding finding-acknowledged">
-                              <div className="finding-head">
-                                <span className="badge badge-ok badge-square">acknowledged</span>
-                                <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
-                              </div>
+                          // Truncated open pages cannot prove open-absence — treat like unresolved for demotion/summary.
+                          const alertsResolvedForDemotion =
+                            areFindingAlertsResolved(findingAlertsState) && openFindingAlertsComplete;
+                          const unacknowledgedCriticalFindings = criticalFindings.filter(
+                            (item) =>
+                              !isCriticalFindingAcknowledged(
+                                item,
+                                findingAlertsState,
+                                openFindingAlerts,
+                                acknowledgedFindingAlerts,
+                                openFindingAlertsComplete,
+                              ),
+                          );
+                          const acknowledgedCriticalFindings = criticalFindings.filter((item) =>
+                            isCriticalFindingAcknowledged(
+                              item,
+                              findingAlertsState,
+                              openFindingAlerts,
+                              acknowledgedFindingAlerts,
+                              openFindingAlertsComplete,
+                            ),
+                          );
+                          const newestRun = reconciliationRuns[0];
+                          const hasUnacknowledgedCritical = unacknowledgedCriticalFindings.length > 0;
+                          const hasCritical = criticalFindings.length > 0;
+                          const summaryNeedsAttention = hasUnacknowledgedCritical || otherFindings.length > 0;
+                          const criticalLabel = criticalFindingsSummaryLabel(
+                            unacknowledgedCriticalFindings.length,
+                            acknowledgedCriticalFindings.length,
+                            alertsResolvedForDemotion,
+                          );
+                          const renderCriticalFindingDetail = (
+                            finding: FindingView,
+                            entityId: string,
+                            href: string | undefined,
+                            acknowledgement: AlertResource | undefined,
+                          ) => (
+                            <>
                               <dl className="facts">
                                 <div>
-                                  <dt>{findingEntityLabel(transactionHash)}</dt>
+                                  <dt>{findingEntityLabel(entityId)}</dt>
                                   <dd className="mono">
-                                    {href === undefined ? (
-                                      <span title={transactionHash}>{transactionHash}</span>
+                                    {TRANSACTION_HASH_PATTERN.test(entityId) ? (
+                                      href === undefined ? (
+                                        <span title={entityId}>{entityId}</span>
+                                      ) : (
+                                        <a href={href} target="_blank" rel="noreferrer" title={entityId}>
+                                          {shortAddress(entityId)}
+                                        </a>
+                                      )
                                     ) : (
-                                      <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
-                                        {shortAddress(transactionHash)}
-                                      </a>
+                                      <span title={entityId}>{entityId}</span>
                                     )}
                                   </dd>
                                 </div>
                                 <div>
-                                  <dt>Acknowledged</dt>
-                                  <dd>
-                                    {alert.acknowledgedAt === null
-                                      ? '—'
-                                      : formatTimestamp(alert.acknowledgedAt)}
-                                    {alert.acknowledgedBy !== null ? (
-                                      <span className="muted">
-                                        {' '}
-                                        · by{' '}
-                                        <code title={alert.acknowledgedBy}>
-                                          {shortAddress(alert.acknowledgedBy)}
-                                        </code>
-                                      </span>
-                                    ) : null}
+                                  <dt>Destination</dt>
+                                  <dd className="mono">
+                                    {finding.toAddress === undefined ? '—' : shortAddress(finding.toAddress)}
                                   </dd>
                                 </div>
-                              </dl>
-                              {alert.acknowledgementNote !== null ? (
-                                <p className="ack-note-display">{alert.acknowledgementNote}</p>
-                              ) : null}
-                            </article>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {reconciliationState === 'loading' ? <p className="muted">Loading…</p> : null}
-              {reconciliationState === 'error' ? <p className="error-inline">{reconciliationError}</p> : null}
-              {reconciliationState === 'empty' ? (
-                <p className="muted">
-                  No reconciliation runs returned ({String(reconciliationRunsTotal)} total).
-                </p>
-              ) : null}
-              {reconciliationState === 'ready'
-                ? (() => {
-                    const findings = toFindingViews(reconciliationRuns);
-                    const criticalFindings = findings.filter((item) => item.severity === 'critical');
-                    const warningFindings = findings.filter((item) => item.severity === 'warning');
-                    const otherFindings = findings.filter(
-                      (item) => item.severity !== 'critical' && item.severity !== 'warning',
-                    );
-                    // Truncated open pages cannot prove open-absence — treat like unresolved for demotion/summary.
-                    const alertsResolvedForDemotion =
-                      areFindingAlertsResolved(findingAlertsState) && openFindingAlertsComplete;
-                    const unacknowledgedCriticalFindings = criticalFindings.filter(
-                      (item) =>
-                        !isCriticalFindingAcknowledged(
-                          item,
-                          findingAlertsState,
-                          openFindingAlerts,
-                          acknowledgedFindingAlerts,
-                          openFindingAlertsComplete,
-                        ),
-                    );
-                    const acknowledgedCriticalFindings = criticalFindings.filter((item) =>
-                      isCriticalFindingAcknowledged(
-                        item,
-                        findingAlertsState,
-                        openFindingAlerts,
-                        acknowledgedFindingAlerts,
-                        openFindingAlertsComplete,
-                      ),
-                    );
-                    const newestRun = reconciliationRuns[0];
-                    const hasUnacknowledgedCritical = unacknowledgedCriticalFindings.length > 0;
-                    const hasCritical = criticalFindings.length > 0;
-                    const summaryNeedsAttention = hasUnacknowledgedCritical || otherFindings.length > 0;
-                    const criticalLabel = criticalFindingsSummaryLabel(
-                      unacknowledgedCriticalFindings.length,
-                      acknowledgedCriticalFindings.length,
-                      alertsResolvedForDemotion,
-                    );
-                    const renderCriticalFindingDetail = (
-                      finding: FindingView,
-                      entityId: string,
-                      href: string | undefined,
-                      acknowledgement: AlertResource | undefined,
-                    ) => (
-                      <>
-                        <dl className="facts">
-                          <div>
-                            <dt>{findingEntityLabel(entityId)}</dt>
-                            <dd className="mono">
-                              {TRANSACTION_HASH_PATTERN.test(entityId) ? (
-                                href === undefined ? (
-                                  <span title={entityId}>{entityId}</span>
-                                ) : (
-                                  <a href={href} target="_blank" rel="noreferrer" title={entityId}>
-                                    {shortAddress(entityId)}
-                                  </a>
-                                )
-                              ) : (
-                                <span title={entityId}>{entityId}</span>
-                              )}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Destination</dt>
-                            <dd className="mono">
-                              {finding.toAddress === undefined ? '—' : shortAddress(finding.toAddress)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Value</dt>
-                            <dd className="mono">
-                              {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Nonce</dt>
-                            <dd className="mono">
-                              {finding.nonce === undefined ? '—' : String(finding.nonce)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Block</dt>
-                            <dd className="mono">{finding.blockNumber ?? '—'}</dd>
-                          </div>
-                          <div>
-                            <dt>Run</dt>
-                            <dd>
-                              <code>{finding.runId}</code>
-                              <span className="muted"> · {formatTimestamp(finding.runStartedAt)}</span>
-                            </dd>
-                          </div>
-                          {acknowledgement !== undefined ? (
-                            <div>
-                              <dt>Acknowledged</dt>
-                              <dd>
-                                {acknowledgement.acknowledgedAt === null
-                                  ? '—'
-                                  : formatTimestamp(acknowledgement.acknowledgedAt)}
-                                {acknowledgement.acknowledgedBy !== null ? (
-                                  <span className="muted">
-                                    {' '}
-                                    · by{' '}
-                                    <code title={acknowledgement.acknowledgedBy}>
-                                      {shortAddress(acknowledgement.acknowledgedBy)}
-                                    </code>
-                                  </span>
+                                <div>
+                                  <dt>Value</dt>
+                                  <dd className="mono">
+                                    {finding.valueWei === undefined
+                                      ? '—'
+                                      : formatFindingWei(finding.valueWei)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Nonce</dt>
+                                  <dd className="mono">
+                                    {finding.nonce === undefined ? '—' : String(finding.nonce)}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Block</dt>
+                                  <dd className="mono">{finding.blockNumber ?? '—'}</dd>
+                                </div>
+                                <div>
+                                  <dt>Run</dt>
+                                  <dd>
+                                    <code>{finding.runId}</code>
+                                    <span className="muted"> · {formatTimestamp(finding.runStartedAt)}</span>
+                                  </dd>
+                                </div>
+                                {acknowledgement !== undefined ? (
+                                  <div>
+                                    <dt>Acknowledged</dt>
+                                    <dd>
+                                      {acknowledgement.acknowledgedAt === null
+                                        ? '—'
+                                        : formatTimestamp(acknowledgement.acknowledgedAt)}
+                                      {acknowledgement.acknowledgedBy !== null ? (
+                                        <span className="muted">
+                                          {' '}
+                                          · by{' '}
+                                          <code title={acknowledgement.acknowledgedBy}>
+                                            {shortAddress(acknowledgement.acknowledgedBy)}
+                                          </code>
+                                        </span>
+                                      ) : null}
+                                    </dd>
+                                  </div>
                                 ) : null}
-                              </dd>
-                            </div>
-                          ) : null}
-                        </dl>
-                        {finding.reason !== undefined ? <p className="muted">{finding.reason}</p> : null}
-                        {acknowledgement?.acknowledgementNote !== null &&
-                        acknowledgement?.acknowledgementNote !== undefined ? (
-                          <p className="ack-note-display">{acknowledgement.acknowledgementNote}</p>
-                        ) : null}
-                      </>
-                    );
+                              </dl>
+                              {finding.reason !== undefined ? (
+                                <p className="muted">{finding.reason}</p>
+                              ) : null}
+                              {acknowledgement?.acknowledgementNote !== null &&
+                              acknowledgement?.acknowledgementNote !== undefined ? (
+                                <p className="ack-note-display">{acknowledgement.acknowledgementNote}</p>
+                              ) : null}
+                            </>
+                          );
 
-                    /**
-                     * Compact always-visible critical (TX.22 / C17): one dense row stays
-                     * visible with the panel collapsed. Expanding reveals the field grid;
-                     * collapsing never hides presence or summary count.
-                     */
-                    const renderUnacknowledgedCriticalFinding = (finding: FindingView, index: number) => {
-                      const entityKey =
-                        findingAlertEntityId(finding) ?? `${finding.runId}:${finding.kind}:${String(index)}`;
-                      const canAcknowledge = findingAlertEntityId(finding) !== undefined;
-                      const href = explorerTxUrl(treasuries, finding.treasuryId, finding.transactionHash);
-                      const displayId =
-                        findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
-                      const isExpanded = expandedCriticalEntityIds[entityKey] === true;
-                      const draft = ackDraftByEntityId[entityKey] ?? '';
-                      const ackError = ackErrorByEntityId[entityKey];
-                      const isBusy = ackBusyEntityId === entityKey;
-                      return (
-                        <article
-                          key={`critical-${finding.runId}-${finding.kind}-${String(index)}`}
-                          className="finding finding-critical finding-critical-compact"
-                        >
-                          <div className="finding-compact-row">
-                            <button
-                              type="button"
-                              className="finding-expand-toggle"
-                              aria-expanded={isExpanded}
-                              title={isExpanded ? 'Hide finding detail' : 'Show finding detail'}
-                              onClick={() => {
-                                setExpandedCriticalEntityIds((prev) => ({
-                                  ...prev,
-                                  [entityKey]: !isExpanded,
-                                }));
-                              }}
-                            >
-                              {isExpanded ? '−' : '+'}
-                            </button>
-                            <span className="badge badge-bad badge-square">critical</span>
-                            <code className="finding-compact-kind" title={finding.kind}>
-                              {finding.kind}
-                            </code>
-                            <span className="mono finding-compact-tx" title={displayId}>
-                              {TRANSACTION_HASH_PATTERN.test(displayId) ? (
-                                href === undefined ? (
-                                  shortAddress(displayId)
-                                ) : (
-                                  <a href={href} target="_blank" rel="noreferrer">
-                                    {shortAddress(displayId)}
-                                  </a>
-                                )
-                              ) : (
-                                shortAddress(displayId)
-                              )}
-                            </span>
-                            <span className="mono finding-compact-value">
-                              {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
-                            </span>
-                          </div>
-                          {canAcknowledge ? (
-                            <div className="finding-compact-ack">
-                              <input
-                                type="text"
-                                className="ack-note ack-note-inline"
-                                value={draft}
-                                disabled={isBusy}
-                                placeholder="Acknowledgement note (required)"
-                                aria-label={`Acknowledgement note for ${finding.kind}`}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  setAckDraftByEntityId((prev) => ({
-                                    ...prev,
-                                    [entityKey]: value,
-                                  }));
-                                }}
-                              />
-                              <button
-                                type="button"
-                                className="secondary"
-                                disabled={isBusy}
-                                onClick={() => void onAcknowledgeFindingByEntity(finding, entityKey)}
+                          /**
+                           * Compact always-visible critical (TX.22 / C17): one dense row stays
+                           * visible with the panel collapsed. Expanding reveals the field grid;
+                           * collapsing never hides presence or summary count.
+                           */
+                          const renderUnacknowledgedCriticalFinding = (
+                            finding: FindingView,
+                            index: number,
+                          ) => {
+                            const entityKey =
+                              findingAlertEntityId(finding) ??
+                              `${finding.runId}:${finding.kind}:${String(index)}`;
+                            const canAcknowledge = findingAlertEntityId(finding) !== undefined;
+                            const href = explorerTxUrl(
+                              treasuries,
+                              finding.treasuryId,
+                              finding.transactionHash,
+                            );
+                            const displayId =
+                              findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
+                            const isExpanded = expandedCriticalEntityIds[entityKey] === true;
+                            const draft = ackDraftByEntityId[entityKey] ?? '';
+                            const ackError = ackErrorByEntityId[entityKey];
+                            const isBusy = ackBusyEntityId === entityKey;
+                            return (
+                              <article
+                                key={`critical-${finding.runId}-${finding.kind}-${String(index)}`}
+                                className="finding finding-critical finding-critical-compact"
                               >
-                                {isBusy ? 'Acknowledging…' : 'Acknowledge'}
-                              </button>
-                            </div>
-                          ) : (
-                            <p className="muted finding-compact-ack-unavailable">
-                              Cannot acknowledge — finding has no stable entity key.
-                            </p>
-                          )}
-                          {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
-                          {isExpanded
-                            ? renderCriticalFindingDetail(finding, displayId, href, undefined)
-                            : null}
-                        </article>
-                      );
-                    };
+                                <div className="finding-compact-row">
+                                  <button
+                                    type="button"
+                                    className="finding-expand-toggle"
+                                    aria-expanded={isExpanded}
+                                    title={isExpanded ? 'Hide finding detail' : 'Show finding detail'}
+                                    onClick={() => {
+                                      setExpandedCriticalEntityIds((prev) => ({
+                                        ...prev,
+                                        [entityKey]: !isExpanded,
+                                      }));
+                                    }}
+                                  >
+                                    {isExpanded ? '−' : '+'}
+                                  </button>
+                                  <span className="badge badge-bad badge-square">critical</span>
+                                  <code className="finding-compact-kind" title={finding.kind}>
+                                    {finding.kind}
+                                  </code>
+                                  <span className="mono finding-compact-tx" title={displayId}>
+                                    {TRANSACTION_HASH_PATTERN.test(displayId) ? (
+                                      href === undefined ? (
+                                        shortAddress(displayId)
+                                      ) : (
+                                        <a href={href} target="_blank" rel="noreferrer">
+                                          {shortAddress(displayId)}
+                                        </a>
+                                      )
+                                    ) : (
+                                      shortAddress(displayId)
+                                    )}
+                                  </span>
+                                  <span className="mono finding-compact-value">
+                                    {finding.valueWei === undefined
+                                      ? '—'
+                                      : formatFindingWei(finding.valueWei)}
+                                  </span>
+                                </div>
+                                {canAcknowledge ? (
+                                  <div className="finding-compact-ack">
+                                    <input
+                                      type="text"
+                                      className="ack-note ack-note-inline"
+                                      value={draft}
+                                      disabled={isBusy}
+                                      placeholder="Acknowledgement note (required)"
+                                      aria-label={`Acknowledgement note for ${finding.kind}`}
+                                      onChange={(event) => {
+                                        const value = event.target.value;
+                                        setAckDraftByEntityId((prev) => ({
+                                          ...prev,
+                                          [entityKey]: value,
+                                        }));
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      className="secondary"
+                                      disabled={isBusy}
+                                      onClick={() => void onAcknowledgeFindingByEntity(finding, entityKey)}
+                                    >
+                                      {isBusy ? 'Acknowledging…' : 'Acknowledge'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <p className="muted finding-compact-ack-unavailable">
+                                    Cannot acknowledge — finding has no stable entity key.
+                                  </p>
+                                )}
+                                {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
+                                {isExpanded
+                                  ? renderCriticalFindingDetail(finding, displayId, href, undefined)
+                                  : null}
+                              </article>
+                            );
+                          };
 
-                    const renderAcknowledgedCriticalFinding = (
-                      finding: FindingView,
-                      index: number,
-                      acknowledgement: AlertResource | undefined,
-                    ) => {
-                      const entityId =
-                        findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
-                      const href = explorerTxUrl(treasuries, finding.treasuryId, finding.transactionHash);
-                      return (
-                        <article
-                          key={`ack-${finding.runId}-${finding.kind}-${String(index)}`}
-                          className="finding finding-acknowledged"
-                        >
-                          <div className="finding-head">
-                            <span className="badge badge-ok badge-square">acknowledged</span>
-                            <code>{finding.kind}</code>
-                          </div>
-                          {renderCriticalFindingDetail(finding, entityId, href, acknowledgement)}
-                        </article>
-                      );
-                    };
-                    return (
-                      <>
-                        <div
-                          className={
-                            summaryNeedsAttention ? 'recon-summary recon-summary-alert' : 'recon-summary'
-                          }
-                        >
-                          <button
-                            type="button"
-                            className="recon-toggle"
-                            aria-expanded={reconciliationDetailExpanded}
-                            aria-controls="reconciliation-detail"
-                            title={
-                              reconciliationDetailExpanded
-                                ? 'Collapse acknowledged findings, warnings, and run history'
-                                : 'Expand acknowledged findings, warnings, and run history'
-                            }
-                            onClick={onToggleReconciliationDetail}
-                          >
-                            {reconciliationDetailExpanded ? '−' : '+'}
-                          </button>
-                          <p className="recon-summary-text">
-                            <span>
-                              {String(reconciliationRunsTotal)} run
-                              {reconciliationRunsTotal === 1 ? '' : 's'}
-                            </span>
-                            <span aria-hidden="true"> · </span>
-                            {hasUnacknowledgedCritical ? (
-                              <span className="recon-critical-callout">{criticalLabel}</span>
-                            ) : (
-                              <span>{criticalLabel}</span>
-                            )}
-                            {otherFindings.length > 0 ? (
-                              <>
-                                <span aria-hidden="true"> · </span>
-                                <span className="recon-critical-callout">
-                                  {otherFindings.length === 1
-                                    ? '1 unclassified finding'
-                                    : `${String(otherFindings.length)} unclassified findings`}
-                                </span>
-                              </>
-                            ) : null}
-                            {newestRun !== undefined ? (
-                              <>
-                                <span aria-hidden="true"> · </span>
-                                <span>{lastRunSummaryClause(newestRun)}</span>
-                              </>
-                            ) : null}
-                          </p>
-                        </div>
+                          const renderAcknowledgedCriticalFinding = (
+                            finding: FindingView,
+                            index: number,
+                            acknowledgement: AlertResource | undefined,
+                          ) => {
+                            const entityId =
+                              findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
+                            const href = explorerTxUrl(
+                              treasuries,
+                              finding.treasuryId,
+                              finding.transactionHash,
+                            );
+                            return (
+                              <article
+                                key={`ack-${finding.runId}-${finding.kind}-${String(index)}`}
+                                className="finding finding-acknowledged"
+                              >
+                                <div className="finding-head">
+                                  <span className="badge badge-ok badge-square">acknowledged</span>
+                                  <code>{finding.kind}</code>
+                                </div>
+                                {renderCriticalFindingDetail(finding, entityId, href, acknowledgement)}
+                              </article>
+                            );
+                          };
+                          return (
+                            <>
+                              <div
+                                className={
+                                  summaryNeedsAttention
+                                    ? 'recon-summary recon-summary-alert'
+                                    : 'recon-summary'
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  className="recon-toggle"
+                                  aria-expanded={reconciliationDetailExpanded}
+                                  aria-controls="reconciliation-detail"
+                                  title={
+                                    reconciliationDetailExpanded
+                                      ? 'Collapse acknowledged findings, warnings, and run history'
+                                      : 'Expand acknowledged findings, warnings, and run history'
+                                  }
+                                  onClick={onToggleReconciliationDetail}
+                                >
+                                  {reconciliationDetailExpanded ? '−' : '+'}
+                                </button>
+                                <p className="recon-summary-text">
+                                  <span>
+                                    {String(reconciliationRunsTotal)} run
+                                    {reconciliationRunsTotal === 1 ? '' : 's'}
+                                  </span>
+                                  <span aria-hidden="true"> · </span>
+                                  {hasUnacknowledgedCritical ? (
+                                    <span className="recon-critical-callout">{criticalLabel}</span>
+                                  ) : (
+                                    <span>{criticalLabel}</span>
+                                  )}
+                                  {otherFindings.length > 0 ? (
+                                    <>
+                                      <span aria-hidden="true"> · </span>
+                                      <span className="recon-critical-callout">
+                                        {otherFindings.length === 1
+                                          ? '1 unclassified finding'
+                                          : `${String(otherFindings.length)} unclassified findings`}
+                                      </span>
+                                    </>
+                                  ) : null}
+                                  {newestRun !== undefined ? (
+                                    <>
+                                      <span aria-hidden="true"> · </span>
+                                      <span>{lastRunSummaryClause(newestRun)}</span>
+                                    </>
+                                  ) : null}
+                                </p>
+                              </div>
 
-                        {/*
+                              {/*
                           Unacknowledged critical findings stay outside the collapse.
                           Acknowledgement is a deliberate human act with a required note
                           (C20); until that evidence exists — including while alerts are
                           still loading or the fetch failed — collapsing must never hide
                           a critical (TX.20 / C17).
                         */}
-                        {hasUnacknowledgedCritical ? (
-                          <div className="finding-list recon-critical-always">
-                            {unacknowledgedCriticalFindings.map((finding, index) =>
-                              renderUnacknowledgedCriticalFinding(finding, index),
-                            )}
-                          </div>
-                        ) : null}
+                              {hasUnacknowledgedCritical ? (
+                                <div className="finding-list recon-critical-always">
+                                  {unacknowledgedCriticalFindings.map((finding, index) =>
+                                    renderUnacknowledgedCriticalFinding(finding, index),
+                                  )}
+                                </div>
+                              ) : null}
 
-                        {/*
+                              {/*
                           Unclassified findings stay outside the collapse too (planner
                           review, TX.18). A severity this dashboard cannot recognise is
                           not evidence that the finding is minor — C18's rule is that the
@@ -1983,820 +2054,870 @@ export function App() {
                           alert row, so TX.20's "no match ⇒ unacknowledged" rule keeps them
                           here without a special case.
                         */}
-                        {otherFindings.length > 0 ? (
-                          <div className="finding-list recon-critical-always">
-                            {otherFindings.map((finding, index) => (
-                              <article
-                                key={`unclassified-${finding.runId}-${finding.kind}-${String(index)}`}
-                                className="finding finding-unknown"
-                              >
-                                <div className="finding-head">
-                                  <span className="badge badge-unknown badge-square">unclassified</span>
-                                  <code>{finding.kind}</code>
-                                </div>
-                                <dl className="facts">
-                                  <div>
-                                    <dt>Severity</dt>
-                                    <dd>
-                                      <code>{finding.severity}</code>
-                                    </dd>
-                                  </div>
-                                  <div>
-                                    <dt>Run</dt>
-                                    <dd>
-                                      <code>{finding.runId}</code>
-                                      <span className="muted">
-                                        {' '}
-                                        · {formatTimestamp(finding.runStartedAt)}
-                                      </span>
-                                    </dd>
-                                  </div>
-                                </dl>
-                                {finding.reason !== undefined ? (
-                                  <p className="muted">{finding.reason}</p>
-                                ) : null}
-                              </article>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        {reconciliationDetailExpanded ? (
-                          <div id="reconciliation-detail">
-                            <p className="muted">
-                              Showing {String(reconciliationRuns.length)} of {String(reconciliationRunsTotal)}{' '}
-                              runs (newest first). Findings below are from this page only — older critical
-                              findings outside the window will not appear here.
-                            </p>
-
-                            {!hasCritical ? (
-                              <p className="muted">No critical findings in the loaded runs.</p>
-                            ) : null}
-
-                            {acknowledgedCriticalFindings.length > 0 ? (
-                              <>
-                                <h3 className="subsection-title">Acknowledged critical findings</h3>
-                                <p className="muted">
-                                  Acknowledged findings stay in the run record with their note — collapsing
-                                  hides them from the always-visible block only after an operator stands them
-                                  down (C20 / TX.20).
-                                </p>
-                                <div className="finding-list">
-                                  {acknowledgedCriticalFindings.map((finding, index) =>
-                                    renderAcknowledgedCriticalFinding(
-                                      finding,
-                                      index,
-                                      matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),
-                                    ),
-                                  )}
-                                </div>
-                              </>
-                            ) : null}
-
-                            <h3 className="subsection-title">Warning findings</h3>
-                            {warningFindings.length === 0 ? (
-                              <p className="muted">No warning findings in the loaded runs.</p>
-                            ) : (
-                              <div className="finding-list">
-                                {warningFindings.map((finding, index) => (
-                                  <article
-                                    key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
-                                    className={
-                                      finding.severity === 'warning'
-                                        ? 'finding finding-warning'
-                                        : 'finding finding-unknown'
-                                    }
-                                  >
-                                    <div className="finding-head">
-                                      <span
-                                        className={
-                                          finding.severity === 'warning'
-                                            ? 'badge badge-warn'
-                                            : 'badge badge-unknown'
-                                        }
-                                      >
-                                        {finding.severity}
-                                      </span>
-                                      <code>{finding.kind}</code>
-                                    </div>
-                                    <p className="muted">
-                                      Run <code>{finding.runId}</code> ·{' '}
-                                      {formatTimestamp(finding.runStartedAt)}
-                                      {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
-                                    </p>
-                                  </article>
-                                ))}
-                              </div>
-                            )}
-
-                            <h3 className="subsection-title">Run history</h3>
-                            <div className="table-wrap">
-                              <table className="data-table">
-                                <thead>
-                                  <tr>
-                                    <th>Started</th>
-                                    <th>Finished</th>
-                                    <th>Assessed</th>
-                                    <th>Funded</th>
-                                    <th>Blocked</th>
-                                    <th>Failed</th>
-                                    <th>Transferred</th>
-                                    <th>Scan</th>
-                                    <th>Status</th>
-                                    <th>Error</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {reconciliationRuns.map((run) => {
-                                    const completion = runCompletionLabel(run);
-                                    return (
-                                      <tr key={run.id}>
-                                        <td>{formatTimestamp(run.startedAt)}</td>
-                                        <td>
-                                          {run.finishedAt === null ? (
-                                            <span className="badge badge-warn">unfinished</span>
-                                          ) : (
-                                            formatTimestamp(run.finishedAt)
-                                          )}
-                                        </td>
-                                        <td className="mono">{String(run.walletsAssessed)}</td>
-                                        <td className="mono">{String(run.walletsFunded)}</td>
-                                        <td className="mono">{String(run.walletsBlocked)}</td>
-                                        <td className="mono">{String(run.walletsFailed)}</td>
-                                        <td className="mono">{run.weiTransferredEther} ETH</td>
-                                        <td>
-                                          <span className={statusClass(run.outgoingScanStatus)}>
-                                            {run.outgoingScanStatus}
-                                          </span>
-                                        </td>
-                                        <td>
-                                          <span className={completion.className}>{completion.label}</span>
-                                        </td>
-                                        <td className="mono">{run.errorCode ?? '—'}</td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : null}
-                      </>
-                    );
-                  })()
-                : null}
-            </>
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Projects</h2>
-            <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
-              Reload
-            </button>
-          </div>
-          {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
-          {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
-          {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
-          {projectsState === 'empty' ? (
-            <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
-          ) : null}
-          {projectsState === 'ready' ? (
-            <>
-              <p className="muted">
-                Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to scope
-                environments and funding policy.
-              </p>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Slug</th>
-                      <th>Name</th>
-                      <th>Enabled</th>
-                      <th>Select</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projects.map((project) => (
-                      <tr
-                        key={project.id}
-                        className={selectedProjectId === project.id ? 'row-selected' : undefined}
-                      >
-                        <td className="mono">{project.slug}</td>
-                        <td>{project.name}</td>
-                        <td>
-                          <span className={enabledBadge(project.enabled)}>
-                            {project.enabled ? 'enabled' : 'disabled'}
-                          </span>
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => {
-                              setSelectedProjectId(project.id);
-                            }}
-                          >
-                            {selectedProjectId === project.id ? 'Selected' : 'Select'}
-                          </button>
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className={project.enabled ? 'secondary' : undefined}
-                            disabled={projectBusyId === project.id}
-                            onClick={() => void onToggleProject(project)}
-                          >
-                            {project.enabled ? 'Disable' : 'Enable'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : null}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Environments</h2>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                void loadProjectEnvironments(token, selectedProjectId);
-                if (envLookupId.trim() !== '') {
-                  void loadEnvironmentDetail(token, envLookupId);
-                }
-              }}
-            >
-              Reload
-            </button>
-          </div>
-          {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
-          {token !== '' && selectedProjectId === '' ? (
-            <p className="muted">Select a project above to list its environments.</p>
-          ) : null}
-          {token !== '' && selectedProjectId !== '' ? (
-            <>
-              <p className="hint">Load any environment by UUID below for full detail and enable/disable.</p>
-              {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
-              {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
-              {envListState === 'empty' ? (
-                <p className="muted">No environments registered for this project yet.</p>
-              ) : null}
-              {envListState === 'ready' ? (
-                <ul className="plain env-list">
-                  {projectEnvironments.map((environment) => (
-                    <li key={environment.id}>
-                      <button
-                        type="button"
-                        className="linkish"
-                        onClick={() => {
-                          setEnvLookupId(environment.id);
-                          void loadEnvironmentDetail(token, environment.id);
-                        }}
-                      >
-                        <code>{environment.slug}</code>
-                      </button>{' '}
-                      <span className={enabledBadge(environment.enabled)}>
-                        {environment.enabled ? 'enabled' : 'disabled'}
-                      </span>
-                      <span className="muted"> — {environment.name}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              <form
-                className="filters row"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void loadEnvironmentDetail(token, envLookupId);
-                }}
-              >
-                <label htmlFor="environment-id">Environment ID</label>
-                <input
-                  id="environment-id"
-                  name="environment-id"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="UUID"
-                  value={envLookupId}
-                  onChange={(event) => setEnvLookupId(event.target.value)}
-                />
-                <button type="submit">Load detail</button>
-              </form>
-
-              {environmentState === 'loading' ? <p className="muted">Loading environment detail…</p> : null}
-              {environmentState === 'error' ? <p className="error-inline">{environmentError}</p> : null}
-              {environmentState === 'ready' && environmentDetail !== undefined ? (
-                <article className="treasury">
-                  <div className="treasury-head">
-                    <span className={enabledBadge(environmentDetail.enabled)}>
-                      {environmentDetail.enabled ? 'enabled' : 'disabled'}
-                    </span>
-                    <h3>
-                      {environmentDetail.slug} <span className="muted">· {environmentDetail.name}</span>
-                    </h3>
-                  </div>
-                  <dl className="facts">
-                    <div>
-                      <dt>ID</dt>
-                      <dd className="mono">{environmentDetail.id}</dd>
-                    </div>
-                    <div>
-                      <dt>Project ID</dt>
-                      <dd className="mono">{environmentDetail.projectId}</dd>
-                    </div>
-                    <div>
-                      <dt>Created</dt>
-                      <dd>{formatTimestamp(environmentDetail.createdAt)}</dd>
-                    </div>
-                    <div>
-                      <dt>Updated</dt>
-                      <dd>{formatTimestamp(environmentDetail.updatedAt)}</dd>
-                    </div>
-                  </dl>
-                  <button
-                    type="button"
-                    className={environmentDetail.enabled ? 'secondary' : undefined}
-                    disabled={environmentBusy}
-                    onClick={() => void onToggleEnvironment(environmentDetail)}
-                  >
-                    {environmentDetail.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </article>
-              ) : null}
-            </>
-          ) : null}
-        </section>
-
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Managed wallets</h2>
-            <div className="row">
-              <button
-                type="button"
-                className="secondary"
-                disabled={token === '' || walletsState !== 'ready' || balancesBusy}
-                onClick={() => void checkListedWalletBalances(token)}
-              >
-                {balancesBusy ? 'Checking…' : 'Check balances'}
-              </button>
-              <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
-                Reload
-              </button>
-            </div>
-          </div>
-          {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
-          {token !== '' ? (
-            <>
-              <div className="filters row">
-                <label htmlFor="wallet-project">Project ID</label>
-                <input
-                  id="wallet-project"
-                  name="wallet-project"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="UUID (optional)"
-                  value={walletProjectFilter}
-                  onChange={(event) => setWalletProjectFilter(event.target.value)}
-                />
-                <label htmlFor="wallet-environment">Environment ID</label>
-                <input
-                  id="wallet-environment"
-                  name="wallet-environment"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="UUID (optional)"
-                  value={walletEnvironmentFilter}
-                  onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
-                />
-                <label htmlFor="wallet-enabled">Enabled</label>
-                <select
-                  id="wallet-enabled"
-                  name="wallet-enabled"
-                  value={walletEnabledFilter}
-                  onChange={(event) => setWalletEnabledFilter(event.target.value)}
-                >
-                  <option value="">All</option>
-                  <option value="true">enabled</option>
-                  <option value="false">disabled</option>
-                </select>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => {
-                    if (selectedProjectId !== '') {
-                      setWalletProjectFilter(selectedProjectId);
-                    }
-                  }}
-                >
-                  Use selected project
-                </button>
-              </div>
-              {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
-              {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
-              {walletsState === 'empty' ? (
-                <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
-              ) : null}
-              {walletsState === 'ready' ? (
-                <>
-                  <p className="muted">
-                    Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
-                    {wallets.length <= BALANCE_AUTO_LOAD_MAX
-                      ? ' Balances load automatically for this list (one live RPC read each); Check balances refreshes.'
-                      : ` Balances are not auto-loaded above ${String(BALANCE_AUTO_LOAD_MAX)} listed wallets (one live RPC read each). Use Check balances.`}
-                  </p>
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Project / env</th>
-                          <th>Role</th>
-                          <th>Address</th>
-                          <th>Balance</th>
-                          <th>Flags</th>
-                          <th>Enabled</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {wallets.map((wallet) => {
-                          const balanceView = walletBalances[wallet.id];
-                          return (
-                            <tr key={wallet.id}>
-                              <td>
-                                <strong>{wallet.project.slug}</strong>
-                                <span className="muted"> / {wallet.environment.slug}</span>
-                              </td>
-                              <td>{wallet.role}</td>
-                              <td className="mono">
-                                <a
-                                  href={wallet.explorerUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title={wallet.address}
-                                >
-                                  {shortAddress(wallet.address)}
-                                </a>
-                              </td>
-                              <td>
-                                {balanceView === undefined ? (
-                                  <button
-                                    type="button"
-                                    className="secondary"
-                                    disabled={balancesBusy}
-                                    onClick={() => void fetchOneWalletBalance(token, wallet.id)}
-                                  >
-                                    Check
-                                  </button>
-                                ) : null}
-                                {balanceView?.status === 'loading' ? (
-                                  <span className="muted">Checking…</span>
-                                ) : null}
-                                {balanceView?.status === 'observed' ? (
-                                  <>
-                                    <span className="mono">{balanceView.ether} ETH</span>{' '}
-                                    {(() => {
-                                      const chip = balancePolicyChip(
-                                        balanceView.wei,
-                                        wallet.policy?.minimumBalanceWei,
-                                      );
-                                      return <span className={chip.className}>{chip.label}</span>;
-                                    })()}
-                                    <div
-                                      className="muted tiny"
-                                      title={`Observed at ${balanceView.observedAt}`}
+                              {otherFindings.length > 0 ? (
+                                <div className="finding-list recon-critical-always">
+                                  {otherFindings.map((finding, index) => (
+                                    <article
+                                      key={`unclassified-${finding.runId}-${finding.kind}-${String(index)}`}
+                                      className="finding finding-unknown"
                                     >
-                                      as of {formatClockTime(balanceView.observedAt)}
+                                      <div className="finding-head">
+                                        <span className="badge badge-unknown badge-square">unclassified</span>
+                                        <code>{finding.kind}</code>
+                                      </div>
+                                      <dl className="facts">
+                                        <div>
+                                          <dt>Severity</dt>
+                                          <dd>
+                                            <code>{finding.severity}</code>
+                                          </dd>
+                                        </div>
+                                        <div>
+                                          <dt>Run</dt>
+                                          <dd>
+                                            <code>{finding.runId}</code>
+                                            <span className="muted">
+                                              {' '}
+                                              · {formatTimestamp(finding.runStartedAt)}
+                                            </span>
+                                          </dd>
+                                        </div>
+                                      </dl>
+                                      {finding.reason !== undefined ? (
+                                        <p className="muted">{finding.reason}</p>
+                                      ) : null}
+                                    </article>
+                                  ))}
+                                </div>
+                              ) : null}
+
+                              {reconciliationDetailExpanded ? (
+                                <div id="reconciliation-detail">
+                                  <p className="muted">
+                                    Showing {String(reconciliationRuns.length)} of{' '}
+                                    {String(reconciliationRunsTotal)} runs (newest first). Findings below are
+                                    from this page only — older critical findings outside the window will not
+                                    appear here.
+                                  </p>
+
+                                  {!hasCritical ? (
+                                    <p className="muted">No critical findings in the loaded runs.</p>
+                                  ) : null}
+
+                                  {acknowledgedCriticalFindings.length > 0 ? (
+                                    <>
+                                      <h3 className="subsection-title">Acknowledged critical findings</h3>
+                                      <p className="muted">
+                                        Acknowledged findings stay in the run record with their note —
+                                        collapsing hides them from the always-visible block only after an
+                                        operator stands them down (C20 / TX.20).
+                                      </p>
+                                      <div className="finding-list">
+                                        {acknowledgedCriticalFindings.map((finding, index) =>
+                                          renderAcknowledgedCriticalFinding(
+                                            finding,
+                                            index,
+                                            matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),
+                                          ),
+                                        )}
+                                      </div>
+                                    </>
+                                  ) : null}
+
+                                  <h3 className="subsection-title">Warning findings</h3>
+                                  {warningFindings.length === 0 ? (
+                                    <p className="muted">No warning findings in the loaded runs.</p>
+                                  ) : (
+                                    <div className="finding-list">
+                                      {warningFindings.map((finding, index) => (
+                                        <article
+                                          key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
+                                          className={
+                                            finding.severity === 'warning'
+                                              ? 'finding finding-warning'
+                                              : 'finding finding-unknown'
+                                          }
+                                        >
+                                          <div className="finding-head">
+                                            <span
+                                              className={
+                                                finding.severity === 'warning'
+                                                  ? 'badge badge-warn'
+                                                  : 'badge badge-unknown'
+                                              }
+                                            >
+                                              {finding.severity}
+                                            </span>
+                                            <code>{finding.kind}</code>
+                                          </div>
+                                          <p className="muted">
+                                            Run <code>{finding.runId}</code> ·{' '}
+                                            {formatTimestamp(finding.runStartedAt)}
+                                            {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
+                                          </p>
+                                        </article>
+                                      ))}
                                     </div>
-                                  </>
-                                ) : null}
-                                {balanceView?.status === 'unavailable' ? (
-                                  <>
-                                    <span className="badge badge-unknown">unavailable</span>
-                                    <div className="muted tiny" title={balanceView.errorCode}>
-                                      as of {formatClockTime(balanceView.observedAt)}
-                                    </div>
-                                  </>
-                                ) : null}
-                                {balanceView?.status === 'error' ? (
-                                  <span className="error-inline" title={balanceView.message}>
-                                    error
-                                  </span>
-                                ) : null}
-                              </td>
-                              <td className="muted">
-                                startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
-                                <br />
-                                reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
-                              </td>
+                                  )}
+
+                                  <h3 className="subsection-title">Run history</h3>
+                                  <div className="table-wrap">
+                                    <table className="data-table">
+                                      <thead>
+                                        <tr>
+                                          <th>Started</th>
+                                          <th>Finished</th>
+                                          <th>Assessed</th>
+                                          <th>Funded</th>
+                                          <th>Blocked</th>
+                                          <th>Failed</th>
+                                          <th>Transferred</th>
+                                          <th>Scan</th>
+                                          <th>Status</th>
+                                          <th>Error</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {reconciliationRuns.map((run) => {
+                                          const completion = runCompletionLabel(run);
+                                          return (
+                                            <tr key={run.id}>
+                                              <td>{formatTimestamp(run.startedAt)}</td>
+                                              <td>
+                                                {run.finishedAt === null ? (
+                                                  <span className="badge badge-warn">unfinished</span>
+                                                ) : (
+                                                  formatTimestamp(run.finishedAt)
+                                                )}
+                                              </td>
+                                              <td className="mono">{String(run.walletsAssessed)}</td>
+                                              <td className="mono">{String(run.walletsFunded)}</td>
+                                              <td className="mono">{String(run.walletsBlocked)}</td>
+                                              <td className="mono">{String(run.walletsFailed)}</td>
+                                              <td className="mono">{run.weiTransferredEther} ETH</td>
+                                              <td>
+                                                <span className={statusClass(run.outgoingScanStatus)}>
+                                                  {run.outgoingScanStatus}
+                                                </span>
+                                              </td>
+                                              <td>
+                                                <span className={completion.className}>
+                                                  {completion.label}
+                                                </span>
+                                              </td>
+                                              <td className="mono">{run.errorCode ?? '—'}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </>
+                          );
+                        })()
+                      : null}
+                  </>
+                )}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Projects" severity="quiet">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Projects</h2>
+                  <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
+                    Reload
+                  </button>
+                </div>
+                {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
+                {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
+                {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
+                {projectsState === 'empty' ? (
+                  <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
+                ) : null}
+                {projectsState === 'ready' ? (
+                  <>
+                    <p className="muted">
+                      Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to
+                      scope environments and funding policy.
+                    </p>
+                    <div className="table-wrap">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Slug</th>
+                            <th>Name</th>
+                            <th>Enabled</th>
+                            <th>Select</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {projects.map((project) => (
+                            <tr
+                              key={project.id}
+                              className={selectedProjectId === project.id ? 'row-selected' : undefined}
+                            >
+                              <td className="mono">{project.slug}</td>
+                              <td>{project.name}</td>
                               <td>
-                                <span className={enabledBadge(wallet.enabled)}>
-                                  {wallet.enabled ? 'enabled' : 'disabled'}
+                                <span className={enabledBadge(project.enabled)}>
+                                  {project.enabled ? 'enabled' : 'disabled'}
                                 </span>
                               </td>
                               <td>
                                 <button
                                   type="button"
-                                  className={wallet.enabled ? 'secondary' : undefined}
-                                  disabled={walletBusyId === wallet.id}
-                                  onClick={() => void onToggleWallet(wallet)}
+                                  className="secondary"
+                                  onClick={() => {
+                                    setSelectedProjectId(project.id);
+                                  }}
                                 >
-                                  {wallet.enabled ? 'Disable' : 'Enable'}
-                                </button>{' '}
+                                  {selectedProjectId === project.id ? 'Selected' : 'Select'}
+                                </button>
+                              </td>
+                              <td>
                                 <button
                                   type="button"
-                                  className={wallet.reconciliationEnabled ? 'secondary' : undefined}
-                                  disabled={walletBusyId === wallet.id}
-                                  onClick={() => void onToggleWalletReconciliation(wallet)}
+                                  className={project.enabled ? 'secondary' : undefined}
+                                  disabled={projectBusyId === project.id}
+                                  onClick={() => void onToggleProject(project)}
                                 >
-                                  {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
+                                  {project.enabled ? 'Disable' : 'Enable'}
                                 </button>
                               </td>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ) : null}
-            </>
-          ) : null}
-        </section>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Funding policy</h2>
-            <button type="button" className="secondary" onClick={() => void loadPolicyPanel(token)}>
-              Reload
-            </button>
-          </div>
-          {token === '' ? <p className="muted">Paste an operator token to load funding policies.</p> : null}
-          {token !== '' ? (
-            <>
-              <p className="hint">
-                Amounts are entered in ETH and converted once to exact decimal wei strings before submit.
-                Confirm shows the wei values the API will receive.
-                {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
-              </p>
-              {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
-              {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
-              {policyState === 'empty' ? (
-                <p className="muted">
-                  No wallets returned for policy view ({String(policyWalletsTotal)} total).
-                </p>
-              ) : null}
-              {policyState === 'ready' ? (
-                <div className="policy-list">
-                  {policyWallets.map((wallet) => {
-                    const isEditing = editingWalletId === wallet.id;
-                    return (
-                      <article key={wallet.id} className="treasury">
-                        <div className="treasury-head">
-                          <h3>
-                            {wallet.role}{' '}
-                            <span className="muted">
-                              · {wallet.project.slug}/{wallet.environment.slug}
+        <PanelErrorBoundary panelName="Environments" severity="quiet">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Environments</h2>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      void loadProjectEnvironments(token, selectedProjectId);
+                      if (envLookupId.trim() !== '') {
+                        void loadEnvironmentDetail(token, envLookupId);
+                      }
+                    }}
+                  >
+                    Reload
+                  </button>
+                </div>
+                {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
+                {token !== '' && selectedProjectId === '' ? (
+                  <p className="muted">Select a project above to list its environments.</p>
+                ) : null}
+                {token !== '' && selectedProjectId !== '' ? (
+                  <>
+                    <p className="hint">
+                      Load any environment by UUID below for full detail and enable/disable.
+                    </p>
+                    {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
+                    {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
+                    {envListState === 'empty' ? (
+                      <p className="muted">No environments registered for this project yet.</p>
+                    ) : null}
+                    {envListState === 'ready' ? (
+                      <ul className="plain env-list">
+                        {projectEnvironments.map((environment) => (
+                          <li key={environment.id}>
+                            <button
+                              type="button"
+                              className="linkish"
+                              onClick={() => {
+                                setEnvLookupId(environment.id);
+                                void loadEnvironmentDetail(token, environment.id);
+                              }}
+                            >
+                              <code>{environment.slug}</code>
+                            </button>{' '}
+                            <span className={enabledBadge(environment.enabled)}>
+                              {environment.enabled ? 'enabled' : 'disabled'}
                             </span>
+                            <span className="muted"> — {environment.name}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    <form
+                      className="filters row"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void loadEnvironmentDetail(token, envLookupId);
+                      }}
+                    >
+                      <label htmlFor="environment-id">Environment ID</label>
+                      <input
+                        id="environment-id"
+                        name="environment-id"
+                        type="text"
+                        spellCheck={false}
+                        placeholder="UUID"
+                        value={envLookupId}
+                        onChange={(event) => setEnvLookupId(event.target.value)}
+                      />
+                      <button type="submit">Load detail</button>
+                    </form>
+
+                    {environmentState === 'loading' ? (
+                      <p className="muted">Loading environment detail…</p>
+                    ) : null}
+                    {environmentState === 'error' ? <p className="error-inline">{environmentError}</p> : null}
+                    {environmentState === 'ready' && environmentDetail !== undefined ? (
+                      <article className="treasury">
+                        <div className="treasury-head">
+                          <span className={enabledBadge(environmentDetail.enabled)}>
+                            {environmentDetail.enabled ? 'enabled' : 'disabled'}
+                          </span>
+                          <h3>
+                            {environmentDetail.slug} <span className="muted">· {environmentDetail.name}</span>
                           </h3>
                         </div>
-                        <p className="mono">
-                          <a href={wallet.explorerUrl} target="_blank" rel="noreferrer">
-                            {wallet.address}
-                          </a>
-                        </p>
-                        {wallet.policy === null ? (
-                          <p className="muted">No funding policy set.</p>
-                        ) : (
-                          <dl className="facts">
-                            <div>
-                              <dt>Minimum</dt>
-                              <dd className="mono">
-                                {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
-                                <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Target</dt>
-                              <dd className="mono">
-                                {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
-                                <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Maximum top-up</dt>
-                              <dd className="mono">
-                                {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
-                                <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Version</dt>
-                              <dd>
-                                v{String(wallet.policy.version)} · updated{' '}
-                                {formatTimestamp(wallet.policy.updatedAt)}
-                              </dd>
-                            </div>
-                          </dl>
-                        )}
-                        {!isEditing ? (
-                          <button type="button" className="secondary" onClick={() => beginEditPolicy(wallet)}>
-                            Edit policy
-                          </button>
-                        ) : (
-                          <div className="policy-form">
-                            <div className="filters row">
-                              <label htmlFor={`min-${wallet.id}`}>Minimum (ETH)</label>
-                              <input
-                                id={`min-${wallet.id}`}
-                                type="text"
-                                inputMode="decimal"
-                                spellCheck={false}
-                                value={minimumEtherInput}
-                                onChange={(event) => {
-                                  setMinimumEtherInput(event.target.value);
-                                  setPolicyPreviewError(undefined);
-                                }}
-                              />
-                              <label htmlFor={`target-${wallet.id}`}>Target (ETH)</label>
-                              <input
-                                id={`target-${wallet.id}`}
-                                type="text"
-                                inputMode="decimal"
-                                spellCheck={false}
-                                value={targetEtherInput}
-                                onChange={(event) => {
-                                  setTargetEtherInput(event.target.value);
-                                  setPolicyPreviewError(undefined);
-                                }}
-                              />
-                              <label htmlFor={`max-${wallet.id}`}>Max top-up (ETH)</label>
-                              <input
-                                id={`max-${wallet.id}`}
-                                type="text"
-                                inputMode="decimal"
-                                spellCheck={false}
-                                value={maximumEtherInput}
-                                onChange={(event) => {
-                                  setMaximumEtherInput(event.target.value);
-                                  setPolicyPreviewError(undefined);
-                                }}
-                              />
-                            </div>
-                            {policyPreview !== undefined && policyPreview.ok ? (
-                              <pre className="wei-preview">
-                                {`minimumBalanceWei: ${policyPreview.minimumBalanceWei}\ntargetBalanceWei: ${policyPreview.targetBalanceWei}\nmaximumTopUpWei: ${policyPreview.maximumTopUpWei}`}
-                              </pre>
-                            ) : null}
-                            {policyPreviewError !== undefined ? (
-                              <p className="error-inline">{policyPreviewError}</p>
-                            ) : null}
-                            {policyPreview !== undefined && !policyPreview.ok ? (
-                              <p className="error-inline">{policyPreview.message}</p>
-                            ) : null}
-                            <div className="row">
-                              <button
-                                type="button"
-                                disabled={policyBusyId === wallet.id}
-                                onClick={() => void onSavePolicy(wallet)}
-                              >
-                                Save policy
-                              </button>
-                              <button
-                                type="button"
-                                className="secondary"
-                                disabled={policyBusyId === wallet.id}
-                                onClick={() => {
-                                  setEditingWalletId(undefined);
-                                  setPolicyPreviewError(undefined);
-                                }}
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                        <dl className="facts">
+                          <div>
+                            <dt>ID</dt>
+                            <dd className="mono">{environmentDetail.id}</dd>
                           </div>
-                        )}
+                          <div>
+                            <dt>Project ID</dt>
+                            <dd className="mono">{environmentDetail.projectId}</dd>
+                          </div>
+                          <div>
+                            <dt>Created</dt>
+                            <dd>{formatTimestamp(environmentDetail.createdAt)}</dd>
+                          </div>
+                          <div>
+                            <dt>Updated</dt>
+                            <dd>{formatTimestamp(environmentDetail.updatedAt)}</dd>
+                          </div>
+                        </dl>
+                        <button
+                          type="button"
+                          className={environmentDetail.enabled ? 'secondary' : undefined}
+                          disabled={environmentBusy}
+                          onClick={() => void onToggleEnvironment(environmentDetail)}
+                        >
+                          {environmentDetail.enabled ? 'Disable' : 'Enable'}
+                        </button>
                       </article>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </>
-          ) : null}
-        </section>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h2 className="section-title">Funding history</h2>
-            <button type="button" className="secondary" onClick={() => void loadFundingHistory(token)}>
-              Reload
-            </button>
-          </div>
-          {token === '' ? (
-            <p className="muted">Paste an operator token to load funding history.</p>
-          ) : (
-            <>
-              <div className="filters row">
-                <label htmlFor="history-project">Project ID</label>
-                <input
-                  id="history-project"
-                  name="history-project"
-                  type="text"
-                  spellCheck={false}
-                  placeholder="UUID (optional)"
-                  value={historyProjectFilter}
-                  onChange={(event) => setHistoryProjectFilter(event.target.value)}
-                />
-                <label htmlFor="history-status">Status</label>
-                <select
-                  id="history-status"
-                  name="history-status"
-                  value={historyStatusFilter}
-                  onChange={(event) => setHistoryStatusFilter(event.target.value)}
-                >
-                  <option value="">All statuses</option>
-                  <option value="confirmed">confirmed</option>
-                  <option value="submitted">submitted</option>
-                  <option value="submission_unknown">submission_unknown</option>
-                  <option value="failed">failed</option>
-                  <option value="reverted">reverted</option>
-                  <option value="replaced">replaced</option>
-                  <option value="dropped">dropped</option>
-                  <option value="created">created</option>
-                </select>
-              </div>
-              {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
-              {fundingHistoryState === 'error' ? <p className="error-inline">{fundingHistoryError}</p> : null}
-              {fundingHistoryState === 'empty' ? (
-                <p className="muted">
-                  No funding transactions returned ({String(fundingHistoryTotal)} total).
-                </p>
-              ) : null}
-              {fundingHistoryState === 'ready' ? (
-                <>
-                  <p className="muted">
-                    Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions
-                    (newest first).
-                  </p>
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Project / env</th>
-                          <th>Wallet</th>
-                          <th>Amount</th>
-                          <th>Status</th>
-                          <th>Transaction</th>
-                          <th>Created</th>
-                          <th>Confirmed</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {fundingHistory.map((row) => (
-                          <tr key={row.id}>
-                            <td>
-                              <strong>{row.project.slug}</strong>
-                              <span className="muted"> / {row.environment.slug}</span>
-                            </td>
-                            <td className="mono">
-                              {row.wallet.role}{' '}
-                              <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
-                            </td>
-                            <td className="mono">
-                              {row.amountEther} {row.chain.nativeSymbol}
-                            </td>
-                            <td>
-                              <span className={statusClass(row.status)}>{row.status}</span>
-                            </td>
-                            <td className="mono">
-                              {row.explorerUrl === null ? (
-                                '—'
-                              ) : (
-                                <a href={row.explorerUrl} target="_blank" rel="noreferrer">
-                                  {shortAddress(row.transactionHash ?? '')}
-                                </a>
-                              )}
-                            </td>
-                            <td>{formatTimestamp(row.createdAt)}</td>
-                            <td>{formatTimestamp(row.confirmedAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+        <PanelErrorBoundary panelName="Managed wallets" severity="elevated">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Managed wallets</h2>
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={token === '' || walletsState !== 'ready' || balancesBusy}
+                      onClick={() => void checkListedWalletBalances(token)}
+                    >
+                      {balancesBusy ? 'Checking…' : 'Check balances'}
+                    </button>
+                    <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
+                      Reload
+                    </button>
                   </div>
-                </>
-              ) : null}
-            </>
-          )}
-        </section>
+                </div>
+                {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
+                {token !== '' ? (
+                  <>
+                    <div className="filters row">
+                      <label htmlFor="wallet-project">Project ID</label>
+                      <input
+                        id="wallet-project"
+                        name="wallet-project"
+                        type="text"
+                        spellCheck={false}
+                        placeholder="UUID (optional)"
+                        value={walletProjectFilter}
+                        onChange={(event) => setWalletProjectFilter(event.target.value)}
+                      />
+                      <label htmlFor="wallet-environment">Environment ID</label>
+                      <input
+                        id="wallet-environment"
+                        name="wallet-environment"
+                        type="text"
+                        spellCheck={false}
+                        placeholder="UUID (optional)"
+                        value={walletEnvironmentFilter}
+                        onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
+                      />
+                      <label htmlFor="wallet-enabled">Enabled</label>
+                      <select
+                        id="wallet-enabled"
+                        name="wallet-enabled"
+                        value={walletEnabledFilter}
+                        onChange={(event) => setWalletEnabledFilter(event.target.value)}
+                      >
+                        <option value="">All</option>
+                        <option value="true">enabled</option>
+                        <option value="false">disabled</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => {
+                          if (selectedProjectId !== '') {
+                            setWalletProjectFilter(selectedProjectId);
+                          }
+                        }}
+                      >
+                        Use selected project
+                      </button>
+                    </div>
+                    {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
+                    {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
+                    {walletsState === 'empty' ? (
+                      <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
+                    ) : null}
+                    {walletsState === 'ready' ? (
+                      <>
+                        <p className="muted">
+                          Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
+                          {wallets.length <= BALANCE_AUTO_LOAD_MAX
+                            ? ' Balances load automatically for this list (one live RPC read each); Check balances refreshes.'
+                            : ` Balances are not auto-loaded above ${String(BALANCE_AUTO_LOAD_MAX)} listed wallets (one live RPC read each). Use Check balances.`}
+                        </p>
+                        <div className="table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Project / env</th>
+                                <th>Role</th>
+                                <th>Address</th>
+                                <th>Balance</th>
+                                <th>Flags</th>
+                                <th>Enabled</th>
+                                <th />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {wallets.map((wallet) => {
+                                const balanceView = walletBalances[wallet.id];
+                                return (
+                                  <tr key={wallet.id}>
+                                    <td>
+                                      <strong>{wallet.project.slug}</strong>
+                                      <span className="muted"> / {wallet.environment.slug}</span>
+                                    </td>
+                                    <td>{wallet.role}</td>
+                                    <td className="mono">
+                                      <a
+                                        href={wallet.explorerUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title={wallet.address}
+                                      >
+                                        {shortAddress(wallet.address)}
+                                      </a>
+                                    </td>
+                                    <td>
+                                      {balanceView === undefined ? (
+                                        <button
+                                          type="button"
+                                          className="secondary"
+                                          disabled={balancesBusy}
+                                          onClick={() => void fetchOneWalletBalance(token, wallet.id)}
+                                        >
+                                          Check
+                                        </button>
+                                      ) : null}
+                                      {balanceView?.status === 'loading' ? (
+                                        <span className="muted">Checking…</span>
+                                      ) : null}
+                                      {balanceView?.status === 'observed' ? (
+                                        <>
+                                          <span className="mono">{balanceView.ether} ETH</span>{' '}
+                                          {(() => {
+                                            const chip = balancePolicyChip(
+                                              balanceView.wei,
+                                              wallet.policy?.minimumBalanceWei,
+                                            );
+                                            return <span className={chip.className}>{chip.label}</span>;
+                                          })()}
+                                          <div
+                                            className="muted tiny"
+                                            title={`Observed at ${balanceView.observedAt}`}
+                                          >
+                                            as of {formatClockTime(balanceView.observedAt)}
+                                          </div>
+                                        </>
+                                      ) : null}
+                                      {balanceView?.status === 'unavailable' ? (
+                                        <>
+                                          <span className="badge badge-unknown">unavailable</span>
+                                          <div className="muted tiny" title={balanceView.errorCode}>
+                                            as of {formatClockTime(balanceView.observedAt)}
+                                          </div>
+                                        </>
+                                      ) : null}
+                                      {balanceView?.status === 'error' ? (
+                                        <span className="error-inline" title={balanceView.message}>
+                                          error
+                                        </span>
+                                      ) : null}
+                                    </td>
+                                    <td className="muted">
+                                      startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
+                                      <br />
+                                      reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
+                                    </td>
+                                    <td>
+                                      <span className={enabledBadge(wallet.enabled)}>
+                                        {wallet.enabled ? 'enabled' : 'disabled'}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className={wallet.enabled ? 'secondary' : undefined}
+                                        disabled={walletBusyId === wallet.id}
+                                        onClick={() => void onToggleWallet(wallet)}
+                                      >
+                                        {wallet.enabled ? 'Disable' : 'Enable'}
+                                      </button>{' '}
+                                      <button
+                                        type="button"
+                                        className={wallet.reconciliationEnabled ? 'secondary' : undefined}
+                                        disabled={walletBusyId === wallet.id}
+                                        onClick={() => void onToggleWalletReconciliation(wallet)}
+                                      >
+                                        {wallet.reconciliationEnabled
+                                          ? 'Disable reconcile'
+                                          : 'Enable reconcile'}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Funding policy" severity="quiet">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Funding policy</h2>
+                  <button type="button" className="secondary" onClick={() => void loadPolicyPanel(token)}>
+                    Reload
+                  </button>
+                </div>
+                {token === '' ? (
+                  <p className="muted">Paste an operator token to load funding policies.</p>
+                ) : null}
+                {token !== '' ? (
+                  <>
+                    <p className="hint">
+                      Amounts are entered in ETH and converted once to exact decimal wei strings before
+                      submit. Confirm shows the wei values the API will receive.
+                      {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
+                    </p>
+                    {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
+                    {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
+                    {policyState === 'empty' ? (
+                      <p className="muted">
+                        No wallets returned for policy view ({String(policyWalletsTotal)} total).
+                      </p>
+                    ) : null}
+                    {policyState === 'ready' ? (
+                      <div className="policy-list">
+                        {policyWallets.map((wallet) => {
+                          const isEditing = editingWalletId === wallet.id;
+                          return (
+                            <article key={wallet.id} className="treasury">
+                              <div className="treasury-head">
+                                <h3>
+                                  {wallet.role}{' '}
+                                  <span className="muted">
+                                    · {wallet.project.slug}/{wallet.environment.slug}
+                                  </span>
+                                </h3>
+                              </div>
+                              <p className="mono">
+                                <a href={wallet.explorerUrl} target="_blank" rel="noreferrer">
+                                  {wallet.address}
+                                </a>
+                              </p>
+                              {wallet.policy === null ? (
+                                <p className="muted">No funding policy set.</p>
+                              ) : (
+                                <dl className="facts">
+                                  <div>
+                                    <dt>Minimum</dt>
+                                    <dd className="mono">
+                                      {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
+                                      <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Target</dt>
+                                    <dd className="mono">
+                                      {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
+                                      <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Maximum top-up</dt>
+                                    <dd className="mono">
+                                      {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
+                                      <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
+                                    </dd>
+                                  </div>
+                                  <div>
+                                    <dt>Version</dt>
+                                    <dd>
+                                      v{String(wallet.policy.version)} · updated{' '}
+                                      {formatTimestamp(wallet.policy.updatedAt)}
+                                    </dd>
+                                  </div>
+                                </dl>
+                              )}
+                              {!isEditing ? (
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  onClick={() => beginEditPolicy(wallet)}
+                                >
+                                  Edit policy
+                                </button>
+                              ) : (
+                                <div className="policy-form">
+                                  <div className="filters row">
+                                    <label htmlFor={`min-${wallet.id}`}>Minimum (ETH)</label>
+                                    <input
+                                      id={`min-${wallet.id}`}
+                                      type="text"
+                                      inputMode="decimal"
+                                      spellCheck={false}
+                                      value={minimumEtherInput}
+                                      onChange={(event) => {
+                                        setMinimumEtherInput(event.target.value);
+                                        setPolicyPreviewError(undefined);
+                                      }}
+                                    />
+                                    <label htmlFor={`target-${wallet.id}`}>Target (ETH)</label>
+                                    <input
+                                      id={`target-${wallet.id}`}
+                                      type="text"
+                                      inputMode="decimal"
+                                      spellCheck={false}
+                                      value={targetEtherInput}
+                                      onChange={(event) => {
+                                        setTargetEtherInput(event.target.value);
+                                        setPolicyPreviewError(undefined);
+                                      }}
+                                    />
+                                    <label htmlFor={`max-${wallet.id}`}>Max top-up (ETH)</label>
+                                    <input
+                                      id={`max-${wallet.id}`}
+                                      type="text"
+                                      inputMode="decimal"
+                                      spellCheck={false}
+                                      value={maximumEtherInput}
+                                      onChange={(event) => {
+                                        setMaximumEtherInput(event.target.value);
+                                        setPolicyPreviewError(undefined);
+                                      }}
+                                    />
+                                  </div>
+                                  {policyPreview !== undefined && policyPreview.ok ? (
+                                    <pre className="wei-preview">
+                                      {`minimumBalanceWei: ${policyPreview.minimumBalanceWei}\ntargetBalanceWei: ${policyPreview.targetBalanceWei}\nmaximumTopUpWei: ${policyPreview.maximumTopUpWei}`}
+                                    </pre>
+                                  ) : null}
+                                  {policyPreviewError !== undefined ? (
+                                    <p className="error-inline">{policyPreviewError}</p>
+                                  ) : null}
+                                  {policyPreview !== undefined && !policyPreview.ok ? (
+                                    <p className="error-inline">{policyPreview.message}</p>
+                                  ) : null}
+                                  <div className="row">
+                                    <button
+                                      type="button"
+                                      disabled={policyBusyId === wallet.id}
+                                      onClick={() => void onSavePolicy(wallet)}
+                                    >
+                                      Save policy
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="secondary"
+                                      disabled={policyBusyId === wallet.id}
+                                      onClick={() => {
+                                        setEditingWalletId(undefined);
+                                        setPolicyPreviewError(undefined);
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
+
+        <PanelErrorBoundary panelName="Funding history" severity="quiet">
+          <PanelBody
+            render={() => (
+              <section className="panel">
+                <div className="panel-head">
+                  <h2 className="section-title">Funding history</h2>
+                  <button type="button" className="secondary" onClick={() => void loadFundingHistory(token)}>
+                    Reload
+                  </button>
+                </div>
+                {token === '' ? (
+                  <p className="muted">Paste an operator token to load funding history.</p>
+                ) : (
+                  <>
+                    <div className="filters row">
+                      <label htmlFor="history-project">Project ID</label>
+                      <input
+                        id="history-project"
+                        name="history-project"
+                        type="text"
+                        spellCheck={false}
+                        placeholder="UUID (optional)"
+                        value={historyProjectFilter}
+                        onChange={(event) => setHistoryProjectFilter(event.target.value)}
+                      />
+                      <label htmlFor="history-status">Status</label>
+                      <select
+                        id="history-status"
+                        name="history-status"
+                        value={historyStatusFilter}
+                        onChange={(event) => setHistoryStatusFilter(event.target.value)}
+                      >
+                        <option value="">All statuses</option>
+                        <option value="confirmed">confirmed</option>
+                        <option value="submitted">submitted</option>
+                        <option value="submission_unknown">submission_unknown</option>
+                        <option value="failed">failed</option>
+                        <option value="reverted">reverted</option>
+                        <option value="replaced">replaced</option>
+                        <option value="dropped">dropped</option>
+                        <option value="created">created</option>
+                      </select>
+                    </div>
+                    {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
+                    {fundingHistoryState === 'error' ? (
+                      <p className="error-inline">{fundingHistoryError}</p>
+                    ) : null}
+                    {fundingHistoryState === 'empty' ? (
+                      <p className="muted">
+                        No funding transactions returned ({String(fundingHistoryTotal)} total).
+                      </p>
+                    ) : null}
+                    {fundingHistoryState === 'ready' ? (
+                      <>
+                        <p className="muted">
+                          Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)}{' '}
+                          transactions (newest first).
+                        </p>
+                        <div className="table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Project / env</th>
+                                <th>Wallet</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Transaction</th>
+                                <th>Created</th>
+                                <th>Confirmed</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {fundingHistory.map((row) => (
+                                <tr key={row.id}>
+                                  <td>
+                                    <strong>{row.project.slug}</strong>
+                                    <span className="muted"> / {row.environment.slug}</span>
+                                  </td>
+                                  <td className="mono">
+                                    {row.wallet.role}{' '}
+                                    <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                                  </td>
+                                  <td className="mono">
+                                    {row.amountEther} {row.chain.nativeSymbol}
+                                  </td>
+                                  <td>
+                                    <span className={statusClass(row.status)}>{row.status}</span>
+                                  </td>
+                                  <td className="mono">
+                                    {row.explorerUrl === null ? (
+                                      '—'
+                                    ) : (
+                                      <a href={row.explorerUrl} target="_blank" rel="noreferrer">
+                                        {shortAddress(row.transactionHash ?? '')}
+                                      </a>
+                                    )}
+                                  </td>
+                                  <td>{formatTimestamp(row.createdAt)}</td>
+                                  <td>{formatTimestamp(row.confirmedAt)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : null}
+                  </>
+                )}
+              </section>
+            )}
+          />
+        </PanelErrorBoundary>
 
         {message !== undefined ? <p className="toast ok">{message}</p> : null}
       </main>

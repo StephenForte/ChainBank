@@ -1299,6 +1299,50 @@ Local design choices (TX.21, 2026-08-06):
   `entityType`, and metadata shape; authorization remains in the application
   service.
 
+### C22 — Panel render error boundaries (owner: TX.23)
+
+```ts
+// dashboard/src/panel-error-boundary.tsx
+type PanelFailureSeverity = 'alarm' | 'elevated' | 'quiet';
+function PanelBody(props: { render: () => ReactNode }): ReactNode;
+class PanelErrorBoundary extends Component<{
+  panelName: string;
+  severity: PanelFailureSeverity;
+  isRoot?: boolean;
+  children: ReactNode;
+}> {}
+// One boundary per operator panel + one root backstop in main.tsx.
+// Catches render throws only — not event handlers, effects, or promises.
+```
+
+Local design choices (TX.23, 2026-08-06):
+
+- **Why:** A single render throw in the monolithic `App` unmounted every panel
+  (`panelsRendered: 0`). Fail-permissive C19 findings and C20 alert metadata
+  are the most likely hostile shapes; `formatFindingWei` remains the first
+  line, boundaries the last.
+- **Per-panel isolation:** each of the nine panels has its own boundary so a
+  broken panel degrades alone. Root boundary wraps `<App />` for throws
+  outside any panel or inside a panel fallback.
+- **`PanelBody` is load-bearing.** `App` is one function component; JSX
+  expressions in its `return` run during `App` render, which a wrapping
+  boundary cannot catch. Each panel passes its markup through
+  `<PanelBody render={() => (...)} />` so the throw happens in a descendant
+  of that panel's boundary. Splitting `App.tsx` into modules would remove the
+  need for this indirection — deferred, not rejected.
+- **Loudness is not uniform.** `alarm` (Reconciliation, Treasuries): fallback
+  states plainly that security signal may exist and is not being shown — a
+  calm grey box would be worse than a blank page. `elevated` (Session,
+  Service readiness, Managed wallets): recovery / funding-gate / live-balance
+  surfaces. `quiet` (Projects, Environments, Funding policy, Funding history).
+- **Do not swallow:** `componentDidCatch` logs `[ChainBank] Panel "<name>"
+failed to render` with the error (WeakSet-deduped under StrictMode);
+  `createRoot({ onUncaughtError })` covers escapes. No reset control — a
+  deterministic render throw + retry loops; panels already have Reload for
+  LoadState failures.
+- **Unchanged:** every C17/C20/TX.20 Reconciliation invariant; acknowledge
+  flows; LoadState `error-inline` paths; session token storage.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
@@ -1371,3 +1415,4 @@ Local design choices (TX.21, 2026-08-06):
 - 2026-08-06 — TX.20 amended C17 reconciliation always-visible clause in place (no new number): demote acknowledged critical findings from the always-visible block into the collapsible detail after a C20 acknowledgement; fail closed when alerts are unresolved or no alert row matches; summary distinguishes unacknowledged vs acknowledged. Interacts with C20's standing banner (unchanged) — the panel reads the same open/acknowledged alert lists client-side.
 - 2026-08-06 — TX.21 published C21: `OperatorMutationTransaction` / `OperatorMutationUnitOfWork` so database-only operator mutations and their audit entries commit atomically (generalizes `createFundingDispatchLock`); persist-then-send alert/funding paths remain out of scope.
 - 2026-08-06 — TX.22 amended C20 (finding-identity acknowledgement) and C17 (compact always-visible critical) in place: `POST /v1/alerts/acknowledge-finding` creates persist-only open+ack when no alert row exists (C21 atomic, no email), acknowledges an existing open row rather than inserting a second (TX.19 `23505` adopt), and the dashboard always-visible critical is one dense expandable row with Acknowledge — reducing height, not presence.
+- 2026-08-06 — TX.23 published C22: per-panel React error boundaries plus a root backstop so a render throw isolates to one panel; alarm fallbacks for Reconciliation and Treasuries (unacknowledged criticals / reserve state must not look quietly empty); LoadState paths and fail-permissive finding rendering unchanged.
