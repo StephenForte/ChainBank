@@ -194,9 +194,10 @@ export function App() {
     setFundingHistoryState('loading');
     setFundingHistoryError(undefined);
     try {
+      // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const next = await listFundingTransactions(activeToken.trim(), {
-        projectId: historyProjectFilter.trim() === '' ? undefined : historyProjectFilter.trim(),
-        status: historyStatusFilter === '' ? undefined : historyStatusFilter,
+        ...(historyProjectFilter.trim() === '' ? {} : { projectId: historyProjectFilter.trim() }),
+        ...(historyStatusFilter === '' ? {} : { status: historyStatusFilter }),
         limit: 50,
       });
       setFundingHistory(next.data);
@@ -447,17 +448,15 @@ export function App() {
     setWalletsState('loading');
     setWalletsError(undefined);
     try {
+      // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const next = await listWallets(activeToken.trim(), {
-        projectId: walletProjectFilter.trim() === '' ? undefined : walletProjectFilter.trim(),
-        environmentId: walletEnvironmentFilter.trim() === '' ? undefined : walletEnvironmentFilter.trim(),
-        enabled:
-          walletEnabledFilter === ''
-            ? undefined
-            : walletEnabledFilter === 'true'
-              ? true
-              : walletEnabledFilter === 'false'
-                ? false
-                : undefined,
+        ...(walletProjectFilter.trim() === '' ? {} : { projectId: walletProjectFilter.trim() }),
+        ...(walletEnvironmentFilter.trim() === '' ? {} : { environmentId: walletEnvironmentFilter.trim() }),
+        ...(walletEnabledFilter === 'true'
+          ? { enabled: true }
+          : walletEnabledFilter === 'false'
+            ? { enabled: false }
+            : {}),
         limit: 50,
         offset: 0,
       });
@@ -586,8 +585,9 @@ export function App() {
     setPolicyState('loading');
     setPolicyError(undefined);
     try {
+      // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const next = await listWallets(activeToken.trim(), {
-        projectId: selectedProjectId.trim() === '' ? undefined : selectedProjectId.trim(),
+        ...(selectedProjectId.trim() === '' ? {} : { projectId: selectedProjectId.trim() }),
         limit: 50,
         offset: 0,
       });

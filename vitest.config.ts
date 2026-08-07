@@ -6,7 +6,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
       reportsDirectory: 'coverage',
-      include: ['src/**/*.ts'],
+      include: ['src/**/*.ts', 'dashboard/src/**/*.{ts,tsx}'],
       exclude: ['src/api/server.ts', 'src/jobs/**', 'src/infrastructure/db/migrate.ts', '**/*.d.ts'],
       // Phase 0 baseline: raise these as repository and route tests land.
       thresholds: {
@@ -22,6 +22,15 @@ export default defineConfig({
           name: 'unit',
           include: ['test/unit/**/*.test.ts'],
           environment: 'node',
+        },
+      },
+      {
+        test: {
+          name: 'dashboard',
+          include: ['dashboard/test/**/*.test.{ts,tsx}'],
+          environment: 'jsdom',
+          // toLocale* formatters read the host timezone; pin so CI and local agree.
+          env: { TZ: 'UTC' },
         },
       },
       {

@@ -101,6 +101,15 @@ export default tseslint.config(
     },
   },
   {
+    // Same relaxations as test/** — dashboard tests live under dashboard/test/
+    // so the root test/** block does not apply.
+    files: ['dashboard/test/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
+  {
     files: ['dashboard/**/*.{ts,tsx}'],
     languageOptions: {
       parserOptions: {
