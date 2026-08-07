@@ -265,10 +265,23 @@ rework in an earlier wave; the parenthetical notes say which.
   `git fetch origin && git switch -c <branch> origin/main`.
 - **Naming:** `feat/<task-id-lowercase>-<short-slug>` (e.g. `feat/t2.2-ensure-ready`),
   or `fix/<slug>` for defect work.
-- **Never work in a checkout another worker is using.** Use a separate clone or
-  `git worktree add`. (Wave 2 ran five workers in one checkout; their output landed
-  as a single undifferentiated pile of uncommitted changes that had to be split into
-  five PRs by hand, with two of them entangled beyond clean separation.)
+- **Never work in a checkout another worker is using.** (Wave 2 ran five workers in one
+  checkout; their output landed as a single undifferentiated pile of uncommitted changes
+  that had to be split into five PRs by hand, with two of them entangled beyond clean
+  separation.) That hazard is real — but the remedy below has changed.
+- **Do not create worktrees or clones as sibling folders next to the repo.** This
+  contract used to say "use a separate clone or `git worktree add`", and that produced
+  `ChainBank-tx19` through `ChainBank-tx22` sitting beside the repo, each with its own
+  18M `node_modules`, all still present days after their PRs merged. The repo lives under
+  Dropbox, so every one of them synced to the cloud too. A populated worktree also refuses
+  `git worktree remove` outright, so cleanup is not the one-liner it looks like.
+  - **Default: branch in place in this checkout.** One worker at a time is the normal
+    case, and it needs no isolation at all — just `git status` before you start, and
+    never `git add -A`.
+  - **If workers genuinely run in parallel**, put the worktree under
+    `.claude/worktrees/<task-id>` — it already exists and is already excluded via
+    `.git/info/exclude`, so it stays out of both the workspace and the diff.
+  - **Remove it in the same session you create it.** Do not leave it for the operator.
 - **Do not commit to `main`, and do not merge your own PR.** The operator merges.
 
 ### 2. What you may touch
