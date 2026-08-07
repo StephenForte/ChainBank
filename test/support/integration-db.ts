@@ -77,10 +77,20 @@ export function createIntegrationDatabase(
   };
 }
 
-/** Removes Phase 1–3 rows so constraint tests start from a clean slate. */
+/**
+ * Removes Phase 1–3 rows so constraint tests start from a clean slate.
+ *
+ * `audit_events` is included even though production treats it as append-only.
+ * It has no foreign keys, so `CASCADE` never reaches it, and audit rows would
+ * otherwise survive for the whole run — across files, not just across tests.
+ * Assertions that count audit rows by finding entity id then depend on file
+ * execution order: two files using the same fixture tx hash make one of them
+ * fail depending on which ran first.
+ */
 export async function truncatePhase1Tables(pool: pg.Pool): Promise<void> {
   await pool.query(`
     TRUNCATE TABLE
+      audit_events,
       alerts,
       reconciliation_runs,
       funding_transactions,
