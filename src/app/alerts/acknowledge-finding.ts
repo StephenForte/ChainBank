@@ -9,6 +9,26 @@ import { TREASURY_FINDING_ALERT_TYPE, TREASURY_FINDING_ENTITY_TYPE } from './not
 /** Maximum length of a finding alert entity id (tx hash or condition key). */
 export const MAX_FINDING_ENTITY_ID_LENGTH = 200;
 
+/** A 32-byte transaction hash — the only finding key C18 lowercases. */
+const TRANSACTION_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Normalise a finding identity the way {@link treasuryFindingAlertEntityId}
+ * builds it: transaction hashes are lowercased at the source, condition keys
+ * are **not** — `outgoing_scan_incomplete:<treasuryId>:<errorCode>` keeps the
+ * errorCode's case (`RPC_UNAVAILABLE`).
+ *
+ * Lowercasing unconditionally is a silent-failure bug, not a cosmetic one. The
+ * repository matches `entity_id` exactly, so a lowercased condition key misses
+ * the real open row, falls through to `insertOpen`, and creates a *second*
+ * acknowledged row under an id nothing else uses — leaving the original alert
+ * open and its critical finding on screen behind a 200 response.
+ */
+export function normaliseFindingEntityId(raw: string): string {
+  const trimmed = raw.trim();
+  return TRANSACTION_HASH_PATTERN.test(trimmed) ? trimmed.toLowerCase() : trimmed;
+}
+
 export interface AcknowledgeFindingDependencies {
   readonly operatorMutations: OperatorMutationTransaction;
   readonly clock: Clock;
@@ -67,7 +87,7 @@ export async function acknowledgeFinding(
     );
   }
 
-  const entityId = input.entityId.trim().toLowerCase();
+  const entityId = normaliseFindingEntityId(input.entityId);
   if (entityId.length === 0) {
     throw new ChainBankError('INVALID_REQUEST', 'Finding entityId must be non-empty', {
       publicMessage: 'Finding entity id is required.',
