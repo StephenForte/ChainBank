@@ -11,13 +11,27 @@ the report handed back on completion.
 
 ## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
 
-`main` is at **464 unit tests plus 92 integration tests, 0 skipped** (both counts
-re-run by the planner against `origin/main`), with CI (format, lint,
-typecheck, unit, build, audit, secret scan, migration validation) green on every PR.
+`main` is at **491 unit tests plus 115 integration tests, 0 skipped** (both counts re-run
+by the planner against `origin/main` on 2026-08-06), latest migration `0008`, contracts
+through **C21**.
 
-**No open PRs. Every planned Phase 1–4 task is merged, plus the post-exit operability
-wave TX.11–TX.15. No known open defects.** TX.16 is dispatched (2026-08-06) and TX.17 is
-open but not dispatched — both are post-exit operability, not Phase 1–4 scope.
+**No open PRs. Every planned Phase 1–4 task is merged, plus the full post-exit operability
+wave TX.11–TX.21. No known open defects.**
+
+> ⚠️ **Nothing merged on 2026-08-06 was verified by CI.** GitHub Actions did not dispatch a
+> hosted runner all day — jobs queued and were cancelled, and the two runs that report
+> `failure` are cancellations, not assertion failures (checked: Semgrep passed, no
+> failed-step output). **Ten PRs merged on local gates alone** — #76, #77, #78, #79, #80,
+> #81, #82, #83, #84, #85 — including migrations `0007` and `0008` and the C21 transaction
+> change. Every one had format, lint, typecheck, build, unit and integration re-run by the
+> planner on a scratch database, and the migrations were proved forward on populated data;
+> but that is one machine and one reviewer, with no independent SAST, dependency or
+> misconfiguration scan.
+>
+> **First action when Actions recovers:** run the full workflow against `main` before
+> merging anything new. It will be checking a day's work at once, so a failure will arrive
+> as one large red rather than a bisectable commit — expect to bisect across the ten PRs
+> above rather than reading the first stack trace as the cause.
 
 **A GitHub Actions infrastructure outage on 2026-08-06** made action downloads fail; the
 Trivy "failure" on PR #72 was a setup failure, not a security finding. Re-read any scan
@@ -79,48 +93,52 @@ transactionHash: '0xb10c651e446f00a58b…'}` — twelve minutes after the operat
 **Scope note:** Phase 4 exiting completes this effort. Phases 5–8 remain out of scope;
 TX.15, threshold changes, and any mainnet work are new scope the operator initiates.
 
-| Task                                                                   | Status    | Landed in                                           |
-| ---------------------------------------------------------------------- | --------- | --------------------------------------------------- |
-| T1.1 schema + migration `0001`                                         | ✅ done   | PR #2                                               |
-| T1.2 funding math domain                                               | ✅ done   | PR #2                                               |
-| T1.3 wallet registration + policy APIs                                 | ✅ done   | PR #7                                               |
-| T1.4 signer infrastructure                                             | ✅ done   | PR #2                                               |
-| T1.5 funding dispatch engine                                           | ✅ done   | PR #8                                               |
-| T1.6 `ensure-funded` endpoint                                          | ✅ done   | PR #13                                              |
-| T1.7 funding history API + dashboard                                   | ✅ done   | PR #11                                              |
-| T1.8 reserve-exhaustion email                                          | ✅ done   | PR #21                                              |
-| T2.1 projects/environments + scoped authz (migration `0002`)           | ✅ done   | PR #7                                               |
-| T2.3 operation status + confirmation resume                            | ✅ done   | PR #10                                              |
-| T2.4 dashboard project/environment/wallet/policy views                 | ✅ done   | PR #20                                              |
-| T3.1 alert state machine                                               | ✅ done   | PR #5                                               |
-| T3.2 email templates                                                   | ✅ done   | PR #6                                               |
-| T3.3 alert persistence + cron/manual orchestration                     | ✅ done   | PR #12                                              |
-| T3.4 operational runbooks (PRD §19)                                    | ✅ done   | PR #14                                              |
-| TX.1 CI pipeline                                                       | ✅ done   | PR #4, fixed in #9                                  |
-| TX.2 API hardening (helmet, CORS, rate limit)                          | ✅ done   | Phase 0 + PR #13                                    |
-| TX.4 credential list / disable / revoke / enable                       | ✅ done   | PR #16, #17                                         |
-| TX.6 alert lookup filtered by alert type                               | ✅ done   | PR #15                                              |
-| T1.9 concurrency integration tests                                     | ✅ done   | PR #35                                              |
-| T2.2 `ensure-ready` endpoint (contract C11)                            | ✅ done   | PR #33                                              |
-| TX.5 treasury row lifecycle + ambiguity guard (C12)                    | ✅ done   | PR #32                                              |
-| TX.7 list-environments route (C13)                                     | ✅ done   | PR #34                                              |
-| TX.8 confirm-outside-lock race fix (C7 amendment)                      | ✅ done   | PR #37                                              |
-| TX.3 docs refresh (README + PRD §25)                                   | ✅ done   | PR #39                                              |
-| T4.1 reconciliation use case (C14, migration `0004`)                   | ✅ done   | PR #40                                              |
-| T4.2 reconciler cron entry + Render blueprint                          | ✅ done   | PR #41                                              |
-| T4.3 reconciliation failure alerting (C15)                             | ✅ done   | PR #42                                              |
-| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)           | ✅ done   | PR #44 (two review rounds)                          |
-| T4.4 cron-vs-API concurrency (C16)                                     | ✅ done   | PR #46 (one case `.skip`)                           |
-| TX.10 crash-duplicate prevention (C7 amendment)                        | ✅ done   | PR #48 (two review rounds)                          |
-| TX.11 dashboard reconcile toggle + `weiTransferred` log                | ✅ done   | PR #53                                              |
-| TX.12 dashboard design-system pass (presentation only)                 | ✅ done   | PR #56 (+ #58, #59)                                 |
-| TX.13 live wallet balances (C17)                                       | ✅ done   | PR #61                                              |
-| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`)          | ✅ done   | PR #64                                              |
-| TX.15 escalate critical reconciliation findings (C18)                  | ✅ done   | PR #72                                              |
-| TX.16 reconciliation-runs endpoint + dashboard findings (C19)          | ✅ done   | PR #74 (planner fix included)                       |
-| TX.17 operator acknowledgement of finding alerts (C20, migration 0007) | ✅ done   | PR #79 (planner found event-vs-condition silencing) |
-| TX.18 compact recon panel + auto-load balances (C17 amendment)         | ✅ done   | PR #76 (planner fix included)                       |
-| finding-key rendered as a transaction (dashboard)                      | 🔄 review | PR #80 — planner follow-up from TX.17 browser pass  |
+| Task                                                                   | Status  | Landed in                                                 |
+| ---------------------------------------------------------------------- | ------- | --------------------------------------------------------- |
+| T1.1 schema + migration `0001`                                         | ✅ done | PR #2                                                     |
+| T1.2 funding math domain                                               | ✅ done | PR #2                                                     |
+| T1.3 wallet registration + policy APIs                                 | ✅ done | PR #7                                                     |
+| T1.4 signer infrastructure                                             | ✅ done | PR #2                                                     |
+| T1.5 funding dispatch engine                                           | ✅ done | PR #8                                                     |
+| T1.6 `ensure-funded` endpoint                                          | ✅ done | PR #13                                                    |
+| T1.7 funding history API + dashboard                                   | ✅ done | PR #11                                                    |
+| T1.8 reserve-exhaustion email                                          | ✅ done | PR #21                                                    |
+| T2.1 projects/environments + scoped authz (migration `0002`)           | ✅ done | PR #7                                                     |
+| T2.3 operation status + confirmation resume                            | ✅ done | PR #10                                                    |
+| T2.4 dashboard project/environment/wallet/policy views                 | ✅ done | PR #20                                                    |
+| T3.1 alert state machine                                               | ✅ done | PR #5                                                     |
+| T3.2 email templates                                                   | ✅ done | PR #6                                                     |
+| T3.3 alert persistence + cron/manual orchestration                     | ✅ done | PR #12                                                    |
+| T3.4 operational runbooks (PRD §19)                                    | ✅ done | PR #14                                                    |
+| TX.1 CI pipeline                                                       | ✅ done | PR #4, fixed in #9                                        |
+| TX.2 API hardening (helmet, CORS, rate limit)                          | ✅ done | Phase 0 + PR #13                                          |
+| TX.4 credential list / disable / revoke / enable                       | ✅ done | PR #16, #17                                               |
+| TX.6 alert lookup filtered by alert type                               | ✅ done | PR #15                                                    |
+| T1.9 concurrency integration tests                                     | ✅ done | PR #35                                                    |
+| T2.2 `ensure-ready` endpoint (contract C11)                            | ✅ done | PR #33                                                    |
+| TX.5 treasury row lifecycle + ambiguity guard (C12)                    | ✅ done | PR #32                                                    |
+| TX.7 list-environments route (C13)                                     | ✅ done | PR #34                                                    |
+| TX.8 confirm-outside-lock race fix (C7 amendment)                      | ✅ done | PR #37                                                    |
+| TX.3 docs refresh (README + PRD §25)                                   | ✅ done | PR #39                                                    |
+| T4.1 reconciliation use case (C14, migration `0004`)                   | ✅ done | PR #40                                                    |
+| T4.2 reconciler cron entry + Render blueprint                          | ✅ done | PR #41                                                    |
+| T4.3 reconciliation failure alerting (C15)                             | ✅ done | PR #42                                                    |
+| TX.9 outgoing-scan defects (C14 amendment, migration `0005`)           | ✅ done | PR #44 (two review rounds)                                |
+| T4.4 cron-vs-API concurrency (C16)                                     | ✅ done | PR #46 (one case `.skip`)                                 |
+| TX.10 crash-duplicate prevention (C7 amendment)                        | ✅ done | PR #48 (two review rounds)                                |
+| TX.11 dashboard reconcile toggle + `weiTransferred` log                | ✅ done | PR #53                                                    |
+| TX.12 dashboard design-system pass (presentation only)                 | ✅ done | PR #56 (+ #58, #59)                                       |
+| TX.13 live wallet balances (C17)                                       | ✅ done | PR #61                                                    |
+| TX.14 nonce-gated scan skip (C14 amendment, migration `0006`)          | ✅ done | PR #64                                                    |
+| TX.15 escalate critical reconciliation findings (C18)                  | ✅ done | PR #72                                                    |
+| TX.16 reconciliation-runs endpoint + dashboard findings (C19)          | ✅ done | PR #74 (planner fix included)                             |
+| TX.17 operator acknowledgement of finding alerts (C20, migration 0007) | ✅ done | PR #79 (planner found event-vs-condition silencing)       |
+| TX.18 compact recon panel + auto-load balances (C17 amendment)         | ✅ done | PR #76 (planner fix included)                             |
+| finding-key rendered as a transaction (dashboard)                      | ✅ done | PR #80 — planner follow-up from TX.17 browser pass        |
+| malformed wei blanked the console (dashboard)                          | ✅ done | PR #84 — bot finding on #74, verified worse than reported |
+| TX.19 one open alert per entity key (C20 amendment, migration `0008`)  | ✅ done | PR #83                                                    |
+| TX.20 demote acknowledged criticals from always-visible block (C17)    | ✅ done | PR #82 (planner rebase kept #84's guard)                  |
+| TX.21 atomic operator mutation + audit (**C21**)                       | ✅ done | PR #85 — closes the #79 bot finding                       |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -1225,6 +1243,122 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   the explanatory line lives inside the collapse. TX.17's standing banner supersedes it.
   **Not verified by anyone:** supersede-on-filter is structurally sound by reading but was
   never race-tested, and nothing was exercised against live rate-limited Sepolia.
+
+- **Automated-reviewer findings on #74 and #79 (2026-08-06)** — one fixed, one promoted to
+  TX.21. Both were real; they needed different responses, which is the point of recording
+  them together.
+
+  **Malformed `valueWei` blanked the whole console — fixed in PR #84.** Reported as a
+  Reconciliation-panel crash; measured worse. There is **no error boundary anywhere in
+  `dashboard/`**, so a throw during render unmounts the entire React tree: serving a finding
+  with `valueWei: "1.5"` produced `panelsRendered: 0` and an empty body. `asOptionalString`
+  guards the _type_ of a permissively-passed field, so a non-string becomes `undefined` and
+  renders `—`; it does not guard the _format_, and `"1.5"`, `"abc"` and `"1e18"` are all
+  non-empty strings that reach `BigInt()`. `formatFindingWei` now renders an unparseable
+  amount verbatim and labelled, at the two fail-permissive call sites only — the
+  funding-policy sites keep the strict helper because that data is server-validated and a
+  silent fallback there would hide a real bug. Not reachable from application code
+  (`ReconciliationFinding.valueWei` is a `bigint` at the domain boundary); this is hardening
+  on the path TX.16 built to accept shapes we do not control.
+
+  **Still open, deliberately: there is no React error boundary.** The wei fix closes one
+  route to a blank console, not the class. Any future render throw does the same thing.
+  Worth a task if the dashboard grows.
+
+  **Ack-before-audit was not a TX.17 defect.** The mechanism was real — acknowledgement
+  commits, audit fails, HTTP 500, retry hits `INVALID_STATUS_TRANSITION`, and the audit
+  trail silently loses an entry for a security action. But it was the pattern at **all 28
+  `auditEvents.record` call sites**, against exactly **one** `db.transaction` in the entire
+  codebase. Patching one site would have made TX.17 inconsistent with seventeen other files
+  without making anything safer, and auditing _first_ is worse — a failed mutation would
+  leave an audit entry asserting a change that never happened. Promoted to TX.21.
+
+- **TX.19** ✅ 🟢 One open alert per entity key — DONE (PR #83, C20 amendment, migration
+  `0008`)
+  `alerts` had no uniqueness constraint (verified: only `alerts_pkey`), and the per-treasury
+  advisory lock covers `dispatchFunding`, not alerting, so overlapping runs could both
+  observe "no open alert" and both insert. Partial unique index on
+  `(entity_type, entity_id, alert_type) WHERE state = 'open'`, plus `23505` adopt-as-dedupe
+  at all four `insertOpen` callers.
+
+  **The predicate must be `state = 'open'`, and the reason is now doubly established.** My
+  prompt said partial was required because C20 keeps an acknowledged row alongside a new
+  open row. The worker found a second reason first: **C10 keeps `resolved` alongside `open`
+  too.** Confirmed independently at review — `CREATE UNIQUE INDEX` on those columns without
+  the predicate dies with `Key (treasury, t-1, treasury_reserve) is duplicated`.
+
+  Verified at review on a live database: second `open` rejected; `acknowledged` alongside
+  `open` allowed; `resolved` alongside `open` allowed; data md5 identical across `0008`;
+  forward-from-`0007` index set identical to a fresh apply. The adopt path was checked for
+  vacuity by replacing `isUniqueViolation(error)` with `false` and watching the test go red.
+
+  **The worker undersold their best decision.** Their handoff described the balance-alert
+  race path as "skips send." It does not — it **re-enters `evaluateTreasuryAlerts`**, because
+  the transition was computed from a miss. Naively skipping would have lost an escalation: A
+  opens a `warning`, B loses the race, the balance is meanwhile `critical`, and adopting A's
+  stale row means the critical email never goes out.
+
+  **Known and accepted:** the recursion has no depth bound — termination relies on the winner
+  row still existing next pass, which it will. And rethrow-on-no-winner is correct for
+  findings (C18 gives them no resolve path) but for C10/C15 there is a narrow window where
+  the winner resolves between violation and re-read, where the path now throws rather than
+  writing a duplicate. Noisy, not dangerous, self-heals next run.
+
+- **TX.20** ✅ 🟢 Demote acknowledged criticals from the always-visible block — DONE
+  (PR #82, C17 amendment)
+  Operator feedback: _"I don't need to see this giant thing forever."_ TX.18's always-visible
+  criticals predated TX.17's acknowledgement, so an acknowledged finding cleared the standing
+  banner but stayed permanently large in the Reconciliation panel. The invariant becomes
+  _never hide an **unacknowledged** critical_, which is safe only because acknowledgement
+  requires a human and a note.
+
+  Verified in a browser at review, on the ambiguous cases rather than the happy path: an
+  uppercase finding hash matched a lowercased alert; a **truncated** open page refused to
+  demote despite a matching acknowledged row; during a 9-second alerts fetch the finding
+  stayed `critical` and always-visible with **no flash of nothing-critical**; and the summary
+  distinguishes unacknowledged from acknowledged rather than claiming a count it isn't
+  showing.
+
+  **Two fail-closed cases the worker handled that the prompt never specified.** Page
+  truncation — `openFindingAlertsComplete` is derived from `total <= data.length` and reset
+  to `false` at the _start_ of every load, so a stale `true` cannot authorise a demotion
+  mid-refetch. And **open beats acknowledged**, checked before the acknowledged list — the
+  same rule TX.19 was enforcing in SQL that same afternoon, arrived at independently on the
+  client. Without it, a scan-incomplete condition acknowledged once and then recurring would
+  have been hidden while genuinely unacknowledged, which is the security hole this task
+  could have had.
+
+  **Planner action:** PR #84 landed after this branched, and TX.20 had extracted the finding
+  render into `renderCriticalFinding` — correct shape, but the extracted helper carried the
+  old `formatWeiAsEther`. Resolving in favour of their structure, which is right, would have
+  **silently reverted #84** and reinstated the blank-console crash. Resolved by keeping their
+  structure and restoring `formatFindingWei` inside the helper.
+
+- **TX.21** ✅ 🟢 Atomic operator mutation + audit — DONE (PR #85, **C21**, no migration)
+  From the #79 finding above. `OperatorMutationTransaction` opens one transaction, rebinds
+  repository factories to the transaction client, and hands the use case a typed unit of
+  work — the same shape `createFundingDispatchLock` already used, so **no repository
+  implementation changed**.
+
+  **The split is the task.** Eleven database-only use cases converted; the **seven
+  persist-then-send sites deliberately excluded** and verified untouched in the diff.
+  Wrapping those would have undone what makes C10/C15/C18 recoverable: an email already
+  delivered cannot be rolled back, so a rollback destroys only the record that it happened.
+
+  Verified at review by removing `db.transaction` from the unit of work and re-running the
+  suite — two independent sites went red, `expected 'acknowledged' to be 'open'` and the
+  credential-revoke equivalent. The first assertion **is the originally reported bug**,
+  reproduced exactly.
+
+  The hazard I went looking for is absent: `checkTreasuryBalance` completes its RPC read
+  _before_ the transaction opens, so no network round trip is held inside a database
+  transaction. Nothing reachable inside `FundingDispatchLock.runExclusive` calls an
+  `operatorMutations` path, so no savepoint-instead-of-transaction case exists.
+  `wallets.test.ts` shows 272 changed lines and has **zero** `expect()` lines added or
+  removed — reindentation from dependency threading.
+
+  **Not verified by anyone:** rollback is proven by injected audit failure, not by killing a
+  connection mid-commit under concurrency.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
