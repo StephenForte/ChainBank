@@ -11,14 +11,13 @@ the report handed back on completion.
 
 ## Status (updated 2026-08-07 — **PHASE 4 EXITED**; this effort's scope is complete)
 
-`main` is at **498 unit tests plus 118 integration tests, 0 skipped** (both counts re-run
-by the planner against `origin/main` on 2026-08-07), latest migration `0008` (next free
-`0009`), contracts through **C22** (next free **C23**).
+`main` is at **498 unit plus 37 dashboard plus 118 integration tests, 0 skipped** (all three
+counts re-run by the planner against `origin/main` on 2026-08-07), latest migration `0008`
+(next free `0009`), contracts through **C22** (next free **C23**).
 
 **No open PRs. Every planned Phase 1–4 task is merged, plus the full post-exit operability
-wave TX.11–TX.24.** No known open _defects_ — but one known open **gap**: `dashboard/` has
-zero automated tests, so every dashboard invariant is verified only by hand. See the task
-tree entry at the end.
+wave TX.11–TX.25.** No known open defects and **no known open gaps** — TX.25 closed the last
+one. `dashboard/` went from zero automated tests to 37 with its own CI gate.
 
 **`main` is green in CI as of 2026-08-07T04:34Z** (push run, all jobs including
 `migration validation`). That is the first green push to `main` since 2026-08-06T23:48Z.
@@ -164,7 +163,7 @@ TX.15, threshold changes, and any mainnet work are new scope the operator initia
 | TX.22 acknowledge any finding + compact critical card                  | ✅ done | PR #87                                                    |
 | TX.23 per-panel error boundaries (**C22**)                             | ✅ done | PR #90                                                    |
 | TX.24 split App.tsx into per-panel components (pure refactor)          | ✅ done | PR #91                                                    |
-| dashboard has no automated tests                                       | 🔴 open | not dispatched — see task tree                            |
+| TX.25 dashboard test coverage (37 tests, own CI gate)                  | ✅ done | PR #96 — coverage script fixed in #97                     |
 | condition-key ack silently created a phantom row                       | ✅ done | PR #88 — reported after TX.22, confirmed and fixed        |
 | integration suite order-dependent; `main` CI-red since TX.22           | ✅ done | PR #93 — `audit_events` never truncated between tests     |
 
@@ -1508,6 +1507,9 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   exists is static evidence the implementing code is present and unchanged. With **zero
   automated tests for `dashboard/`**, that is weaker than running them, and it is the strongest
   argument for the dashboard-test task below.
+  _(Superseded 2026-08-07 by TX.25: the shared invariants are now asserted, and the C22
+  isolation this refactor could have silently broken has a regression test. The browser
+  matrix named above is still not automated.)_
 
 - **DEFECT** ✅ 🟢 Integration suite was order-dependent; `main` was CI-red for a day — DONE
   (PR #93, test-only, no contract, no migration)
@@ -1560,12 +1562,67 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   collisions may exist and would no longer fail loudly. `truncatePhase1Tables` is used only
   by `test/integration/*` (`test/e2e` is a placeholder), so there is no e2e exposure.
 
-- **OPEN — dashboard has no automated tests.** 🔴 Not dispatched.
-  `dashboard/` has zero test files. Every invariant from TX.13, TX.16, TX.18, TX.20, TX.22, TX.23
-  and TX.24 is held in place by the code alone, and each has been verified only by hand in a
-  browser. TX.24 made the cost concrete: a 2445-line refactor whose behavioural verification had
-  to be argued from grep counts. A component harness would let the fail-closed demotion rules,
-  the 25/26 boundary and the case-preservation rule be asserted rather than re-observed.
+- **TX.25** ✅ 🟢 Dashboard test coverage — DONE (PR #96, coverage script fixed in PR #97,
+  no contract, no migration)
+
+  `dashboard/` had **zero test files** across 4,198 lines. Every invariant from TX.13, TX.16,
+  TX.18, TX.20, TX.22, TX.23 and TX.24 was held in place by the code alone and verified only
+  by hand in a browser. TX.24 made the cost concrete: a 2,445-line refactor whose behavioural
+  verification had to be argued from grep counts. Now **37 tests** in two files, with a
+  dedicated `dashboard tests` CI job.
+
+  **The harness, and why it is shaped this way.** `dashboard/` is a separate TypeScript
+  project — DOM lib, JSX, bundler resolution — and the root `tsconfig.json` excludes it with
+  `lib: ["ES2023"]` and `types: ["node"]`. A test under `test/unit/` importing
+  `dashboard-shared.ts` drags it into the root typecheck, where `localStorage` does not exist
+  as a type; TypeScript's `exclude` does not apply to files reached through imports. So the
+  tests live in **`dashboard/test/`**, compile against `dashboard/tsconfig.json`, and run in a
+  `dashboard` vitest project under jsdom. `npm run typecheck` now runs **both** tsconfigs.
+
+  **`TZ=UTC` is pinned on the vitest project**, because `formatTimestamp`, `formatClockTime`
+  and `formatCompactRunTime` call `toLocale*` and `TZ` was pinned nowhere in this repo.
+  Verified by the planner under hostile host timezones: `TZ=Asia/Tokyo` and
+  `TZ=America/Denver` both give 37 passed. Without the pin these would have been green
+  locally and red in CI — the same failure shape as PR #93 the same day.
+
+  **A latent defect this exposed, worth recording on its own.** The dashboard project had
+  **never been typechecked in CI**: `npm run typecheck` was root-only and the root config
+  excludes `dashboard`. Three `exactOptionalPropertyTypes` errors had been sitting in
+  `App.tsx` (lines 197, 450, 589) — `prop: string | undefined` passed where `prop?: string`
+  was expected. Confirmed by the planner on clean `main` at `8a00d89` before the fix landed.
+  The dispatch prompt had declared `dashboard/src/**` off-limits _and_ mandated the
+  dual-tsconfig typecheck, which were **unsatisfiable together**; that was a planner error,
+  and the worker was right to unblock it and flag it rather than widen scope silently. The
+  fix omits absent keys instead of passing `undefined`; `api.ts` guards every parameter with
+  `if (query.X !== undefined)`, so the emitted URLs are unchanged — verified, not assumed.
+
+  **The tests are not decoration — this was measured.** The planner mutated each protected
+  invariant in the source and confirmed the suite catches it. All seven caught: lowercasing
+  the `outgoing_scan_incomplete` condition key (re-introduces PR #88), `areFindingAlertsResolved`
+  always true, dropping the `openAlertsComplete` guard, `balancePolicyChip` `<` → `<=`,
+  dropping the `explorerTxUrl` hash guard (PR #80), dropping the `formatFindingWei` numeric
+  guard (PR #84), and disabling `getDerivedStateFromError` (C22). Source restored after each.
+
+  **The C22 pair is the load-bearing test.** `panel-error-boundary.test.tsx` asserts both
+  directions: a throw **inside** `PanelBody` leaves the other 8 panels rendering, and a throw
+  in **eagerly evaluated JSX** is _not_ caught by the panel boundary — all 9 panels vanish and
+  the root backstop shows with severity forced to `alarm`. The negative control is what makes
+  the positive one mean something; without it the test would pass against a `PanelBody` that
+  had been inlined into a placebo.
+
+  **Coverage now includes `dashboard/src`.** The reported number **drops from 58.01% to
+  47.82% lines** — that is 4,198 previously invisible lines entering the denominator, not a
+  regression. PR #96 extended `coverage.include` but left `test:coverage` running the unit
+  project only, so it reported `dashboard/src` at 0% and hid all 37 tests; PR #97 fixed the
+  script. Thresholds are deliberately unchanged (lines/functions/statements ≥20, branches
+  ≥15) and pass at 47.41/40.22/34.65/47.82.
+
+  **Not covered, stated plainly:** no panel-by-panel rendering tests for the nine panels; no
+  `api.ts` fetch-layer tests (needs request mocking); `BALANCE_AUTO_LOAD_MAX` asserted as
+  constant-plus-boundary rather than by exercising App's auto-load effect; `e2e` still a
+  placeholder. All were explicitly out of scope. `TZ` is pinned but **`LANG` is not** — if a
+  CI image ships a non-en locale, the three `toLocale*` tests are the canary. They fail
+  loudly rather than silently, which is the right failure mode.
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
