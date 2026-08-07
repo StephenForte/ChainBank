@@ -9,10 +9,10 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
+## Status (updated 2026-08-07 — **PHASE 4 EXITED**; this effort's scope is complete)
 
 `main` is at **498 unit tests plus 118 integration tests, 0 skipped** (both counts re-run
-by the planner against `origin/main` on 2026-08-06), latest migration `0008` (next free
+by the planner against `origin/main` on 2026-08-07), latest migration `0008` (next free
 `0009`), contracts through **C22** (next free **C23**).
 
 **No open PRs. Every planned Phase 1–4 task is merged, plus the full post-exit operability
@@ -20,24 +20,44 @@ wave TX.11–TX.24.** No known open _defects_ — but one known open **gap**: `d
 zero automated tests, so every dashboard invariant is verified only by hand. See the task
 tree entry at the end.
 
-> ⚠️ **Nothing merged on 2026-08-06 was verified by CI.** GitHub Actions did not dispatch a
-> hosted runner all day — jobs queued and were cancelled, and the two runs that report
-> `failure` are cancellations, not assertion failures (checked: Semgrep passed, no
-> failed-step output). **Ten PRs merged on local gates alone** — #76, #77, #78, #79, #80,
-> #81, #82, #83, #84, #85 — including migrations `0007` and `0008` and the C21 transaction
-> change. Every one had format, lint, typecheck, build, unit and integration re-run by the
-> planner on a scratch database, and the migrations were proved forward on populated data;
-> but that is one machine and one reviewer, with no independent SAST, dependency or
-> misconfiguration scan.
+**`main` is green in CI as of 2026-08-07T04:34Z** (push run, all jobs including
+`migration validation`). That is the first green push to `main` since 2026-08-06T23:48Z.
+
+> ⚠️ **This section previously claimed that nothing merged on 2026-08-06 was verified by CI,
+> and that Actions had not dispatched a runner all day. That was wrong**, and it was wrong in
+> the direction that hides problems. The claim was audited on 2026-08-07 against
+> `gh pr view <n> --json statusCheckRollup` for every PR from #76 to #92. What actually
+> happened:
 >
-> **First action when Actions recovers:** run the full workflow against `main` before
-> merging anything new. It will be checking a day's work at once, so a failure will arrive
-> as one large red rather than a bisectable commit — expect to bisect across the ten PRs
-> above rather than reading the first stack trace as the cause.
+> | PRs           | Gate at merge                                                  |
+> | ------------- | -------------------------------------------------------------- |
+> | #76, #85, #86 | ✅ green — CI ran and passed                                   |
+> | **#77–#84**   | ⚠️ **no CI run at all** — zero check-runs on the head commit   |
+> | **#87–#92**   | ❌ **red** — `migration validation` failed on a real assertion |
+>
+> So eight PRs merged ungated (including C20/TX.17, TX.19, TX.20 and the #84 wei guard), and
+> six merged over a red gate. The reds were **not** cancellations: all six failed at the
+> identical location, `test/integration/alerts-route.test.ts:745`. One defect, six merges —
+> the red was masking nothing else. Fixed in PR #93; see the entry below.
+>
+> **The lesson is about this file, not about Actions.** A status note asserting a CI outage
+> survived a day of merges because it was read rather than checked, and it converted six real
+> red gates into expected noise. Before trusting any gate claim written here, re-derive it:
+>
+> ```
+> gh pr view <n> --json statusCheckRollup --jq '[.statusCheckRollup[]?|{name,conclusion}]'
+> ```
+>
+> Note that `gh run list --commit <sha>` returns nothing useful here; get run ids from the
+> check-run `detailsUrl` instead.
 
 **A GitHub Actions infrastructure outage on 2026-08-06** made action downloads fail; the
 Trivy "failure" on PR #72 was a setup failure, not a security finding. Re-read any scan
-result from that day before treating it as signal.
+result from that day before treating it as signal. Checked 2026-08-07: #72's checks **did**
+run, and five jobs report `FAILURE` — `format`, `Trivy`, `dependency audit`, `secret scan`
+and `migration validation`. Several unrelated jobs failing together is consistent with the
+setup-failure reading, and nothing contradicts it, but only the Trivy job was ever
+investigated. The other four were never explained and are not evidence of anything yet.
 
 **BATCHER's policy was raised to min 0.6 / target 1.2 / maxTopUp 0.6** — roughly a
 three-day floor at the measured 0.142–0.181 ETH/day burn. Confirm the first top-up under
@@ -146,6 +166,7 @@ TX.15, threshold changes, and any mainnet work are new scope the operator initia
 | TX.24 split App.tsx into per-panel components (pure refactor)          | ✅ done | PR #91                                                    |
 | dashboard has no automated tests                                       | 🔴 open | not dispatched — see task tree                            |
 | condition-key ack silently created a phantom row                       | ✅ done | PR #88 — reported after TX.22, confirmed and fixed        |
+| integration suite order-dependent; `main` CI-red since TX.22           | ✅ done | PR #93 — `audit_events` never truncated between tests     |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -1474,6 +1495,57 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
   exists is static evidence the implementing code is present and unchanged. With **zero
   automated tests for `dashboard/`**, that is weaker than running them, and it is the strongest
   argument for the dashboard-test task below.
+
+- **DEFECT** ✅ 🟢 Integration suite was order-dependent; `main` was CI-red for a day — DONE
+  (PR #93, test-only, no contract, no migration)
+
+  `main` failed the `migration validation` job on **every push from the TX.22 merge
+  (2026-08-07T00:22Z) until PR #93**. Six PRs merged over that red. All six failed at the
+  same assertion, `test/integration/alerts-route.test.ts:745`, `expected '1' to be '0'`.
+
+  **Test isolation, not production.** `acknowledgeFinding` is correctly persist-only and
+  emits no email audit. Three facts had to line up:
+
+  1. `truncatePhase1Tables` did not clear `audit_events`, and that table has **no foreign
+     keys** — confirmed against `information_schema` — so `TRUNCATE … CASCADE` never reached
+     it. The only thing clearing it in the whole suite was
+     `operator-mutation-audit-atomicity.test.ts`. Audit rows survived run-wide, **across
+     files**, not just across tests.
+  2. Two integration files used the **same fixture tx hash** `0xef…ef` (32 repeats):
+     `alerts-route.test.ts:646` and `cron-vs-api-concurrency.test.ts:459`.
+  3. The cron file drives a genuine `unexplained_outgoing_transfer` for that hash, which
+     writes `treasury.alert.email.failed` (`EMAIL_PROVIDER_UNAVAILABLE`) keyed by
+     `findingEntityId`. `alerts-route.test.ts:737` counts email audits **by hash** and
+     asserts `'0'`.
+
+  Whether the assertion held depended purely on **file execution order**. Locally
+  `alerts-route` runs first and the suite is green; in CI the order differs and it is red.
+  That is why the planner's local 118/118 and CI's 117/1 disagreed for a day — both were
+  accurate readings of an order-dependent suite, so neither reading exposed the other.
+
+  This is the **C18 event-vs-condition family again**, in a new place: an immutable
+  `unexplained_outgoing_transfer` keyed by lowercased tx hash, colliding as _fixture data_
+  rather than as production key handling. That makes five.
+
+  **Two rules this buys:**
+
+  - **A green local integration run is not an order-independent one.** To reproduce a
+    suspected ordering bug, run two files in **separate processes** against one database:
+
+    ```
+    npx vitest run --project integration test/integration/cron-vs-api-concurrency.test.ts
+    npx vitest run --project integration test/integration/alerts-route.test.ts
+    ```
+
+    That yields the identical `AssertionError`. It passes with the fix.
+
+  - **Fixture tx hashes are shared global state** while any table escapes the truncate.
+    Before reusing a `0x<byte>.repeat(32)` hash, grep for it across `test/`.
+
+  **Residual risk, stated plainly:** the truncate now **masks** the whole collision class
+  rather than surfacing it. Only this one hash was grepped; other cross-file fixture
+  collisions may exist and would no longer fail loudly. `truncatePhase1Tables` is used only
+  by `test/integration/*` (`test/e2e` is a placeholder), so there is no e2e exposure.
 
 - **OPEN — dashboard has no automated tests.** 🔴 Not dispatched.
   `dashboard/` has zero test files. Every invariant from TX.13, TX.16, TX.18, TX.20, TX.22, TX.23
