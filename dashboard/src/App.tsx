@@ -50,6 +50,7 @@ import { EnvironmentsPanel } from './panels/environments-panel';
 import { ProjectsPanel } from './panels/projects-panel';
 import { ManagedWalletsPanel } from './panels/managed-wallets-panel';
 import { ServiceReadinessPanel } from './panels/service-readiness-panel';
+import { SessionPanel } from './panels/session-panel';
 import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 
 export function App() {
@@ -876,47 +877,16 @@ export function App() {
         <PanelErrorBoundary panelName="Session" severity="elevated">
           <PanelBody
             render={() => (
-              <section className="panel">
-                <h2 className="section-title">Session</h2>
-                <form className="token-form" onSubmit={onSaveToken}>
-                  <label htmlFor="token">Operator bearer token</label>
-                  <input
-                    id="token"
-                    name="token"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="cb_…"
-                    value={tokenInput}
-                    onChange={(event) => setTokenInput(event.target.value)}
-                  />
-                  <div className="row">
-                    <button type="submit" disabled={sessionBusy}>
-                      Save for this tab
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={sessionBusy}
-                      onClick={() => {
-                        refreshAll(token);
-                      }}
-                    >
-                      Refresh all
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={sessionBusy || token === ''}
-                      onClick={() => void onTestEmail()}
-                    >
-                      Send test email
-                    </button>
-                  </div>
-                  <p className="hint">Stored in sessionStorage only. Never put a private key here.</p>
-                  {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
-                </form>
-              </section>
+                            <SessionPanel
+                tokenInput={tokenInput}
+                setTokenInput={setTokenInput}
+                sessionBusy={sessionBusy}
+                onSaveToken={onSaveToken}
+                refreshAll={refreshAll}
+                token={token}
+                onTestEmail={onTestEmail}
+                sessionError={sessionError}
+              />
             )}
           />
         </PanelErrorBoundary>
