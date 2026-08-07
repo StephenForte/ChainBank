@@ -14,78 +14,90 @@ export type ProjectsPanelProps = {
   readonly onToggleProject: (project: ProjectResource) => Promise<void>;
 };
 
-export function ProjectsPanel({ loadProjectsPanel, token, projectsState, projectsError, projectsTotal, projects, selectedProjectId, setSelectedProjectId, projectBusyId, onToggleProject }) {
+export function ProjectsPanel({
+  loadProjectsPanel,
+  token,
+  projectsState,
+  projectsError,
+  projectsTotal,
+  projects,
+  selectedProjectId,
+  setSelectedProjectId,
+  projectBusyId,
+  onToggleProject,
+}: ProjectsPanelProps) {
   return (
-<section className="panel">
-  <div className="panel-head">
-    <h2 className="section-title">Projects</h2>
-    <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
-      Reload
-    </button>
-  </div>
-  {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
-  {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
-  {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
-  {projectsState === 'empty' ? (
-    <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
-  ) : null}
-  {projectsState === 'ready' ? (
-    <>
-      <p className="muted">
-        Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to
-        scope environments and funding policy.
-      </p>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Slug</th>
-              <th>Name</th>
-              <th>Enabled</th>
-              <th>Select</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {projects.map((project) => (
-              <tr
-                key={project.id}
-                className={selectedProjectId === project.id ? 'row-selected' : undefined}
-              >
-                <td className="mono">{project.slug}</td>
-                <td>{project.name}</td>
-                <td>
-                  <span className={enabledBadge(project.enabled)}>
-                    {project.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => {
-                      setSelectedProjectId(project.id);
-                    }}
-                  >
-                    {selectedProjectId === project.id ? 'Selected' : 'Select'}
-                  </button>
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    className={project.enabled ? 'secondary' : undefined}
-                    disabled={projectBusyId === project.id}
-                    onClick={() => void onToggleProject(project)}
-                  >
-                    {project.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <section className="panel">
+      <div className="panel-head">
+        <h2 className="section-title">Projects</h2>
+        <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
+          Reload
+        </button>
       </div>
-    </>
-  ) : null}
+      {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
+      {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
+      {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
+      {projectsState === 'empty' ? (
+        <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
+      ) : null}
+      {projectsState === 'ready' ? (
+        <>
+          <p className="muted">
+            Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to scope
+            environments and funding policy.
+          </p>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Slug</th>
+                  <th>Name</th>
+                  <th>Enabled</th>
+                  <th>Select</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map((project) => (
+                  <tr
+                    key={project.id}
+                    className={selectedProjectId === project.id ? 'row-selected' : undefined}
+                  >
+                    <td className="mono">{project.slug}</td>
+                    <td>{project.name}</td>
+                    <td>
+                      <span className={enabledBadge(project.enabled)}>
+                        {project.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => {
+                          setSelectedProjectId(project.id);
+                        }}
+                      >
+                        {selectedProjectId === project.id ? 'Selected' : 'Select'}
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className={project.enabled ? 'secondary' : undefined}
+                        disabled={projectBusyId === project.id}
+                        onClick={() => void onToggleProject(project)}
+                      >
+                        {project.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
+    </section>
   );
 }

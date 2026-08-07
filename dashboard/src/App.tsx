@@ -879,7 +879,7 @@ export function App() {
         <PanelErrorBoundary panelName="Session" severity="elevated">
           <PanelBody
             render={() => (
-                            <SessionPanel
+              <SessionPanel
                 tokenInput={tokenInput}
                 setTokenInput={setTokenInput}
                 sessionBusy={sessionBusy}
@@ -896,7 +896,7 @@ export function App() {
         <PanelErrorBoundary panelName="Service readiness" severity="elevated">
           <PanelBody
             render={() => (
-                            <ServiceReadinessPanel
+              <ServiceReadinessPanel
                 loadReadiness={loadReadiness}
                 readinessState={readinessState}
                 readinessError={readinessError}
@@ -909,7 +909,7 @@ export function App() {
         <PanelErrorBoundary panelName="Treasuries" severity="alarm">
           <PanelBody
             render={() => (
-                            <TreasuriesPanel
+              <TreasuriesPanel
                 loadTreasuries={loadTreasuries}
                 token={token}
                 treasuriesState={treasuriesState}
@@ -925,7 +925,7 @@ export function App() {
         <PanelErrorBoundary panelName="Reconciliation" severity="alarm">
           <PanelBody
             render={() => (
-                            <ReconciliationPanel
+              <ReconciliationPanel
                 loadReconciliationRuns={loadReconciliationRuns}
                 loadFindingAlerts={loadFindingAlerts}
                 token={token}
@@ -963,7 +963,7 @@ export function App() {
         <PanelErrorBoundary panelName="Projects" severity="quiet">
           <PanelBody
             render={() => (
-                            <ProjectsPanel
+              <ProjectsPanel
                 loadProjectsPanel={loadProjectsPanel}
                 token={token}
                 projectsState={projectsState}
@@ -982,7 +982,7 @@ export function App() {
         <PanelErrorBoundary panelName="Environments" severity="quiet">
           <PanelBody
             render={() => (
-                            <EnvironmentsPanel
+              <EnvironmentsPanel
                 loadProjectEnvironments={loadProjectEnvironments}
                 loadEnvironmentDetail={loadEnvironmentDetail}
                 token={token}
@@ -1005,7 +1005,7 @@ export function App() {
         <PanelErrorBoundary panelName="Managed wallets" severity="elevated">
           <PanelBody
             render={() => (
-                            <ManagedWalletsPanel
+              <ManagedWalletsPanel
                 checkListedWalletBalances={checkListedWalletBalances}
                 loadWalletsPanel={loadWalletsPanel}
                 token={token}
@@ -1034,7 +1034,7 @@ export function App() {
         <PanelErrorBoundary panelName="Funding policy" severity="quiet">
           <PanelBody
             render={() => (
-                            <FundingPolicyPanel
+              <FundingPolicyPanel
                 loadPolicyPanel={loadPolicyPanel}
                 token={token}
                 selectedProjectId={selectedProjectId}
@@ -1064,7 +1064,7 @@ export function App() {
         <PanelErrorBoundary panelName="Funding history" severity="quiet">
           <PanelBody
             render={() => (
-                            <FundingHistoryPanel
+              <FundingHistoryPanel
                 loadFundingHistory={loadFundingHistory}
                 token={token}
                 historyProjectFilter={historyProjectFilter}

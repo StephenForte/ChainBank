@@ -1,4 +1,9 @@
-import { ApiClientError, type AlertResource, type ReconciliationRunResource, type TreasuryResource } from './api';
+import {
+  ApiClientError,
+  type AlertResource,
+  type ReconciliationRunResource,
+  type TreasuryResource,
+} from './api';
 
 export const TOKEN_STORAGE_KEY = 'chainbank.operatorToken';
 /** Collapsed/expanded for Reconciliation warnings + run history only (TX.18). */
@@ -438,7 +443,9 @@ export function formatFindingWei(value: unknown): string {
   return `${formatWeiAsEther(value)} ETH`;
 }
 
-export function parseEtherInputToWei(value: string): { ok: true; wei: string } | { ok: false; message: string } {
+export function parseEtherInputToWei(
+  value: string,
+): { ok: true; wei: string } | { ok: false; message: string } {
   const trimmed = value.trim();
   if (trimmed === '') {
     return { ok: false, message: 'Amount is required.' };
