@@ -11,7 +11,7 @@ the report handed back on completion.
 
 ## Status (updated 2026-08-06 — **PHASE 4 EXITED**; this effort's scope is complete)
 
-`main` is at **491 unit tests plus 115 integration tests, 0 skipped** (both counts re-run
+`main` is at **498 unit tests plus 118 integration tests, 0 skipped** (both counts re-run
 by the planner against `origin/main` on 2026-08-06), latest migration `0008`, contracts
 through **C21**.
 
@@ -139,6 +139,8 @@ TX.15, threshold changes, and any mainnet work are new scope the operator initia
 | TX.19 one open alert per entity key (C20 amendment, migration `0008`)  | ✅ done | PR #83                                                    |
 | TX.20 demote acknowledged criticals from always-visible block (C17)    | ✅ done | PR #82 (planner rebase kept #84's guard)                  |
 | TX.21 atomic operator mutation + audit (**C21**)                       | ✅ done | PR #85 — closes the #79 bot finding                       |
+| TX.22 acknowledge any finding + compact critical card                  | ✅ done | PR #87                                                    |
+| condition-key ack silently created a phantom row                       | ✅ done | PR #88 — reported after TX.22, confirmed and fixed        |
 
 Also merged: pagination query-schema fix (#18), hosted-deployment verification
 runbook (#22), dashboard troubleshooting notes (#19), and treasury key
@@ -1359,6 +1361,62 @@ Legend: 🔴 = strongest model (security/money/concurrency path) · 🟢 = cheap
 
   **Not verified by anyone:** rollback is proven by injected audit failure, not by killing a
   connection mid-commit under concurrency.
+
+- **TX.22** ✅ 🟢 Acknowledge any critical finding + compact card — DONE (PR #87, C20/C17
+  amended in place)
+  Operator screenshot: a critical finding in a full-width red panel with **no way to
+  acknowledge it**. Acknowledgement (C20) was keyed on an _alert id_ and the control only
+  rendered for rows in `openFindingAlerts`; finding-alerting shipped 2026-08-06 08:13, and
+  the finding on screen came from a run at 2026-08-05 11:00:20, so **no alert row had ever
+  existed for it**. TX.20 then correctly failed closed and kept it visible forever. No
+  button because no alert; no alert because it predated alerting. A spec gap in TX.20's
+  prompt, not a worker error — and it reopens whenever an alert insert fails, so it was
+  never only historical.
+
+  `acknowledgeFinding` takes a C18 finding identity, creates the `open` row persist-only
+  (no email) and transitions it to `acknowledged` in one C21 transaction, so a partial
+  failure cannot leave a bare open alert that would then email the operator about a finding
+  they were mid-way through standing down. Verified at review by removing `db.transaction`
+  and watching the orphan survive (`expected '1' to be '0'`). The card went from ~350px to
+  **112px** measured at a real 1280px viewport.
+
+  A caution recorded for the next reviewer: the first height reading was 343px, taken in a
+  browser pane with `clientWidth: 0`, where an `<input>` measured 168px tall. It nearly went
+  into a review as "not compact". **Check the viewport before trusting a layout measurement.**
+
+- **Condition-key acknowledgement created a phantom row (PR #88)** — reported by an
+  automated reviewer after TX.22 merged, confirmed, fixed.
+  C18 builds finding keys differently per kind: a transaction hash is lowercased _at the
+  source_, but `outgoing_scan_incomplete:<treasury>:<errorCode>` preserves the errorCode's
+  case, and error codes are `SCREAMING_SNAKE`. `acknowledgeFinding` lowercased the whole id
+  while the repository matches `entity_id` with `eq(...)`. Probed:
+
+  ```
+  real-open   | state: open         | ...:RPC_UNAVAILABLE
+  created-1   | state: acknowledged | ...:rpc_unavailable
+  ```
+
+  The lookup missed the real row, fell through to `insertOpen`, and acknowledged a row
+  nothing else references — **200 returned, original alert still open, critical still on
+  screen, phantom row in the incident record.** TX.19's partial unique index cannot catch it
+  because the two ids are different strings.
+
+  Fixed on both sides: the dashboard sends the case-preserved key and keeps a separate
+  lowercased form for comparison only (TX.20 matching unchanged); the server normalises with
+  the same rule C18 builds by. Regression test confirmed red against the previous behaviour.
+
+  **This is the fourth appearance of the event-vs-condition distinction**, after TX.17's
+  permanent silencing, PR #80's dead explorer link and TX.19's index predicate. It has now
+  surfaced in the domain, the schema, the UI and the API boundary. **Any new code that
+  handles a `treasury_finding` key must state which kind it means.**
+
+  Also recorded: the planner review of TX.22 checked that distinction in three places and
+  missed the fourth — it verified the dashboard's _matching_ was case-insensitive and never
+  checked what the client _sends_. Reviews should follow the value to the wire, not stop at
+  the comparison.
+
+  Acknowledged findings also moved behind a persisted `+`/`−`, defaulting to collapsed with
+  the count in the heading. Unacknowledged criticals remain outside every collapse (C17).
 
 - **TX.1** ✅ 🟢 CI hardening — DONE (PR #4, gitleaks token/permission fixed in PR #9)
   format, lint, typecheck, unit, build, `npm audit`, gitleaks, migration validation
