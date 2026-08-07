@@ -467,6 +467,81 @@ button.secondary:active:not(:disabled) {
   box-shadow: inset 0 0 0 1px rgba(138, 31, 28, 0.12);
 }
 
+/*
+ * Compact always-visible critical (TX.22): dense row remains visible with the
+ * detail panel collapsed — reducing height, not presence (C17 invariant).
+ */
+.finding-critical-compact {
+  padding: var(--s-xs) var(--s-sm);
+}
+
+.finding-compact-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-xs) var(--s-sm);
+  min-width: 0;
+}
+
+.finding-expand-toggle {
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.finding-compact-kind {
+  flex: 1 1 10rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finding-compact-tx,
+.finding-compact-value {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.finding-compact-ack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-xs);
+  margin-top: var(--s-xs);
+}
+
+.ack-note-inline {
+  flex: 1 1 12rem;
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.finding-compact-ack-unavailable {
+  margin: var(--s-xs) 0 0;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .finding-compact-row {
+    gap: var(--s-xs);
+  }
+
+  .finding-compact-ack {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .finding-warning {
   background: var(--canvas);
   border: 1px dashed var(--warn-strong);

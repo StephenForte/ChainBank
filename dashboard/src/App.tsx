@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ApiClientError,
   acknowledgeAlert,
+  acknowledgeFinding,
   checkTreasury,
   fetchReadiness,
   getEnvironment,
@@ -496,6 +497,14 @@ export function App() {
   const [ackDraftByAlertId, setAckDraftByAlertId] = useState<Readonly<Record<string, string>>>({});
   const [ackErrorByAlertId, setAckErrorByAlertId] = useState<Readonly<Record<string, string>>>({});
   const [ackBusyId, setAckBusyId] = useState<string | undefined>();
+  /** Entity-id keyed drafts for always-visible critical findings (C20 finding path). */
+  const [ackDraftByEntityId, setAckDraftByEntityId] = useState<Readonly<Record<string, string>>>({});
+  const [ackErrorByEntityId, setAckErrorByEntityId] = useState<Readonly<Record<string, string>>>({});
+  const [ackBusyEntityId, setAckBusyEntityId] = useState<string | undefined>();
+  /** Expanded detail for compact always-visible criticals — presence is never gated on this. */
+  const [expandedCriticalEntityIds, setExpandedCriticalEntityIds] = useState<
+    Readonly<Record<string, boolean>>
+  >({});
 
   const [projects, setProjects] = useState<readonly ProjectResource[]>([]);
   const [projectsTotal, setProjectsTotal] = useState(0);
@@ -696,6 +705,54 @@ export function App() {
       setAckErrorByAlertId((prev) => ({ ...prev, [alertId]: formatError(caught) }));
     } finally {
       setAckBusyId(undefined);
+    }
+  }
+
+  async function onAcknowledgeFindingByEntity(finding: FindingView, entityId: string): Promise<void> {
+    const note = (ackDraftByEntityId[entityId] ?? '').trim();
+    if (note === '') {
+      setAckErrorByEntityId((prev) => ({
+        ...prev,
+        [entityId]: 'Acknowledgement note is required.',
+      }));
+      return;
+    }
+    if (token.trim() === '') {
+      return;
+    }
+    setAckBusyEntityId(entityId);
+    setAckErrorByEntityId((prev) => {
+      const next = { ...prev };
+      delete next[entityId];
+      return next;
+    });
+    try {
+      await acknowledgeFinding(token.trim(), {
+        entityId,
+        note,
+        metadata: {
+          findingKind: finding.kind,
+          ...(finding.treasuryId !== undefined ? { treasuryId: finding.treasuryId } : {}),
+          ...(finding.transactionHash !== undefined ? { transactionHash: finding.transactionHash } : {}),
+          ...(finding.toAddress !== undefined ? { toAddress: finding.toAddress } : {}),
+          ...(finding.valueWei !== undefined ? { valueWei: finding.valueWei } : {}),
+          ...(finding.nonce !== undefined ? { nonce: finding.nonce } : {}),
+          ...(finding.blockNumber !== undefined ? { blockNumber: finding.blockNumber } : {}),
+          ...(finding.reason !== undefined ? { reason: finding.reason } : {}),
+          runId: finding.runId,
+        },
+      });
+      setAckDraftByEntityId((prev) => {
+        const next = { ...prev };
+        delete next[entityId];
+        return next;
+      });
+      setMessage('Finding acknowledged. The incident record stays visible.');
+      await loadFindingAlerts(token);
+    } catch (caught) {
+      setAckErrorByEntityId((prev) => ({ ...prev, [entityId]: formatError(caught) }));
+    } finally {
+      setAckBusyEntityId(undefined);
     }
   }
 
@@ -1581,7 +1638,184 @@ export function App() {
                       acknowledgedCriticalFindings.length,
                       alertsResolvedForDemotion,
                     );
-                    const renderCriticalFinding = (
+                    const renderCriticalFindingDetail = (
+                      finding: FindingView,
+                      entityId: string,
+                      href: string | undefined,
+                      acknowledgement: AlertResource | undefined,
+                    ) => (
+                      <>
+                        <dl className="facts">
+                          <div>
+                            <dt>{findingEntityLabel(entityId)}</dt>
+                            <dd className="mono">
+                              {TRANSACTION_HASH_PATTERN.test(entityId) ? (
+                                href === undefined ? (
+                                  <span title={entityId}>{entityId}</span>
+                                ) : (
+                                  <a href={href} target="_blank" rel="noreferrer" title={entityId}>
+                                    {shortAddress(entityId)}
+                                  </a>
+                                )
+                              ) : (
+                                <span title={entityId}>{entityId}</span>
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Destination</dt>
+                            <dd className="mono">
+                              {finding.toAddress === undefined ? '—' : shortAddress(finding.toAddress)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Value</dt>
+                            <dd className="mono">
+                              {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Nonce</dt>
+                            <dd className="mono">
+                              {finding.nonce === undefined ? '—' : String(finding.nonce)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Block</dt>
+                            <dd className="mono">{finding.blockNumber ?? '—'}</dd>
+                          </div>
+                          <div>
+                            <dt>Run</dt>
+                            <dd>
+                              <code>{finding.runId}</code>
+                              <span className="muted"> · {formatTimestamp(finding.runStartedAt)}</span>
+                            </dd>
+                          </div>
+                          {acknowledgement !== undefined ? (
+                            <div>
+                              <dt>Acknowledged</dt>
+                              <dd>
+                                {acknowledgement.acknowledgedAt === null
+                                  ? '—'
+                                  : formatTimestamp(acknowledgement.acknowledgedAt)}
+                                {acknowledgement.acknowledgedBy !== null ? (
+                                  <span className="muted">
+                                    {' '}
+                                    · by{' '}
+                                    <code title={acknowledgement.acknowledgedBy}>
+                                      {shortAddress(acknowledgement.acknowledgedBy)}
+                                    </code>
+                                  </span>
+                                ) : null}
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                        {finding.reason !== undefined ? <p className="muted">{finding.reason}</p> : null}
+                        {acknowledgement?.acknowledgementNote !== null &&
+                        acknowledgement?.acknowledgementNote !== undefined ? (
+                          <p className="ack-note-display">{acknowledgement.acknowledgementNote}</p>
+                        ) : null}
+                      </>
+                    );
+
+                    /**
+                     * Compact always-visible critical (TX.22 / C17): one dense row stays
+                     * visible with the panel collapsed. Expanding reveals the field grid;
+                     * collapsing never hides presence or summary count.
+                     */
+                    const renderUnacknowledgedCriticalFinding = (finding: FindingView, index: number) => {
+                      const entityKey =
+                        findingAlertEntityId(finding) ?? `${finding.runId}:${finding.kind}:${String(index)}`;
+                      const canAcknowledge = findingAlertEntityId(finding) !== undefined;
+                      const href = explorerTxUrl(treasuries, finding.treasuryId, finding.transactionHash);
+                      const displayId =
+                        findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
+                      const isExpanded = expandedCriticalEntityIds[entityKey] === true;
+                      const draft = ackDraftByEntityId[entityKey] ?? '';
+                      const ackError = ackErrorByEntityId[entityKey];
+                      const isBusy = ackBusyEntityId === entityKey;
+                      return (
+                        <article
+                          key={`critical-${finding.runId}-${finding.kind}-${String(index)}`}
+                          className="finding finding-critical finding-critical-compact"
+                        >
+                          <div className="finding-compact-row">
+                            <button
+                              type="button"
+                              className="finding-expand-toggle"
+                              aria-expanded={isExpanded}
+                              title={isExpanded ? 'Hide finding detail' : 'Show finding detail'}
+                              onClick={() => {
+                                setExpandedCriticalEntityIds((prev) => ({
+                                  ...prev,
+                                  [entityKey]: !isExpanded,
+                                }));
+                              }}
+                            >
+                              {isExpanded ? '−' : '+'}
+                            </button>
+                            <span className="badge badge-bad badge-square">critical</span>
+                            <code className="finding-compact-kind" title={finding.kind}>
+                              {finding.kind}
+                            </code>
+                            <span className="mono finding-compact-tx" title={displayId}>
+                              {TRANSACTION_HASH_PATTERN.test(displayId) ? (
+                                href === undefined ? (
+                                  shortAddress(displayId)
+                                ) : (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {shortAddress(displayId)}
+                                  </a>
+                                )
+                              ) : (
+                                shortAddress(displayId)
+                              )}
+                            </span>
+                            <span className="mono finding-compact-value">
+                              {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
+                            </span>
+                          </div>
+                          {canAcknowledge ? (
+                            <div className="finding-compact-ack">
+                              <input
+                                type="text"
+                                className="ack-note ack-note-inline"
+                                value={draft}
+                                disabled={isBusy}
+                                placeholder="Acknowledgement note (required)"
+                                aria-label={`Acknowledgement note for ${finding.kind}`}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setAckDraftByEntityId((prev) => ({
+                                    ...prev,
+                                    [entityKey]: value,
+                                  }));
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="secondary"
+                                disabled={isBusy}
+                                onClick={() => void onAcknowledgeFindingByEntity(finding, entityKey)}
+                              >
+                                {isBusy ? 'Acknowledging…' : 'Acknowledge'}
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="muted finding-compact-ack-unavailable">
+                              Cannot acknowledge — finding has no stable entity key.
+                            </p>
+                          )}
+                          {ackError !== undefined ? <p className="error-inline">{ackError}</p> : null}
+                          {isExpanded
+                            ? renderCriticalFindingDetail(finding, displayId, href, undefined)
+                            : null}
+                        </article>
+                      );
+                    };
+
+                    const renderAcknowledgedCriticalFinding = (
                       finding: FindingView,
                       index: number,
                       acknowledgement: AlertResource | undefined,
@@ -1589,96 +1823,16 @@ export function App() {
                       const entityId =
                         findingAlertEntityId(finding) ?? finding.transactionHash ?? finding.kind;
                       const href = explorerTxUrl(treasuries, finding.treasuryId, finding.transactionHash);
-                      const isAcknowledged = acknowledgement !== undefined;
                       return (
                         <article
-                          key={`${isAcknowledged ? 'ack' : 'critical'}-${finding.runId}-${finding.kind}-${String(index)}`}
-                          className={
-                            isAcknowledged ? 'finding finding-acknowledged' : 'finding finding-critical'
-                          }
+                          key={`ack-${finding.runId}-${finding.kind}-${String(index)}`}
+                          className="finding finding-acknowledged"
                         >
                           <div className="finding-head">
-                            <span
-                              className={
-                                isAcknowledged
-                                  ? 'badge badge-ok badge-square'
-                                  : 'badge badge-bad badge-square'
-                              }
-                            >
-                              {isAcknowledged ? 'acknowledged' : 'critical'}
-                            </span>
+                            <span className="badge badge-ok badge-square">acknowledged</span>
                             <code>{finding.kind}</code>
                           </div>
-                          <dl className="facts">
-                            <div>
-                              <dt>{findingEntityLabel(entityId)}</dt>
-                              <dd className="mono">
-                                {TRANSACTION_HASH_PATTERN.test(entityId) ? (
-                                  href === undefined ? (
-                                    <span title={entityId}>{entityId}</span>
-                                  ) : (
-                                    <a href={href} target="_blank" rel="noreferrer" title={entityId}>
-                                      {shortAddress(entityId)}
-                                    </a>
-                                  )
-                                ) : (
-                                  <span title={entityId}>{entityId}</span>
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Destination</dt>
-                              <dd className="mono">
-                                {finding.toAddress === undefined ? '—' : shortAddress(finding.toAddress)}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Value</dt>
-                              <dd className="mono">
-                                {finding.valueWei === undefined ? '—' : formatFindingWei(finding.valueWei)}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Nonce</dt>
-                              <dd className="mono">
-                                {finding.nonce === undefined ? '—' : String(finding.nonce)}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Block</dt>
-                              <dd className="mono">{finding.blockNumber ?? '—'}</dd>
-                            </div>
-                            <div>
-                              <dt>Run</dt>
-                              <dd>
-                                <code>{finding.runId}</code>
-                                <span className="muted"> · {formatTimestamp(finding.runStartedAt)}</span>
-                              </dd>
-                            </div>
-                            {isAcknowledged ? (
-                              <div>
-                                <dt>Acknowledged</dt>
-                                <dd>
-                                  {acknowledgement.acknowledgedAt === null
-                                    ? '—'
-                                    : formatTimestamp(acknowledgement.acknowledgedAt)}
-                                  {acknowledgement.acknowledgedBy !== null ? (
-                                    <span className="muted">
-                                      {' '}
-                                      · by{' '}
-                                      <code title={acknowledgement.acknowledgedBy}>
-                                        {shortAddress(acknowledgement.acknowledgedBy)}
-                                      </code>
-                                    </span>
-                                  ) : null}
-                                </dd>
-                              </div>
-                            ) : null}
-                          </dl>
-                          {finding.reason !== undefined ? <p className="muted">{finding.reason}</p> : null}
-                          {isAcknowledged && acknowledgement.acknowledgementNote !== null ? (
-                            <p className="ack-note-display">{acknowledgement.acknowledgementNote}</p>
-                          ) : null}
+                          {renderCriticalFindingDetail(finding, entityId, href, acknowledgement)}
                         </article>
                       );
                     };
@@ -1743,7 +1897,7 @@ export function App() {
                         {hasUnacknowledgedCritical ? (
                           <div className="finding-list recon-critical-always">
                             {unacknowledgedCriticalFindings.map((finding, index) =>
-                              renderCriticalFinding(finding, index, undefined),
+                              renderUnacknowledgedCriticalFinding(finding, index),
                             )}
                           </div>
                         ) : null}
@@ -1817,7 +1971,7 @@ export function App() {
                                 </p>
                                 <div className="finding-list">
                                   {acknowledgedCriticalFindings.map((finding, index) =>
-                                    renderCriticalFinding(
+                                    renderAcknowledgedCriticalFinding(
                                       finding,
                                       index,
                                       matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),

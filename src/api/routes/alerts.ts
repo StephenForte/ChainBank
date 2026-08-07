@@ -1,5 +1,6 @@
 import type { AppInstance } from '../types.js';
 import { acknowledgeAlert, MAX_ACKNOWLEDGEMENT_NOTE_LENGTH } from '../../app/alerts/acknowledge-alert.js';
+import { acknowledgeFinding, MAX_FINDING_ENTITY_ID_LENGTH } from '../../app/alerts/acknowledge-finding.js';
 import { listAlerts } from '../../app/alerts/list-alerts.js';
 import type { AlertLifecycleState } from '../../app/ports.js';
 import type { Container } from '../../container.js';
@@ -136,6 +137,75 @@ export function registerAlertRoutes(app: AppInstance, container: Container): voi
         data: page.items.map(serializeAlert),
         pagination: { limit, offset, total: page.total },
       };
+    },
+  );
+
+  // Static path before /:id/acknowledge so "acknowledge-finding" is never
+  // parsed as a UUID param.
+  app.post(
+    '/v1/alerts/acknowledge-finding',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['entityId', 'note'],
+          properties: {
+            entityId: {
+              type: 'string',
+              minLength: 1,
+              maxLength: MAX_FINDING_ENTITY_ID_LENGTH,
+            },
+            note: {
+              type: 'string',
+              minLength: 1,
+              maxLength: MAX_ACKNOWLEDGEMENT_NOTE_LENGTH,
+            },
+            // Opaque forensic fields for persist-only row creation (C19 stance).
+            metadata: {
+              type: 'object',
+              additionalProperties: true,
+            },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['data'],
+            properties: {
+              data: alertResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      const body = request.body as {
+        entityId: string;
+        note: string;
+        metadata?: Record<string, unknown>;
+      };
+
+      const alert = await acknowledgeFinding(
+        {
+          operatorMutations: container.operatorMutations,
+          clock: container.clock,
+        },
+        {
+          role: actor.role,
+          entityId: body.entityId,
+          note: body.note,
+          operationId: request.id,
+          actorId: actor.credentialId,
+          sourceIp: request.ip,
+          ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
+        },
+      );
+
+      return { data: serializeAlert(alert) };
     },
   );
 
