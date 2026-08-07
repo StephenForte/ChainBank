@@ -29,7 +29,7 @@
     "test:integration": "vitest run --project integration",
     "test:e2e": "vitest run --project e2e",
     "test:all": "vitest run",
-    "test:coverage": "vitest run --project unit --coverage",
+    "test:coverage": "vitest run --project unit --project dashboard --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit --project dashboard/tsconfig.json",
     "lint": "eslint .",
