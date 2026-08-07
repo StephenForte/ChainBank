@@ -413,7 +413,8 @@ describe.skipIf(!integrationEnabled)('GET/POST /v1/alerts (integration, C20)', (
     expect(ackBody.data.acknowledgementNote).toBe('Confirmed operator hand-send to HARVEST on 2026-08-05.');
     expect(ackBody.data.acknowledgedBy).toBe(operatorCredentialId);
 
-    // audit_events is not truncated between tests — scope to this alert id.
+    // Scope to this alert id: the assertion should hold on its own row, not on
+    // whatever else the run happened to audit first.
     const audit = await handle.db.query.auditEvents.findFirst({
       where: eq(auditEvents.entityId, alertId),
     });
