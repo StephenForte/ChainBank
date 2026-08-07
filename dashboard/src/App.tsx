@@ -33,6 +33,7 @@ import {
 const TOKEN_STORAGE_KEY = 'chainbank.operatorToken';
 /** Collapsed/expanded for Reconciliation warnings + run history only (TX.18). */
 const RECON_DETAIL_STORAGE_KEY = 'chainbank.reconciliationDetailExpanded';
+const ACK_FINDINGS_STORAGE_KEY = 'chainbank.acknowledgedFindingsExpanded';
 /**
  * Auto-load live balances only when the listed page is this size or smaller.
  * Each balance is one public-RPC read; TX.13 measured fine-at-5 / batch-at-50.
@@ -82,6 +83,27 @@ function loadReconciliationDetailExpanded(): boolean {
 function storeReconciliationDetailExpanded(expanded: boolean): void {
   try {
     localStorage.setItem(RECON_DETAIL_STORAGE_KEY, expanded ? 'true' : 'false');
+  } catch {
+    // localStorage may be unavailable; in-memory toggle still works.
+  }
+}
+
+/**
+ * Default collapsed. These are findings an operator has already stood down with
+ * a note, so they are record rather than signal — never an unacknowledged
+ * critical, which lives outside the collapse entirely (C17 / TX.20).
+ */
+function loadAcknowledgedFindingsExpanded(): boolean {
+  try {
+    return localStorage.getItem(ACK_FINDINGS_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function storeAcknowledgedFindingsExpanded(expanded: boolean): void {
+  try {
+    localStorage.setItem(ACK_FINDINGS_STORAGE_KEY, expanded ? 'true' : 'false');
   } catch {
     // localStorage may be unavailable; in-memory toggle still works.
   }
@@ -238,12 +260,24 @@ function findingAlertEntityId(finding: FindingView): string | undefined {
     if (finding.treasuryId === undefined || errorCode === undefined) {
       return undefined;
     }
-    return `outgoing_scan_incomplete:${finding.treasuryId}:${errorCode}`.toLowerCase();
+    // NOT lowercased. C18 stores this key with the errorCode case preserved
+    // (`…:RPC_UNAVAILABLE`), and the alerts repository matches `entity_id`
+    // exactly. Lowercasing here and sending that to the acknowledge endpoint
+    // missed the real open row, created a second acknowledged row under the
+    // lowercased id, and left the original alert open behind a 200 response.
+    // Only the transaction-hash branch may lowercase, because C18 lowercases
+    // that one at the source.
+    return `outgoing_scan_incomplete:${finding.treasuryId}:${errorCode}`;
   }
   if (finding.transactionHash !== undefined) {
     return finding.transactionHash.toLowerCase();
   }
   return undefined;
+}
+
+/** Comparison form only — never sent to the API. See findingAlertEntityId. */
+function findingAlertMatchKey(finding: FindingView): string | undefined {
+  return findingAlertEntityId(finding)?.toLowerCase();
 }
 
 /**
@@ -274,25 +308,25 @@ function isCriticalFindingAcknowledged(
   if (!areFindingAlertsResolved(findingAlertsState) || !openAlertsComplete) {
     return false;
   }
-  const entityId = findingAlertEntityId(finding);
-  if (entityId === undefined) {
+  const matchKey = findingAlertMatchKey(finding);
+  if (matchKey === undefined) {
     return false;
   }
-  if (openFindingAlerts.some((alert) => alert.entityId.toLowerCase() === entityId)) {
+  if (openFindingAlerts.some((alert) => alert.entityId.toLowerCase() === matchKey)) {
     return false;
   }
-  return acknowledgedFindingAlerts.some((alert) => alert.entityId.toLowerCase() === entityId);
+  return acknowledgedFindingAlerts.some((alert) => alert.entityId.toLowerCase() === matchKey);
 }
 
 function matchingAcknowledgedAlert(
   finding: FindingView,
   acknowledgedFindingAlerts: readonly AlertResource[],
 ): AlertResource | undefined {
-  const entityId = findingAlertEntityId(finding);
-  if (entityId === undefined) {
+  const matchKey = findingAlertMatchKey(finding);
+  if (matchKey === undefined) {
     return undefined;
   }
-  return acknowledgedFindingAlerts.find((alert) => alert.entityId.toLowerCase() === entityId);
+  return acknowledgedFindingAlerts.find((alert) => alert.entityId.toLowerCase() === matchKey);
 }
 
 /** Summary clause that distinguishes unacknowledged from acknowledged (TX.20). */
@@ -485,6 +519,9 @@ export function App() {
   // Persists warnings + run-history visibility only — unacknowledged criticals are never gated on this.
   const [reconciliationDetailExpanded, setReconciliationDetailExpanded] = useState(
     loadReconciliationDetailExpanded,
+  );
+  const [acknowledgedFindingsExpanded, setAcknowledgedFindingsExpanded] = useState(
+    loadAcknowledgedFindingsExpanded,
   );
 
   // C20 — standing incident record from GET /v1/alerts (not the runs page window).
@@ -954,6 +991,14 @@ export function App() {
     }
     const generation = ++balanceFetchGenerationRef.current;
     await fetchListedWalletBalances(activeToken, wallets, generation);
+  }
+
+  function onToggleAcknowledgedFindings(): void {
+    setAcknowledgedFindingsExpanded((previous) => {
+      const next = !previous;
+      storeAcknowledgedFindingsExpanded(next);
+      return next;
+    });
   }
 
   function onToggleReconciliationDetail(): void {
@@ -1534,61 +1579,87 @@ export function App() {
               ) : null}
               {acknowledgedFindingAlerts.length > 0 ? (
                 <div className="acknowledged-findings">
-                  <h3 className="subsection-title">Acknowledged findings</h3>
-                  <p className="muted">
-                    Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
-                  </p>
-                  <div className="finding-list">
-                    {acknowledgedFindingAlerts.map((alert) => {
-                      const meta = alert.metadata;
-                      const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
-                      const href = explorerTxUrl(
-                        treasuries,
-                        asOptionalString(meta.treasuryId),
-                        transactionHash,
-                      );
-                      return (
-                        <article key={alert.id} className="finding finding-acknowledged">
-                          <div className="finding-head">
-                            <span className="badge badge-ok badge-square">acknowledged</span>
-                            <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
-                          </div>
-                          <dl className="facts">
-                            <div>
-                              <dt>{findingEntityLabel(transactionHash)}</dt>
-                              <dd className="mono">
-                                {href === undefined ? (
-                                  <span title={transactionHash}>{transactionHash}</span>
-                                ) : (
-                                  <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
-                                    {shortAddress(transactionHash)}
-                                  </a>
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Acknowledged</dt>
-                              <dd>
-                                {alert.acknowledgedAt === null ? '—' : formatTimestamp(alert.acknowledgedAt)}
-                                {alert.acknowledgedBy !== null ? (
-                                  <span className="muted">
-                                    {' '}
-                                    · by{' '}
-                                    <code title={alert.acknowledgedBy}>
-                                      {shortAddress(alert.acknowledgedBy)}
-                                    </code>
-                                  </span>
-                                ) : null}
-                              </dd>
-                            </div>
-                          </dl>
-                          {alert.acknowledgementNote !== null ? (
-                            <p className="ack-note-display">{alert.acknowledgementNote}</p>
-                          ) : null}
-                        </article>
-                      );
-                    })}
+                  <div className="acknowledged-findings-head">
+                    <button
+                      type="button"
+                      className="recon-toggle"
+                      aria-expanded={acknowledgedFindingsExpanded}
+                      aria-controls="acknowledged-findings-list"
+                      title={
+                        acknowledgedFindingsExpanded
+                          ? 'Collapse acknowledged findings'
+                          : 'Expand acknowledged findings'
+                      }
+                      onClick={onToggleAcknowledgedFindings}
+                    >
+                      {acknowledgedFindingsExpanded ? '−' : '+'}
+                    </button>
+                    <h3 className="subsection-title">
+                      {acknowledgedFindingAlerts.length === 1
+                        ? '1 acknowledged finding'
+                        : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`}
+                    </h3>
                   </div>
+                  {acknowledgedFindingsExpanded ? (
+                    <>
+                      <p className="muted">
+                        Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
+                      </p>
+                      <div className="finding-list" id="acknowledged-findings-list">
+                        {acknowledgedFindingAlerts.map((alert) => {
+                          const meta = alert.metadata;
+                          const transactionHash = asOptionalString(meta.transactionHash) ?? alert.entityId;
+                          const href = explorerTxUrl(
+                            treasuries,
+                            asOptionalString(meta.treasuryId),
+                            transactionHash,
+                          );
+                          return (
+                            <article key={alert.id} className="finding finding-acknowledged">
+                              <div className="finding-head">
+                                <span className="badge badge-ok badge-square">acknowledged</span>
+                                <code>{asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                              </div>
+                              <dl className="facts">
+                                <div>
+                                  <dt>{findingEntityLabel(transactionHash)}</dt>
+                                  <dd className="mono">
+                                    {href === undefined ? (
+                                      <span title={transactionHash}>{transactionHash}</span>
+                                    ) : (
+                                      <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
+                                        {shortAddress(transactionHash)}
+                                      </a>
+                                    )}
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Acknowledged</dt>
+                                  <dd>
+                                    {alert.acknowledgedAt === null
+                                      ? '—'
+                                      : formatTimestamp(alert.acknowledgedAt)}
+                                    {alert.acknowledgedBy !== null ? (
+                                      <span className="muted">
+                                        {' '}
+                                        · by{' '}
+                                        <code title={alert.acknowledgedBy}>
+                                          {shortAddress(alert.acknowledgedBy)}
+                                        </code>
+                                      </span>
+                                    ) : null}
+                                  </dd>
+                                </div>
+                              </dl>
+                              {alert.acknowledgementNote !== null ? (
+                                <p className="ack-note-display">{alert.acknowledgementNote}</p>
+                              ) : null}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
 

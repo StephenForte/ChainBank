@@ -395,4 +395,66 @@ describe('acknowledgeFinding (C20 finding-identity path)', () => {
     expect(getStored()).toBeUndefined();
     expect(recorded).toHaveLength(0);
   });
+
+  it('acknowledges the real open row for a condition key whose errorCode is upper-case', async () => {
+    // C18 stores this key case-preserved and the repository matches entity_id
+    // exactly. Lowercasing the whole id missed the real row, inserted a second
+    // acknowledged row, and left the original alert open behind a 200 response.
+    const storedKey = 'outgoing_scan_incomplete:11111111-1111-4111-8111-111111111111:RPC_UNAVAILABLE';
+    const existing = openFindingAlert({ entityId: storedKey });
+    let acknowledged: StoredAlert | undefined;
+    let insertCalls = 0;
+
+    const alerts: AlertRepository = {
+      findOpenByEntity: () => Promise.resolve(undefined),
+      // Exact match — faithful to eq(alerts.entityId, entityId).
+      findOpenOrAcknowledgedByEntity: (_entityType, entityId) =>
+        Promise.resolve(entityId === storedKey ? (acknowledged ?? existing) : undefined),
+      findById: () => Promise.resolve(acknowledged ?? existing),
+      list: () => Promise.resolve({ items: [], total: 0 }),
+      insertOpen: () => {
+        insertCalls += 1;
+        return Promise.reject(new Error('insertOpen must not be called — the real row exists'));
+      },
+      markEscalated: vi.fn(),
+      markPendingEmail: vi.fn(),
+      clearPendingEmail: vi.fn(),
+      acknowledgeSend: vi.fn(),
+      recordOperatorAcknowledgement: (input) => {
+        acknowledged = {
+          ...existing,
+          state: 'acknowledged',
+          acknowledgedAt: input.acknowledgedAt,
+          acknowledgedBy: input.acknowledgedBy,
+          acknowledgementNote: input.acknowledgementNote,
+          lastEvaluatedAt: input.lastEvaluatedAt,
+          pendingEmail: undefined,
+        };
+        return Promise.resolve(acknowledged);
+      },
+      resolve: vi.fn(),
+      touchLastEvaluated: vi.fn(),
+    };
+
+    const auditEvents: AuditEventRepository = { record: () => Promise.resolve() };
+
+    const result = await acknowledgeFinding(
+      {
+        operatorMutations: createInlineOperatorMutations({ alerts, auditEvents }),
+        clock: { now: () => NOW },
+      },
+      {
+        role: 'operator',
+        entityId: storedKey,
+        note: 'RPC outage, aware',
+        operationId: 'req-case',
+        actorId: ACTOR_ID,
+        sourceIp: undefined,
+      },
+    );
+
+    expect(insertCalls).toBe(0);
+    expect(result.id).toBe(ALERT_ID);
+    expect(result.state).toBe('acknowledged');
+  });
 });
