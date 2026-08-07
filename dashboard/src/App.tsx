@@ -49,6 +49,7 @@ import { FundingPolicyPanel } from './panels/funding-policy-panel';
 import { EnvironmentsPanel } from './panels/environments-panel';
 import { ProjectsPanel } from './panels/projects-panel';
 import { ManagedWalletsPanel } from './panels/managed-wallets-panel';
+import { ServiceReadinessPanel } from './panels/service-readiness-panel';
 import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 
 export function App() {
@@ -923,56 +924,12 @@ export function App() {
         <PanelErrorBoundary panelName="Service readiness" severity="elevated">
           <PanelBody
             render={() => (
-              <section className="panel">
-                <div className="panel-head">
-                  <h2 className="section-title">Service readiness</h2>
-                  <button type="button" className="secondary" onClick={() => void loadReadiness()}>
-                    Reload
-                  </button>
-                </div>
-                {readinessState === 'loading' || readinessState === 'idle' ? (
-                  <p className="muted">Loading…</p>
-                ) : null}
-                {readinessState === 'error' ? <p className="error-inline">{readinessError}</p> : null}
-                {readinessState === 'ready' && readiness !== undefined ? (
-                  <>
-                    <p>
-                      Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
-                      <span className="muted">
-                        {' '}
-                        · checked {new Date(readiness.checkedAt).toLocaleString()}
-                      </span>
-                    </p>
-                    <ul className="plain">
-                      {readiness.components.map((component) => (
-                        <li key={component.name}>
-                          <span className={statusClass(component.status)}>{component.status}</span>{' '}
-                          {component.name}
-                          {component.detail !== null ? (
-                            <span className="muted"> — {component.detail}</span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                    <h3>Heartbeats</h3>
-                    {readiness.heartbeats.length === 0 ? (
-                      <p className="muted">No heartbeats recorded yet.</p>
-                    ) : (
-                      <ul className="plain">
-                        {readiness.heartbeats.map((heartbeat) => (
-                          <li key={heartbeat.serviceRole}>
-                            <code>{heartbeat.serviceRole}</code>
-                            <span className="muted">
-                              {' '}
-                              · {new Date(heartbeat.lastSeenAt).toLocaleString()}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
-                ) : null}
-              </section>
+                            <ServiceReadinessPanel
+                loadReadiness={loadReadiness}
+                readinessState={readinessState}
+                readinessError={readinessError}
+                readiness={readiness}
+              />
             )}
           />
         </PanelErrorBoundary>
