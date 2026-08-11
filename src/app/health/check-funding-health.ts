@@ -35,7 +35,17 @@ export const FUNDING_HEALTH_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
  */
 export type FundingHealthStatus = 'ok' | 'degraded' | 'failing';
 
-export type FundingWalletHealthStatus = 'ok' | 'below_policy' | 'blocked' | 'failed';
+/**
+ * Per-wallet health for consumers matching by address.
+ *
+ * - `ok` / `below_policy` / `blocked` / `failed` — wallet is reconciliation-eligible;
+ *   status reflects live balance vs policy and the latest reconcile attempt.
+ * - `not_reconciled` — wallet has a funding policy but is excluded from the
+ *   reconciler (`reconciliationEnabled: false` or disabled wallet/project/env).
+ *   Balance fields are still populated; do not treat this as an active funding
+ *   failure. Existing four values all assume the reconciler is managing the wallet.
+ */
+export type FundingWalletHealthStatus = 'ok' | 'below_policy' | 'blocked' | 'failed' | 'not_reconciled';
 
 export type FundingHealthExitKind = 'success' | 'policy-disabled' | 'malfunction';
 
@@ -97,7 +107,7 @@ export async function checkFundingHealth(
   const lastFinished = await dependencies.reconciliationRuns.findLatestFinished();
   const lastRun = toLastRun(lastFinished, checkedAt);
 
-  const wallets = await listEligibleWallets(dependencies.managedWallets);
+  const wallets = await listPolicyWallets(dependencies.managedWallets);
   const walletIds = wallets.map((wallet) => wallet.id);
 
   const [fundedRows, attemptRows] = await Promise.all([
@@ -124,11 +134,15 @@ export async function checkFundingHealth(
 
     const funded = fundedByWallet.get(wallet.id);
     const attempt = attemptByWallet.get(wallet.id);
-    const status = classifyWalletStatus({
-      balanceWei: reading.balanceWei,
-      policyMinWei,
-      attempt,
-    });
+    // Reconciler-excluded wallets stay visible with balances; status must not
+    // impersonate active manage-or-fund outcomes (ok/below_policy/blocked/failed).
+    const status = isEligibleForReconciliation(wallet)
+      ? classifyWalletStatus({
+          balanceWei: reading.balanceWei,
+          policyMinWei,
+          attempt,
+        })
+      : 'not_reconciled';
 
     drafts.push({
       walletId: wallet.id,
@@ -192,7 +206,13 @@ export function classifyOverallStatus(input: {
     return 'failing';
   }
 
-  const belowPolicy = input.drafts.filter((draft) => draft.view.status !== 'ok');
+  // not_reconciled wallets are inventory, not active reconcile failures.
+  const belowPolicy = input.drafts.filter(
+    (draft) =>
+      draft.view.status === 'below_policy' ||
+      draft.view.status === 'blocked' ||
+      draft.view.status === 'failed',
+  );
   for (const draft of belowPolicy) {
     if (!hasFundingAttemptInWindow(draft.walletId, input)) {
       return 'failing';
@@ -269,20 +289,23 @@ function toLastRun(run: ReconciliationRun | undefined, checkedAt: Date): Funding
   };
 }
 
-async function listEligibleWallets(
-  managedWallets: ManagedWalletRepository,
-): Promise<readonly ManagedWallet[]> {
-  const eligible: ManagedWallet[] = [];
+/**
+ * Every wallet with a funding policy — including reconciliation-disabled and
+ * entity-disabled wallets. Consumers match by address; omitting a policy wallet
+ * is a silent blind spot, not a classification detail.
+ */
+async function listPolicyWallets(managedWallets: ManagedWalletRepository): Promise<readonly ManagedWallet[]> {
+  const withPolicy: ManagedWallet[] = [];
   let offset = 0;
   const pageSize = 100;
   for (;;) {
     const page = await managedWallets.list(
-      { projectId: undefined, environmentId: undefined, enabled: true },
+      { projectId: undefined, environmentId: undefined, enabled: undefined },
       { limit: pageSize, offset },
     );
     for (const wallet of page.items) {
-      if (isEligibleForReconciliation(wallet) && wallet.policy !== undefined) {
-        eligible.push(wallet);
+      if (wallet.policy !== undefined) {
+        withPolicy.push(wallet);
       }
     }
     offset += page.items.length;
@@ -290,7 +313,7 @@ async function listEligibleWallets(
       break;
     }
   }
-  return eligible;
+  return withPolicy;
 }
 
 function indexByWalletId(rows: readonly WalletLastFundedRecord[]): Map<string, WalletLastFundedRecord> {
