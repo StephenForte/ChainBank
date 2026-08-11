@@ -11,8 +11,9 @@ import { fundingOperations, fundingTransactions } from '../schema.js';
 /**
  * Observability queries for GET /health/funding.
  *
- * Wallet linkage for blocked reconcile attempts (no funding_transactions row)
- * uses the durable idempotency key shape `reconcile:{runId}:{walletId}`.
+ * Wallet linkage for blocked/failed reconcile attempts (including pre-dispatch
+ * reserve-stop and assessment failures with no funding_transactions row) uses
+ * the durable idempotency key shape `reconcile:{runId}:{walletId}`.
  */
 export function createFundingHealthQuery(db: Database): FundingHealthQuery {
   return {

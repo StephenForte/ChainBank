@@ -1,9 +1,15 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
-import { ChainBankError, describeUnknownError, isChainBankError } from '../../domain/errors.js';
+import {
+  ChainBankError,
+  describeUnknownError,
+  isChainBankError,
+  type ErrorCode,
+} from '../../domain/errors.js';
 import type { FundingPolicy } from '../../domain/funding/funding-math.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
+import { isUniqueViolation } from '../../shared/postgres-error.js';
 import { maybeNotifyReconciliationFailure } from '../alerts/notify-reconciliation-failure.js';
 import {
   isCriticalReconciliationFinding,
@@ -243,6 +249,14 @@ export async function reconcileWallets(
           walletId: wallet.id,
           reason,
         });
+        await recordReconcileWalletAttemptIfAbsent(dependencies, {
+          wallet,
+          runId,
+          credentialId: input.credentialId,
+          correlationId: input.correlationId,
+          errorCode: 'INVALID_CONFIGURATION',
+          errorSummary: reason,
+        });
         logWalletFundingAttribution(dependencies.logger, {
           outcome: 'failed',
           correlationId: input.correlationId,
@@ -271,6 +285,22 @@ export async function reconcileWallets(
 
         counters = addSweepOutcome(counters, outcome.counter, outcome.transferredWei);
 
+        if (
+          outcome.counter === 'blocked' &&
+          (outcome.reason === 'reserve-stop' || outcome.reason === 'missing-policy')
+        ) {
+          // Pre-dispatch blocks never reach dispatchFunding — write the durable
+          // attempt row here. Dispatch-owned blocked/failed rows already exist.
+          await recordReconcileWalletAttemptIfAbsent(dependencies, {
+            wallet,
+            runId,
+            credentialId: input.credentialId,
+            correlationId: input.correlationId,
+            errorCode: reconcileAttemptErrorCode(outcome.reason),
+            errorSummary: outcome.reason,
+          });
+        }
+
         if (outcome.counter === 'funded' || outcome.counter === 'blocked' || outcome.counter === 'failed') {
           logWalletFundingAttribution(dependencies.logger, {
             outcome: outcome.counter,
@@ -290,6 +320,7 @@ export async function reconcileWallets(
       } catch (error) {
         counters = addSweepOutcome(counters, 'failed');
         const reason = error instanceof Error ? error.message : describeUnknownError(error);
+        const errorCode = isChainBankError(error) ? error.code : 'INTERNAL_ERROR';
         dependencies.logger.error(
           {
             event: 'reconciliation.wallet_failed',
@@ -303,6 +334,14 @@ export async function reconcileWallets(
           },
           'Reconciliation wallet assessment failed; continuing sweep',
         );
+        await recordReconcileWalletAttemptIfAbsent(dependencies, {
+          wallet,
+          runId,
+          credentialId: input.credentialId,
+          correlationId: input.correlationId,
+          errorCode,
+          errorSummary: reason,
+        });
         logWalletFundingAttribution(dependencies.logger, {
           outcome: 'failed',
           correlationId: input.correlationId,
@@ -935,6 +974,84 @@ async function mapDispatchToSweepCounter(
     default:
       return assertNever(input.dispatchResult, 'DispatchFundingResult');
   }
+}
+
+/**
+ * Persists a terminal reconcile attempt for wallets that never reach
+ * {@link dispatchFunding} (reserve-stop pre-check, missing treasury, thrown
+ * assessment errors). Same idempotency key shape as dispatch so
+ * GET /health/funding can attribute per-wallet membership without a sweep-level
+ * fallback.
+ *
+ * Best-effort relative to the sweep outcome: a record failure is logged and
+ * swallowed so one DB blip cannot abort remaining wallets. Health fails closed
+ * without the row (no attempt ⇒ failing for below-policy wallets).
+ */
+async function recordReconcileWalletAttemptIfAbsent(
+  dependencies: ReconcileWalletsDependencies,
+  input: {
+    readonly wallet: ManagedWallet;
+    readonly runId: string;
+    readonly credentialId: string;
+    readonly correlationId: string;
+    readonly errorCode: string;
+    readonly errorSummary: string;
+  },
+): Promise<void> {
+  const idempotencyKey = reconciliationIdempotencyKey(input.runId, input.wallet.id);
+  try {
+    const existing = await dependencies.operations.findByIdempotencyKey(input.credentialId, idempotencyKey);
+    if (existing !== undefined) {
+      return;
+    }
+
+    const pending = {
+      id: dependencies.idGenerator.next(),
+      operationType: 'reconcile',
+      projectId: input.wallet.project.id,
+      environmentId: input.wallet.environment.id,
+      idempotencyKey,
+      requestedBy: input.credentialId,
+      startedAt: dependencies.clock.now(),
+    };
+
+    let operation;
+    try {
+      operation = await dependencies.operations.insertPending(pending);
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+      // Concurrent insert won — durable membership already exists.
+      return;
+    }
+
+    await dependencies.operations.markFailed(
+      operation.id,
+      input.errorCode,
+      input.errorSummary,
+      dependencies.clock.now(),
+    );
+  } catch (error) {
+    dependencies.logger.error(
+      {
+        event: 'reconciliation.attempt_record_failed',
+        correlationId: input.correlationId,
+        runId: input.runId,
+        walletId: input.wallet.id,
+        err:
+          error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      },
+      'Failed to persist reconcile attempt row; continuing sweep',
+    );
+  }
+}
+
+function reconcileAttemptErrorCode(reason: 'reserve-stop' | 'missing-policy'): ErrorCode {
+  if (reason === 'reserve-stop') {
+    return 'FUNDING_BLOCKED_RESERVE';
+  }
+  return 'INVALID_REQUEST';
 }
 
 /**

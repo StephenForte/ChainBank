@@ -280,6 +280,46 @@ describe('reconcileWallets sweep decisions', () => {
     expect(blocked.map((line) => line.address).sort()).toEqual([WALLET_A, WALLET_B].sort());
   });
 
+  it('persists funding_operations for reserve-stop wallets that never reach dispatch', async () => {
+    // Finding 2: second wallet is blocked by the in-run reserve-stop pre-check
+    // (no dispatchFunding call) and must still get a durable attempt row.
+    const first = buildWallet('w-1', WALLET_A);
+    const second = buildWallet('w-2', WALLET_B);
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: ONE_ETH / 10n + 1_000n,
+        [WALLET_A]: 0n,
+        [WALLET_B]: 0n,
+      },
+    });
+    const deps = buildDeps(stores, [first, second], buildTreasury(), {
+      signer,
+      balanceReader,
+    });
+
+    await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-block-durable',
+      runId: 'run-block-durable',
+    });
+
+    const ops = [...stores.opsById.values()];
+    expect(ops).toHaveLength(2);
+    expect(ops.map((op) => op.idempotencyKey).sort()).toEqual([
+      'reconcile:run-block-durable:w-1',
+      'reconcile:run-block-durable:w-2',
+    ]);
+    for (const op of ops) {
+      expect(op.status).toBe('failed');
+      expect(op.errorCode).toBe('FUNDING_BLOCKED_RESERVE');
+      expect(op.requestedBy).toBe('cron-cred');
+    }
+    expect(signer.sendCalls).toBe(0);
+  });
+
   it('stops submitting after reserve but continues assessing remaining wallets', async () => {
     const first = buildWallet('w-1', WALLET_A);
     const second = buildWallet('w-2', WALLET_B);

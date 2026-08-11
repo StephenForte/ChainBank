@@ -198,15 +198,60 @@ describe('checkFundingHealth endpoint states', () => {
     expect(result.lastRun).toBeUndefined();
   });
 
-  it('returns degraded when a wallet is below policy inside the freshness window', async () => {
+  it('returns degraded when a wallet is below policy with a per-wallet attempt inside the window', async () => {
     const result = await checkFundingHealth(
       buildDeps({
         run: finishedRun(),
         balances: { [BATCHER]: 100n },
+        attempts: [
+          {
+            managedWalletId: 'wallet-batcher',
+            attemptedAt: new Date('2026-08-11T18:00:30.000Z'),
+            outcome: 'pending',
+            errorCode: undefined,
+            amountWei: undefined,
+            transactionHash: undefined,
+          },
+        ],
       }),
     );
     expect(result.status).toBe('degraded');
     expect(result.wallets[0]?.status).toBe('below_policy');
+  });
+
+  it('returns failing when a below-policy wallet has no attempt even if a fresh sweep assessed others', async () => {
+    // Finding 1: aggregate walletsAssessed must not credit an unassessed wallet.
+    const result = await checkFundingHealth(
+      buildDeps({
+        run: finishedRun({ walletsAssessed: 4, walletsFunded: 1, walletsNoop: 3 }),
+        balances: { [BATCHER]: 100n },
+        attempts: [],
+      }),
+    );
+    expect(result.status).toBe('failing');
+    expect(result.wallets[0]?.status).toBe('below_policy');
+  });
+
+  it('reports per-wallet blocked (not below_policy) when the reconcile attempt was reserve-blocked', async () => {
+    // Finding 2: durable FUNDING_BLOCKED_RESERVE attempt drives wallet status.
+    const result = await checkFundingHealth(
+      buildDeps({
+        run: finishedRun({ walletsBlocked: 1, walletsFunded: 0, walletsNoop: 0 }),
+        balances: { [BATCHER]: 100n },
+        attempts: [
+          {
+            managedWalletId: 'wallet-batcher',
+            attemptedAt: new Date('2026-08-11T18:00:30.000Z'),
+            outcome: 'blocked',
+            errorCode: 'FUNDING_BLOCKED_RESERVE',
+            amountWei: undefined,
+            transactionHash: undefined,
+          },
+        ],
+      }),
+    );
+    expect(result.status).toBe('degraded');
+    expect(result.wallets[0]?.status).toBe('blocked');
   });
 
   it('returns degraded when the latest finished run reported walletsBlocked > 0', async () => {
@@ -268,6 +313,40 @@ describe('classifyOverallStatus', () => {
           walletId: 'wallet-batcher',
           view: {
             label: 'fortel2-batcher',
+            address: BATCHER,
+            chainId: 11_155_111,
+            balanceWei: '0',
+            policyMinWei: '600000000000000000',
+            lastFundedAt: undefined,
+            lastFundedWei: undefined,
+            lastFundedTxHash: undefined,
+            status: 'below_policy',
+          },
+        },
+      ],
+      attemptByWallet: new Map(),
+      windowStart: new Date(NOW.getTime() - FUNDING_HEALTH_STALE_AFTER_MS),
+    });
+    expect(status).toBe('failing');
+  });
+
+  it('treats below-policy with no per-wallet attempt as failing even when a fresh run assessed others', () => {
+    const status = classifyOverallStatus({
+      checkedAt: NOW,
+      lastFinished: finishedRun({ walletsAssessed: 4 }),
+      lastRun: {
+        runId: 'run-fresh',
+        finishedAt: '2026-08-11T18:00:31.000Z',
+        exitKind: 'success',
+        ageSeconds: 3569,
+        walletsBlocked: 0,
+        walletsFailed: 0,
+      },
+      drafts: [
+        {
+          walletId: 'wallet-new',
+          view: {
+            label: 'new-wallet',
             address: BATCHER,
             chainId: 11_155_111,
             balanceWei: '0',

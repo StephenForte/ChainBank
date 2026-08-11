@@ -210,32 +210,21 @@ export function classifyOverallStatus(input: {
   return 'ok';
 }
 
+/**
+ * Per-wallet membership only. A fresh run's aggregate `walletsAssessed` must
+ * never credit a wallet that has no durable reconcile attempt row — newly
+ * eligible wallets created after a sweep would otherwise read as degraded
+ * instead of failing.
+ */
 function hasFundingAttemptInWindow(
   walletId: string,
   input: {
-    readonly lastFinished: ReconciliationRun | undefined;
     readonly attemptByWallet: ReadonlyMap<string, WalletFundingAttemptRecord>;
     readonly windowStart: Date;
   },
 ): boolean {
   const attempt = input.attemptByWallet.get(walletId);
-  if (attempt !== undefined && attempt.attemptedAt.getTime() >= input.windowStart.getTime()) {
-    return true;
-  }
-
-  // Sweep-level attempt: a finished non-policy run inside the window assessed
-  // every eligible wallet, including reserve-stop paths that create no
-  // funding_operations row for subsequent wallets.
-  if (
-    input.lastFinished?.finishedAt !== undefined &&
-    input.lastFinished.finishedAt.getTime() >= input.windowStart.getTime() &&
-    input.lastFinished.errorCode === undefined &&
-    input.lastFinished.walletsAssessed > 0
-  ) {
-    return true;
-  }
-
-  return false;
+  return attempt !== undefined && attempt.attemptedAt.getTime() >= input.windowStart.getTime();
 }
 
 export function classifyWalletStatus(input: {
