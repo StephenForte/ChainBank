@@ -130,6 +130,14 @@ export const environmentSchema = z.object({
    * Consumed by the cron-reconciler via config.alerts.reconcileFailureAlertThreshold.
    */
   RECONCILE_FAILURE_ALERT_THRESHOLD: positiveInteger.default(3),
+
+  /**
+   * Bearer token for GET /health/funding (web role). Optional at boot so existing
+   * deploys keep starting; when unset the endpoint rejects every request.
+   * Balances are public on-chain, but the wallet inventory + policy mins are not
+   * free disclosure — ForteL2 holds this secret under its own conventions.
+   */
+  FUNDING_HEALTH_TOKEN: z.string().trim().min(1).optional(),
 });
 
 export type RawEnvironment = z.infer<typeof environmentSchema>;

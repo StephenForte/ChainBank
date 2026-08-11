@@ -14,6 +14,7 @@ import { createBalanceObservationRepository } from '../../src/infrastructure/db/
 import { createChainRepository } from '../../src/infrastructure/db/repositories/chain-repository.js';
 import { createCredentialScopeRepository } from '../../src/infrastructure/db/repositories/credential-scope-repository.js';
 import { createEnvironmentRepository } from '../../src/infrastructure/db/repositories/environment-repository.js';
+import { createFundingHealthQuery } from '../../src/infrastructure/db/repositories/funding-health-query-repository.js';
 import { createFundingOperationRepository } from '../../src/infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingPolicyRepository } from '../../src/infrastructure/db/repositories/funding-policy-repository.js';
 import { createFundingTransactionRepository } from '../../src/infrastructure/db/repositories/funding-transaction-repository.js';
@@ -266,6 +267,7 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
         alerts: createAlertRepository(database.db),
         reconciliationRuns: createReconciliationRunRepository(database.db),
         reconciliationFunding: createReconciliationFundingQuery(database.db),
+        fundingHealth: createFundingHealthQuery(database.db),
       },
       balanceReader: createFakeBalanceReader({
         balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },

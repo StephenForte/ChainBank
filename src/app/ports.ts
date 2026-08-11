@@ -1015,12 +1015,54 @@ export interface ReconciliationRunRepository {
    */
   listRecent(limit: number): Promise<readonly ReconciliationRun[]>;
   /**
+   * Newest run that actually finished (`finished_at IS NOT NULL`), ordered by
+   * `finished_at` descending. Aborted crash rows (finished_at null) never win,
+   * even when `outgoing_scan_status` looks complete — funding health freshness
+   * depends on this distinction.
+   */
+  findLatestFinished(): Promise<ReconciliationRun | undefined>;
+  /**
    * Paginated runs newest-first by `started_at` (C19). `total` is the true
    * matching count, not the page length.
    */
   list(pagination: { readonly limit: number; readonly offset: number }): Promise<ReconciliationRunListPage>;
   /** True count of all reconciliation runs (C19 pagination). */
   count(): Promise<number>;
+}
+
+/** Last successful on-chain fund recorded for a managed wallet. */
+export interface WalletLastFundedRecord {
+  readonly managedWalletId: string;
+  readonly fundedAt: Date;
+  readonly amountWei: bigint;
+  readonly transactionHash: string;
+}
+
+/**
+ * Latest reconciler funding attempt for a managed wallet (may be blocked /
+ * failed without a transaction row — linked via reconcile idempotency key).
+ */
+export interface WalletFundingAttemptRecord {
+  readonly managedWalletId: string;
+  readonly attemptedAt: Date;
+  readonly outcome: 'blocked' | 'failed' | 'succeeded' | 'pending';
+  readonly errorCode: string | undefined;
+  readonly amountWei: bigint | undefined;
+  readonly transactionHash: string | undefined;
+}
+
+/**
+ * Read-side queries for GET /health/funding. Kept separate from dispatch-owned
+ * funding repositories so observability does not widen the signing surface.
+ */
+export interface FundingHealthQuery {
+  findLatestFundedByWalletIds(
+    managedWalletIds: readonly string[],
+  ): Promise<readonly WalletLastFundedRecord[]>;
+  findLatestReconcileAttemptsSince(
+    managedWalletIds: readonly string[],
+    since: Date,
+  ): Promise<readonly WalletFundingAttemptRecord[]>;
 }
 
 /**

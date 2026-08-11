@@ -144,6 +144,7 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
         alerts: createAlertRepository(handle.db),
         reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
+        fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
       balanceReader,
       treasurySigner: signer,

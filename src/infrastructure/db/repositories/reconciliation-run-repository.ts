@@ -1,4 +1,4 @@
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc, eq, isNotNull } from 'drizzle-orm';
 import type {
   FinishReconciliationRunInput,
   InsertReconciliationRunInput,
@@ -89,6 +89,19 @@ export function createReconciliationRunRepository(db: Database): ReconciliationR
           .orderBy(desc(reconciliationRuns.startedAt))
           .limit(limit);
         return rows.map(toReconciliationRun);
+      });
+    },
+
+    async findLatestFinished(): Promise<ReconciliationRun | undefined> {
+      return withDatabaseErrors('reconciliation_runs.findLatestFinished', async () => {
+        const rows = await db
+          .select()
+          .from(reconciliationRuns)
+          .where(isNotNull(reconciliationRuns.finishedAt))
+          .orderBy(desc(reconciliationRuns.finishedAt))
+          .limit(1);
+        const row = rows[0];
+        return row === undefined ? undefined : toReconciliationRun(row);
       });
     },
 

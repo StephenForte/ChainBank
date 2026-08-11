@@ -169,6 +169,7 @@ describe.skipIf(!integrationEnabled)('GET /v1/reconciliation-runs (integration, 
         alerts: createAlertRepository(handle.db),
         reconciliationRuns: createReconciliationRunRepository(handle.db),
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
+        fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
       balanceReader: {
         readBalance: () =>

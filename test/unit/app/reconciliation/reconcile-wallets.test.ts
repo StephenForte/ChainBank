@@ -189,6 +189,97 @@ describe('reconcileWallets sweep decisions', () => {
     expect(result.run.walletsNoop).toBe(1);
   });
 
+  it('emits a distinct fund-attribution log line per funded wallet (defeats amount-timing correlation)', async () => {
+    const sink = collectLogs();
+    const first = buildWallet('w-1', WALLET_A, { role: 'fortel2-batcher' });
+    const second = buildWallet('w-2', WALLET_B, { role: 'chainbank-relayer' });
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: 20n * ONE_ETH,
+        [WALLET_A]: 0n,
+        [WALLET_B]: 0n,
+      },
+    });
+    const deps = buildDeps(stores, [first, second], buildTreasury(), {
+      signer,
+      balanceReader,
+      logger: createLogger({
+        level: 'info',
+        serviceRole: 'cron-reconciler',
+        environment: 'test',
+        destination: sink.stream,
+      }),
+    });
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-two-fund',
+      runId: 'run-two-fund',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result.counters.funded).toBe(2);
+    expect(signer.sendCalls).toBe(2);
+
+    const fundLines = sink.lines().filter((line) => line.event === 'reconciliation.wallet_funded');
+    expect(fundLines).toHaveLength(2);
+
+    const addresses = fundLines.map((line) => line.address);
+    expect(addresses).toContain(WALLET_A);
+    expect(addresses).toContain(WALLET_B);
+    expect(new Set(addresses).size).toBe(2);
+
+    for (const line of fundLines) {
+      expect(typeof line.amountWei).toBe('string');
+      expect(typeof line.balanceWei).toBe('string');
+      expect(typeof line.transactionHash).toBe('string');
+      expect(line.chainId).toBe(11_155_111);
+      expect(line.walletId === 'w-1' || line.walletId === 'w-2').toBe(true);
+      expect(line.walletLabel === 'fortel2-batcher' || line.walletLabel === 'chainbank-relayer').toBe(true);
+      expect(() => JSON.stringify(line)).not.toThrow();
+    }
+  });
+
+  it('emits blocked attribution lines when reserve stops funding', async () => {
+    const sink = collectLogs();
+    const first = buildWallet('w-1', WALLET_A);
+    const second = buildWallet('w-2', WALLET_B);
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: ONE_ETH / 10n + 1_000n,
+        [WALLET_A]: 0n,
+        [WALLET_B]: 0n,
+      },
+    });
+    const deps = buildDeps(stores, [first, second], buildTreasury(), {
+      signer,
+      balanceReader,
+      logger: createLogger({
+        level: 'info',
+        serviceRole: 'cron-reconciler',
+        environment: 'test',
+        destination: sink.stream,
+      }),
+    });
+
+    await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-block-attr',
+      runId: 'run-block-attr',
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const blocked = sink.lines().filter((line) => line.event === 'reconciliation.wallet_blocked');
+    expect(blocked.length).toBeGreaterThanOrEqual(2);
+    expect(blocked.map((line) => line.address).sort()).toEqual([WALLET_A, WALLET_B].sort());
+  });
+
   it('stops submitting after reserve but continues assessing remaining wallets', async () => {
     const first = buildWallet('w-1', WALLET_A);
     const second = buildWallet('w-2', WALLET_B);

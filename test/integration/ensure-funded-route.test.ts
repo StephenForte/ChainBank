@@ -138,6 +138,7 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
         alerts: createAlertRepository(handle.db),
         reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
+        fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
       balanceReader,
       treasurySigner: signer,
