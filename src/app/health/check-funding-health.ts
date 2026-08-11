@@ -45,12 +45,7 @@ export type FundingHealthStatus = 'ok' | 'degraded' | 'failing';
  *   Balance fields are still populated; do not treat this as an active funding
  *   failure. Existing four values all assume the reconciler is managing the wallet.
  */
-export type FundingWalletHealthStatus =
-  | 'ok'
-  | 'below_policy'
-  | 'blocked'
-  | 'failed'
-  | 'not_reconciled';
+export type FundingWalletHealthStatus = 'ok' | 'below_policy' | 'blocked' | 'failed' | 'not_reconciled';
 
 export type FundingHealthExitKind = 'success' | 'policy-disabled' | 'malfunction';
 
@@ -299,9 +294,7 @@ function toLastRun(run: ReconciliationRun | undefined, checkedAt: Date): Funding
  * entity-disabled wallets. Consumers match by address; omitting a policy wallet
  * is a silent blind spot, not a classification detail.
  */
-async function listPolicyWallets(
-  managedWallets: ManagedWalletRepository,
-): Promise<readonly ManagedWallet[]> {
+async function listPolicyWallets(managedWallets: ManagedWalletRepository): Promise<readonly ManagedWallet[]> {
   const withPolicy: ManagedWallet[] = [];
   let offset = 0;
   const pageSize = 100;
