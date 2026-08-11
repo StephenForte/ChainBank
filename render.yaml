@@ -97,6 +97,10 @@ services:
         sync: false
       - key: ALERT_REMINDER_INTERVAL_HOURS
         value: '24'
+      # Bearer for GET /health/funding (CB-01). Web only. Share with ForteL2
+      # (or other funding consumers); not an API credential row.
+      - key: FUNDING_HEALTH_TOKEN
+        sync: false
 
   - type: cron
     name: chainbank-treasury-monitor
