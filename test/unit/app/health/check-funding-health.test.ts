@@ -175,6 +175,73 @@ describe('checkFundingHealth endpoint states', () => {
     expect(result.wallets).toHaveLength(1);
     expect(result.wallets[0]?.status).toBe('ok');
     expect(result.wallets[0]?.address).toBe(BATCHER);
+    // ForteL2 matches wallets by address — empty would be as disruptive as a 500.
+    expect(result.wallets[0]?.address.length).toBeGreaterThan(0);
+  });
+
+  it('includes every policy wallet with a non-empty address, including reconciliation-excluded ones', async () => {
+    const excludedAddress = '0x1111111111111111111111111111111111111111';
+    const result = await checkFundingHealth(
+      buildDeps({
+        run: finishedRun(),
+        wallets: [
+          buildWallet(),
+          buildWallet({
+            id: 'wallet-paused',
+            role: 'fortel2-paused',
+            address: excludedAddress.toLowerCase(),
+            addressDisplay: excludedAddress,
+            reconciliationEnabled: false,
+            policy: {
+              id: 'policy-paused',
+              managedWalletId: 'wallet-paused',
+              minimumBalanceWei: 600_000_000_000_000_000n,
+              targetBalanceWei: ONE_ETH,
+              maximumTopUpWei: ONE_ETH,
+              version: 1,
+              createdAt: NOW,
+              updatedAt: NOW,
+            },
+          }),
+          buildWallet({
+            id: 'wallet-no-policy',
+            role: 'unmanaged',
+            address: '0x2222222222222222222222222222222222222222',
+            addressDisplay: '0x2222222222222222222222222222222222222222',
+            policy: undefined,
+          }),
+        ],
+        balances: {
+          [BATCHER]: 672_741_447_840_395_160n,
+          [excludedAddress]: 100n,
+        },
+      }),
+    );
+
+    expect(result.wallets).toHaveLength(2);
+    for (const wallet of result.wallets) {
+      expect(typeof wallet.address).toBe('string');
+      expect(wallet.address.length).toBeGreaterThan(0);
+    }
+    const paused = result.wallets.find((wallet) => wallet.address === excludedAddress);
+    expect(paused?.status).toBe('not_reconciled');
+    // Below-policy balance on a non-reconciled wallet must not drag overall status.
+    expect(result.status).toBe('ok');
+  });
+
+  it('marks disabled-entity policy wallets as not_reconciled rather than omitting them', async () => {
+    const result = await checkFundingHealth(
+      buildDeps({
+        run: finishedRun(),
+        wallets: [buildWallet({ enabled: false })],
+        balances: { [BATCHER]: 100n },
+      }),
+    );
+
+    expect(result.wallets).toHaveLength(1);
+    expect(result.wallets[0]?.status).toBe('not_reconciled');
+    expect(result.wallets[0]?.address).toBe(BATCHER);
+    expect(result.status).toBe('ok');
   });
 
   it('returns failing when the last successfully finished run is older than 12h', async () => {
@@ -299,6 +366,40 @@ describe('checkFundingHealth endpoint states', () => {
 });
 
 describe('classifyOverallStatus', () => {
+  it('ignores not_reconciled wallets when computing overall status', () => {
+    const status = classifyOverallStatus({
+      checkedAt: NOW,
+      lastFinished: finishedRun(),
+      lastRun: {
+        runId: 'run-fresh',
+        finishedAt: '2026-08-11T18:00:31.000Z',
+        exitKind: 'success',
+        ageSeconds: 3569,
+        walletsBlocked: 0,
+        walletsFailed: 0,
+      },
+      drafts: [
+        {
+          walletId: 'wallet-paused',
+          view: {
+            label: 'paused',
+            address: BATCHER,
+            chainId: 11_155_111,
+            balanceWei: '0',
+            policyMinWei: '600000000000000000',
+            lastFundedAt: undefined,
+            lastFundedWei: undefined,
+            lastFundedTxHash: undefined,
+            status: 'not_reconciled',
+          },
+        },
+      ],
+      attemptByWallet: new Map(),
+      windowStart: new Date(NOW.getTime() - FUNDING_HEALTH_STALE_AFTER_MS),
+    });
+    expect(status).toBe('ok');
+  });
+
   it('treats below-policy with no attempt inside the window as failing', () => {
     const status = classifyOverallStatus({
       checkedAt: NOW,

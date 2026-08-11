@@ -4,6 +4,7 @@ import type {
   WalletFundingAttemptRecord,
   WalletLastFundedRecord,
 } from '../../../app/ports.js';
+import { ChainBankError } from '../../../domain/errors.js';
 import { weiFromDatabaseNumeric } from '../../../domain/wei.js';
 import { withDatabaseErrors, type Database } from '../client.js';
 import { fundingOperations, fundingTransactions } from '../schema.js';
@@ -30,8 +31,10 @@ export function createFundingHealthQuery(db: Database): FundingHealthQuery {
             managedWalletId: fundingTransactions.managedWalletId,
             amountWei: fundingTransactions.amountWei,
             transactionHash: fundingTransactions.transactionHash,
+            // Raw coalesce bypasses Drizzle Date hydration — driver returns text.
+            // Convert explicitly at the boundary (same pattern as amountWei below).
             fundedAt:
-              sql<Date>`coalesce(${fundingTransactions.confirmedAt}, ${fundingTransactions.submittedAt}, ${fundingTransactions.createdAt})`.as(
+              sql<string>`coalesce(${fundingTransactions.confirmedAt}, ${fundingTransactions.submittedAt}, ${fundingTransactions.createdAt})`.as(
                 'funded_at',
               ),
           })
@@ -60,7 +63,7 @@ export function createFundingHealthQuery(db: Database): FundingHealthQuery {
           }
           latest.set(row.managedWalletId, {
             managedWalletId: row.managedWalletId,
-            fundedAt: row.fundedAt,
+            fundedAt: fundedAtFromDatabaseValue(row.fundedAt),
             amountWei: weiFromDatabaseNumeric(row.amountWei, 'amountWei'),
             transactionHash: row.transactionHash,
           });
@@ -136,6 +139,21 @@ function parseReconcileWalletId(idempotencyKey: string | null): string | undefin
   // reconcile:{runId}:{walletId} — runId/walletId are UUID-like opaque ids without ':'.
   const match = /^reconcile:([^:]+):([^:]+)$/.exec(idempotencyKey);
   return match?.[2];
+}
+
+/**
+ * `sql<T>` is a TypeScript-only assertion — node-postgres returns timestamptz
+ * coalesce expressions as strings. Always construct a Date at this boundary.
+ */
+function fundedAtFromDatabaseValue(value: string | Date): Date {
+  const fundedAt = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(fundedAt.getTime())) {
+    throw new ChainBankError(
+      'INTERNAL_ERROR',
+      `fundedAt read from the database was not a valid timestamp: "${String(value)}"`,
+    );
+  }
+  return fundedAt;
 }
 
 function classifyAttemptOutcome(input: {
