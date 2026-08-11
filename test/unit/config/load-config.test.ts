@@ -64,6 +64,23 @@ describe('loadConfig', () => {
     ).toThrow(ChainBankError);
   });
 
+  it('loads optional FUNDING_HEALTH_TOKEN onto apiSecurity for web only', () => {
+    const unset = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(unset.apiSecurity?.fundingHealthToken).toBeUndefined();
+
+    const set = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({ FUNDING_HEALTH_TOKEN: 'consumer-shared-secret' }),
+    });
+    expect(set.apiSecurity?.fundingHealthToken).toBe('consumer-shared-secret');
+
+    const monitor = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({ FUNDING_HEALTH_TOKEN: 'ignored-on-monitor' }),
+    });
+    expect(monitor.apiSecurity).toBeUndefined();
+  });
+
   it('requires email credentials for the treasury monitor', () => {
     expect(() =>
       loadConfig({

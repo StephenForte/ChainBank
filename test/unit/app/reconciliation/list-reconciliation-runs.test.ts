@@ -13,6 +13,7 @@ function fakeRepo(page: {
     markFinished: vi.fn(),
     findById: vi.fn(),
     listRecent: vi.fn(),
+    findLatestFinished: vi.fn(),
     list: vi.fn().mockResolvedValue(page),
     count: vi.fn().mockResolvedValue(page.total),
   };

@@ -160,6 +160,7 @@ describe.skipIf(!integrationEnabled)('GET /v1/wallets/:id/balance (integration)'
         alerts: createAlertRepository(handle.db),
         reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
+        fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
       balanceReader,
       treasurySigner: createFakeSigner({}),

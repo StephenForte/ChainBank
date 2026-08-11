@@ -1,5 +1,5 @@
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
-import { ChainBankError, isChainBankError } from '../../domain/errors.js';
+import { ChainBankError, describeUnknownError, isChainBankError } from '../../domain/errors.js';
 import type { FundingPolicy } from '../../domain/funding/funding-math.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
@@ -233,14 +233,25 @@ export async function reconcileWallets(
       const treasury = resolveTreasuryForWallet(treasuries, wallet);
       if (treasury === undefined) {
         counters = addSweepOutcome(counters, 'failed');
+        const reason =
+          treasuries.filter((row) => row.chain.chainId === wallet.chain.chainId).length > 1
+            ? `Ambiguous treasury configuration for chain ${String(wallet.chain.chainId)}`
+            : `No enabled treasury for chain ${String(wallet.chain.chainId)}`;
         findings.push({
           kind: 'wallet_assessment_failed',
           severity: 'warning',
           walletId: wallet.id,
-          reason:
-            treasuries.filter((row) => row.chain.chainId === wallet.chain.chainId).length > 1
-              ? `Ambiguous treasury configuration for chain ${String(wallet.chain.chainId)}`
-              : `No enabled treasury for chain ${String(wallet.chain.chainId)}`,
+          reason,
+        });
+        logWalletFundingAttribution(dependencies.logger, {
+          outcome: 'failed',
+          correlationId: input.correlationId,
+          runId,
+          wallet,
+          amountWei: 0n,
+          balanceWei: undefined,
+          transactionHash: undefined,
+          reason,
         });
         continue;
       }
@@ -260,11 +271,25 @@ export async function reconcileWallets(
 
         counters = addSweepOutcome(counters, outcome.counter, outcome.transferredWei);
 
+        if (outcome.counter === 'funded' || outcome.counter === 'blocked' || outcome.counter === 'failed') {
+          logWalletFundingAttribution(dependencies.logger, {
+            outcome: outcome.counter,
+            correlationId: input.correlationId,
+            runId,
+            wallet,
+            amountWei: outcome.transferredWei,
+            balanceWei: outcome.resultingBalanceWei,
+            transactionHash: outcome.transactionHash,
+            reason: outcome.reason,
+          });
+        }
+
         if (outcome.reserveBlocked) {
           reserveStoppedByTreasury.set(treasury.id, true);
         }
       } catch (error) {
         counters = addSweepOutcome(counters, 'failed');
+        const reason = error instanceof Error ? error.message : describeUnknownError(error);
         dependencies.logger.error(
           {
             event: 'reconciliation.wallet_failed',
@@ -278,6 +303,16 @@ export async function reconcileWallets(
           },
           'Reconciliation wallet assessment failed; continuing sweep',
         );
+        logWalletFundingAttribution(dependencies.logger, {
+          outcome: 'failed',
+          correlationId: input.correlationId,
+          runId,
+          wallet,
+          amountWei: 0n,
+          balanceWei: undefined,
+          transactionHash: undefined,
+          reason,
+        });
       }
     }
 
@@ -606,6 +641,16 @@ function resolveTreasuryForWallet(
   return matches[0];
 }
 
+interface SweepWalletAttribution {
+  readonly counter: 'funded' | 'noop' | 'blocked' | 'failed';
+  readonly transferredWei: bigint;
+  readonly reserveBlocked: boolean;
+  /** Post-funding balance when known; pre-assessment balance for blocked/failed paths. */
+  readonly resultingBalanceWei: bigint | undefined;
+  readonly transactionHash: string | undefined;
+  readonly reason: string | undefined;
+}
+
 async function assessAndMaybeFundWallet(
   dependencies: ReconcileWalletsDependencies,
   input: {
@@ -617,11 +662,7 @@ async function assessAndMaybeFundWallet(
     readonly correlationId: string;
     readonly reserveStopped: boolean;
   },
-): Promise<{
-  readonly counter: 'funded' | 'noop' | 'blocked' | 'failed';
-  readonly transferredWei: bigint;
-  readonly reserveBlocked: boolean;
-}> {
+): Promise<SweepWalletAttribution> {
   const walletReading = await dependencies.balanceReader.readBalance(input.wallet.addressDisplay);
   if (walletReading.kind === 'unavailable') {
     throw new ChainBankError(walletReading.errorCode, walletReading.reason, {
@@ -649,14 +690,31 @@ async function assessAndMaybeFundWallet(
   switch (assessment.kind) {
     case 'excluded':
       // Eligible list already filtered these; treat as no-op if reached.
-      return { counter: 'noop', transferredWei: 0n, reserveBlocked: false };
+      return {
+        counter: 'noop',
+        transferredWei: 0n,
+        reserveBlocked: false,
+        resultingBalanceWei: walletReading.balanceWei,
+        transactionHash: undefined,
+        reason: undefined,
+      };
     case 'no-op':
-      return { counter: 'noop', transferredWei: 0n, reserveBlocked: false };
+      return {
+        counter: 'noop',
+        transferredWei: 0n,
+        reserveBlocked: false,
+        resultingBalanceWei: walletReading.balanceWei,
+        transactionHash: undefined,
+        reason: undefined,
+      };
     case 'blocked':
       return {
         counter: 'blocked',
         transferredWei: 0n,
         reserveBlocked: assessment.reason === 'reserve-stop',
+        resultingBalanceWei: walletReading.balanceWei,
+        transactionHash: undefined,
+        reason: assessment.reason,
       };
     case 'needs-funding':
       break;
@@ -732,11 +790,16 @@ async function assessAndMaybeFundWallet(
     credentialId: input.credentialId,
   });
 
-  return mapDispatchToSweepCounter(dependencies, {
+  const mapped = await mapDispatchToSweepCounter(dependencies, {
     dispatchResult,
     treasury: input.treasury,
     correlationId: input.correlationId,
   });
+
+  const resultingBalanceWei =
+    mapped.counter === 'funded' ? walletReading.balanceWei + mapped.transferredWei : walletReading.balanceWei;
+
+  return { ...mapped, resultingBalanceWei };
 }
 
 async function mapDispatchToSweepCounter(
@@ -750,29 +813,63 @@ async function mapDispatchToSweepCounter(
   readonly counter: 'funded' | 'noop' | 'blocked' | 'failed';
   readonly transferredWei: bigint;
   readonly reserveBlocked: boolean;
+  readonly transactionHash: string | undefined;
+  readonly reason: string | undefined;
 }> {
   switch (input.dispatchResult.kind) {
     case 'no-op':
-      return { counter: 'noop', transferredWei: 0n, reserveBlocked: false };
+      return {
+        counter: 'noop',
+        transferredWei: 0n,
+        reserveBlocked: false,
+        transactionHash: undefined,
+        reason: input.dispatchResult.reason,
+      };
     case 'blocked':
       return {
         counter: 'blocked',
         transferredWei: 0n,
         reserveBlocked: input.dispatchResult.reason === 'reserve',
+        transactionHash: undefined,
+        reason: input.dispatchResult.reason,
       };
     case 'replay': {
       const tx = input.dispatchResult.transaction;
       if (tx === undefined) {
-        return { counter: 'noop', transferredWei: 0n, reserveBlocked: false };
+        return {
+          counter: 'noop',
+          transferredWei: 0n,
+          reserveBlocked: false,
+          transactionHash: undefined,
+          reason: 'replay-without-transaction',
+        };
       }
       if (tx.status === 'confirmed') {
-        return { counter: 'funded', transferredWei: tx.amountWei, reserveBlocked: false };
+        return {
+          counter: 'funded',
+          transferredWei: tx.amountWei,
+          reserveBlocked: false,
+          transactionHash: tx.transactionHash,
+          reason: 'replay-confirmed',
+        };
       }
       if (tx.status === 'submitted' || tx.status === 'created' || tx.status === 'submission_unknown') {
         // Pending counts as assessed-but-not-newly-funded for summary math.
-        return { counter: 'noop', transferredWei: 0n, reserveBlocked: false };
+        return {
+          counter: 'noop',
+          transferredWei: 0n,
+          reserveBlocked: false,
+          transactionHash: tx.transactionHash,
+          reason: `replay-pending:${tx.status}`,
+        };
       }
-      return { counter: 'failed', transferredWei: 0n, reserveBlocked: false };
+      return {
+        counter: 'failed',
+        transferredWei: 0n,
+        reserveBlocked: false,
+        transactionHash: tx.transactionHash,
+        reason: tx.errorCode ?? `replay-terminal:${tx.status}`,
+      };
     }
     case 'submitted': {
       const tracked = await trackTransaction(
@@ -800,9 +897,17 @@ async function mapDispatchToSweepCounter(
               counter: 'funded',
               transferredWei: tracked.transaction.amountWei,
               reserveBlocked: false,
+              transactionHash: tracked.transaction.transactionHash,
+              reason: undefined,
             };
           }
-          return { counter: 'failed', transferredWei: 0n, reserveBlocked: false };
+          return {
+            counter: 'failed',
+            transferredWei: 0n,
+            reserveBlocked: false,
+            transactionHash: tracked.transaction.transactionHash,
+            reason: tracked.transaction.errorCode ?? tracked.transaction.status,
+          };
         case 'pending':
           // Submitted but not yet confirmed — count as funded for sweep math
           // (a transfer was issued this run).
@@ -810,11 +915,19 @@ async function mapDispatchToSweepCounter(
             counter: 'funded',
             transferredWei: tracked.transaction.amountWei,
             reserveBlocked: false,
+            transactionHash: tracked.transaction.transactionHash,
+            reason: 'submitted-pending-confirmation',
           };
         case 'reverted':
         case 'replaced':
         case 'dropped':
-          return { counter: 'failed', transferredWei: 0n, reserveBlocked: false };
+          return {
+            counter: 'failed',
+            transferredWei: 0n,
+            reserveBlocked: false,
+            transactionHash: tracked.transaction.transactionHash,
+            reason: tracked.kind,
+          };
         default:
           return assertNever(tracked, 'TrackTransactionResult');
       }
@@ -822,6 +935,56 @@ async function mapDispatchToSweepCounter(
     default:
       return assertNever(input.dispatchResult, 'DispatchFundingResult');
   }
+}
+
+/**
+ * One structured line per funded / blocked / failed wallet.
+ *
+ * Complements (does not replace) the run-completed summary counters. Wei and
+ * chain quantities are decimal strings so Pino never sees a raw bigint.
+ * Addresses and tx hashes are public; never log signer material here.
+ */
+export function logWalletFundingAttribution(
+  logger: Logger,
+  input: {
+    readonly outcome: 'funded' | 'blocked' | 'failed';
+    readonly correlationId: string;
+    readonly runId: string;
+    readonly wallet: ManagedWallet;
+    readonly amountWei: bigint;
+    readonly balanceWei: bigint | undefined;
+    readonly transactionHash: string | undefined;
+    readonly reason: string | undefined;
+  },
+): void {
+  const fields = {
+    event:
+      input.outcome === 'funded'
+        ? ('reconciliation.wallet_funded' as const)
+        : input.outcome === 'blocked'
+          ? ('reconciliation.wallet_blocked' as const)
+          : ('reconciliation.wallet_failed' as const),
+    correlationId: input.correlationId,
+    runId: input.runId,
+    walletId: input.wallet.id,
+    walletLabel: input.wallet.role,
+    address: input.wallet.addressDisplay,
+    chainId: input.wallet.chain.chainId,
+    amountWei: input.amountWei.toString(),
+    balanceWei: input.balanceWei === undefined ? undefined : input.balanceWei.toString(),
+    transactionHash: input.transactionHash,
+    reason: input.reason,
+  };
+
+  if (input.outcome === 'funded') {
+    logger.info(fields, 'Reconciliation funded managed wallet');
+    return;
+  }
+  if (input.outcome === 'blocked') {
+    logger.warn(fields, 'Reconciliation blocked funding for managed wallet');
+    return;
+  }
+  logger.error(fields, 'Reconciliation failed to fund managed wallet');
 }
 
 async function resolveSubmissionUnknownForTreasury(

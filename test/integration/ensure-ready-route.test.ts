@@ -224,6 +224,7 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
         alerts: createAlertRepository(handle.db),
         reconciliationRuns: {} as Container['repositories']['reconciliationRuns'],
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
+        fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
       balanceReader,
       treasurySigner: signer,

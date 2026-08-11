@@ -73,6 +73,11 @@ export interface ApiSecurityConfig {
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
   readonly trustedProxyHops: number;
+  /**
+   * Static bearer for GET /health/funding. Undefined when FUNDING_HEALTH_TOKEN
+   * is unset — the route then fails closed (401) rather than exposing inventory.
+   */
+  readonly fundingHealthToken: string | undefined;
 }
 
 export interface FundingConfig {
@@ -480,6 +485,7 @@ function buildApiSecurityConfig(env: RawEnvironment, isHosted: boolean): ApiSecu
     rateLimitMax: env.RATE_LIMIT_MAX,
     rateLimitWindowSeconds: env.RATE_LIMIT_WINDOW_SECONDS,
     trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    fundingHealthToken: env.FUNDING_HEALTH_TOKEN,
   };
 }
 

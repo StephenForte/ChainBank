@@ -14,6 +14,7 @@ import type {
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransactionRepository,
+  FundingHealthQuery,
   OperatorMutationTransaction,
   ReconciliationFundingQuery,
   ReconciliationRunRepository,
@@ -38,6 +39,7 @@ import { createEnvironmentRepository } from './infrastructure/db/repositories/en
 import { createFundingPolicyRepository } from './infrastructure/db/repositories/funding-policy-repository.js';
 import { createManagedWalletRepository } from './infrastructure/db/repositories/managed-wallet-repository.js';
 import { createProjectRepository } from './infrastructure/db/repositories/project-repository.js';
+import { createFundingHealthQuery } from './infrastructure/db/repositories/funding-health-query-repository.js';
 import { createFundingOperationRepository } from './infrastructure/db/repositories/funding-operation-repository.js';
 import { createFundingTransactionRepository } from './infrastructure/db/repositories/funding-transaction-repository.js';
 import { createReconciliationFundingQuery } from './infrastructure/db/repositories/reconciliation-query-repository.js';
@@ -83,6 +85,7 @@ export interface Container {
     readonly alerts: AlertRepository;
     readonly reconciliationRuns: ReconciliationRunRepository;
     readonly reconciliationFunding: ReconciliationFundingQuery;
+    readonly fundingHealth: FundingHealthQuery;
   };
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
@@ -145,6 +148,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
       alerts: createAlertRepository(database.db),
       reconciliationRuns: createReconciliationRunRepository(database.db),
       reconciliationFunding: createReconciliationFundingQuery(database.db),
+      fundingHealth: createFundingHealthQuery(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
     treasurySigner: buildTreasurySigner(config, logger),
