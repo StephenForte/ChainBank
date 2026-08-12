@@ -39,14 +39,22 @@ services:
         value: hosted-development
       - key: LOG_LEVEL
         value: info
+      # Funding gates are sync:false — declared here so the keys exist, but the
+      # dashboard value is authoritative. A literal `value:` would be reapplied
+      # on every Blueprint sync, and Render re-syncs the whole Blueprint whenever
+      # this file changes, for any reason. That silently reverted an operator's
+      # dashboard flip once already (2026-08-11, wallet-reconciler: the
+      # FUNDING_HEALTH_TOKEN commit re-disabled the reconciler for 18 hours), and
+      # the same mechanism would re-arm a kill switch mid-incident. Both default
+      # to false when unset, so an unset variable fails closed.
+      # See docs/runbooks/disable-all-automated-funding.md
       - key: FUNDING_ENABLED
-        value: 'false'
+        sync: false
       # Emergency stop. Declared here so halting funding is a one-value edit
       # rather than creating a variable mid-incident. Every signing-capable
       # service must carry it (web + wallet-reconciler). Takes effect on restart.
-      # See docs/runbooks/disable-all-automated-funding.md
       - key: FUNDING_KILL_SWITCH
-        value: 'false'
+        sync: false
       # Render terminates TLS one hop in front of the service. Never raise this
       # without a matching proxy chain: each extra trusted hop lets a client
       # forge request.ip through X-Forwarded-For, which would defeat per-IP rate
@@ -122,6 +130,9 @@ services:
         value: hosted-development
       - key: LOG_LEVEL
         value: info
+      # Deliberately a literal here, unlike the signing-capable services: the
+      # monitor holds no TREASURY_PRIVATE_KEY and must never fund, so having a
+      # Blueprint sync reassert `false` is the desired behavior, not a hazard.
       - key: FUNDING_ENABLED
         value: 'false'
       - key: CHAIN_ID
@@ -181,10 +192,15 @@ services:
         value: hosted-development
       - key: LOG_LEVEL
         value: info
+      # sync:false for the same reason as web — and this is the service the
+      # 2026-08-11 revert actually hit. A literal 'false' here means every future
+      # edit to this file silently stops unattended funding, and the reconciler
+      # reports that stop as exit 0 / "run finished successfully" (C15 treats
+      # FUNDING_DISABLED as policy, not failure), so nothing alerts.
       - key: FUNDING_ENABLED
-        value: 'false'
+        sync: false
       - key: FUNDING_KILL_SWITCH
-        value: 'false'
+        sync: false
       - key: CHAIN_ID
         value: '11155111'
       - key: EMAIL_PROVIDER
