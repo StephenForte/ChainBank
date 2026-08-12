@@ -81,6 +81,15 @@ threshold value changes —
    A kill switch left on for a week must **not** produce twenty-eight failed-run
    pages — that path is policy, recorded on the run row, exit zero.
 
+   > The cost of that choice: an **unintentionally** disabled reconciler is
+   > invisible in Render's job list, which shows a green "succeeded" every six
+   > hours while nothing is funded. Green here means "the process ran", not
+   > "wallets were topped up". When verifying the cron is doing work, read
+   > `walletsAssessed` — a `policy-disabled` run assesses **0** — rather than
+   > trusting the run status. See the `FUNDING_DISABLED` row in
+   > [`investigate-failed-funding.md`](./investigate-failed-funding.md) for the
+   > Blueprint-sync cause that produced exactly this on 2026-08-11.
+
 3. Success / policy log lines from `src/jobs/wallet-reconciler.ts` include:
 
    - `Wallet reconciler run started`
@@ -173,18 +182,18 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq '.data[].la
 
 ## Rollback / if this goes wrong
 
-| Symptom                                              | Likely cause                                                                                     |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Cron never starts                                    | Suspended cron, Blueprint mis-sync, or build failure (`npm ci --include=dev && npm run build`)   |
-| Newly added cron exits non-zero straight away        | `sync: false` vars not materialized by the Blueprint sync — enter all eight by hand              |
-| Reconciler: run succeeds but `wallets_assessed` is 0 | No wallet has `reconciliation_enabled = true` — not a platform failure, and not a success either |
-| Reconciler: run never finishes / cancelled           | Outgoing scan at too high a `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` (TX.9) — lower it               |
-| TLS / DB errors on boot                              | Stale `DATABASE_SSL_CA` — [`deploy-render-phase0.md`](./deploy-render-phase0.md)                 |
-| Monitor: balance unread / non-zero exit              | `RPC_UNAVAILABLE` / bad `CHAIN_RPC_URL`                                                          |
-| Reconciler: `SIGNER_UNAVAILABLE` / non-zero exit     | `FUNDING_ENABLED=true` without valid `TREASURY_PRIVATE_KEY` on **reconciler** (not monitor)      |
-| Reconciler: exit 0 with `FUNDING_DISABLED`           | Expected when funding off or kill switch on — not a platform failure                             |
-| Heartbeat missing after “success”                    | Looking at wrong DB, or web pointing at a different database than cron                           |
-| Email missing but monitor observation ok             | Resend / `EMAIL_*` vars on the **monitor** service; alert transition was `none`                  |
+| Symptom                                              | Likely cause                                                                                                                                                                       |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cron never starts                                    | Suspended cron, Blueprint mis-sync, or build failure (`npm ci --include=dev && npm run build`)                                                                                     |
+| Newly added cron exits non-zero straight away        | `sync: false` vars not materialized by the Blueprint sync — enter all eight by hand                                                                                                |
+| Reconciler: run succeeds but `wallets_assessed` is 0 | No wallet has `reconciliation_enabled = true` — not a platform failure, and not a success either                                                                                   |
+| Reconciler: run never finishes / cancelled           | Outgoing scan at too high a `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` (TX.9) — lower it                                                                                                 |
+| TLS / DB errors on boot                              | Stale `DATABASE_SSL_CA` — [`deploy-render-phase0.md`](./deploy-render-phase0.md)                                                                                                   |
+| Monitor: balance unread / non-zero exit              | `RPC_UNAVAILABLE` / bad `CHAIN_RPC_URL`                                                                                                                                            |
+| Reconciler: `SIGNER_UNAVAILABLE` / non-zero exit     | `FUNDING_ENABLED=true` without valid `TREASURY_PRIVATE_KEY` on **reconciler** (not monitor)                                                                                        |
+| Reconciler: exit 0 with `FUNDING_DISABLED`           | Expected when funding off or kill switch on — not a platform failure. If nobody turned it off, check Render **Events** for a `blueprint sync` deploy just before the first refusal |
+| Heartbeat missing after “success”                    | Looking at wrong DB, or web pointing at a different database than cron                                                                                                             |
+| Email missing but monitor observation ok             | Resend / `EMAIL_*` vars on the **monitor** service; alert transition was `none`                                                                                                    |
 
 There is nothing to “roll back” for a verification check. Fix env / RPC / TLS
 and Trigger Run again.

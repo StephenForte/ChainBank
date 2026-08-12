@@ -108,6 +108,45 @@ describe('render.yaml treasury thresholds', () => {
     expect(hasSigningKey('chainbank-treasury-monitor')).toBe(false);
   });
 
+  /**
+   * The inverse of the threshold rule above, and it is deliberate rather than
+   * inconsistent. Thresholds are declared literals because an invalid ladder
+   * must fail in CI. The funding gates are operator state: a literal value is
+   * reapplied on every Blueprint sync, and Render re-syncs the whole Blueprint
+   * whenever this file changes for any reason. On 2026-08-11 an unrelated
+   * FUNDING_HEALTH_TOKEN commit re-declared FUNDING_ENABLED=false on
+   * chainbank-wallet-reconciler, and unattended funding stopped for 18 hours
+   * while every run still reported exit 0. The same mechanism would clear a
+   * kill switch set mid-incident.
+   *
+   * Both keys default to false when unset (`src/config/schema.ts`), so
+   * sync:false fails closed rather than arming funding by omission.
+   */
+  const FUNDING_GATE_KEYS = ['FUNDING_ENABLED', 'FUNDING_KILL_SWITCH'] as const;
+  const SIGNING_SERVICES = ['chainbank-web', 'chainbank-wallet-reconciler'] as const;
+
+  describe.each(SIGNING_SERVICES)('funding gates on %s', (serviceName) => {
+    it.each(FUNDING_GATE_KEYS)('declares %s as sync:false, never a literal', (key) => {
+      const block = services.get(serviceName) ?? '';
+      const entry = new RegExp(`- key:\\s*${key}\\s*\\n\\s*(\\S+):`).exec(block);
+
+      expect(entry, `${key} is not declared on ${serviceName}`).not.toBeNull();
+      expect(
+        entry?.[1],
+        `${key} must be sync:false on ${serviceName}. A literal value is reapplied ` +
+          'on every Blueprint sync and silently reverts the operator flip.',
+      ).toBe('sync');
+    });
+  });
+
+  it('keeps FUNDING_ENABLED a literal false on the non-signing monitor', () => {
+    // Asymmetric on purpose: treasury-monitor holds no key and must never fund,
+    // so reasserting false on each sync is the point.
+    const block = services.get('chainbank-treasury-monitor') ?? '';
+    expect(block).toMatch(/- key:\s*FUNDING_ENABLED\s*\n\s*value:\s*'false'/);
+    expect(block).not.toMatch(/- key:\s*FUNDING_KILL_SWITCH\b/);
+  });
+
   it('schedules the wallet reconciler every six hours', () => {
     const block = services.get('chainbank-wallet-reconciler') ?? '';
     expect(block).toMatch(/schedule:\s*'0 \*\/6 \* \* \*'/);
