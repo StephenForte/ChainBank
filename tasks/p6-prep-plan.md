@@ -10,10 +10,10 @@ in `tasks/worker-plan.md`.
 
 Identifiers reserved by this plan (do not grep-and-increment):
 
-| Kind | Assigned | Next free after this wave |
-| ---- | -------- | ------------------------- |
-| Migration | **0010** — P6-PREP-2 partial unique index | **0011** |
-| Contract | Amend C23 and C24 in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched) |
+| Kind      | Assigned                                                         | Next free after this wave |
+| --------- | ---------------------------------------------------------------- | ------------------------- |
+| Migration | **0010** — P6-PREP-2 partial unique index                        | **0011**                  |
+| Contract  | Amend C23 and C24 in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched)       |
 
 Baseline at plan write: `origin/main` **`2db27b7`** (merge of PR #105).
 
@@ -23,11 +23,11 @@ Baseline at plan write: `origin/main` **`2db27b7`** (merge of PR #105).
 
 Operator answers, recorded in `tasks/DECISIONS.md` and PRD §22 / §25.1.
 
-| # | Decision | Record |
-| - | -------- | ------ |
-| **D15** | Skip Phase 5 (ERC-20) until a concrete need. Phase 6 is next. The Phase 6 adapter stays native-transfer only; tokens are a later extension, not T6.1. Anvil (D6) stays deferred. | Operator, 2026-08-28 |
-| **D16** | C23 hatch remains. Mode is **process-global**: every chain is hatch, or every chain is two-tier. No per-chain mix without a new decision. | Operator accepted planner recommendation, 2026-08-28 |
-| **D17** | Phase 9 Public/Private is live on Render. Hosted exit criteria treated as met on operator attestation. This session did not re-derive on-chain replenish hashes. | Operator, 2026-08-28 |
+| #       | Decision                                                                                                                                                                         | Record                                               |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **D15** | Skip Phase 5 (ERC-20) until a concrete need. Phase 6 is next. The Phase 6 adapter stays native-transfer only; tokens are a later extension, not T6.1. Anvil (D6) stays deferred. | Operator, 2026-08-28                                 |
+| **D16** | C23 hatch remains. Mode is **process-global**: every chain is hatch, or every chain is two-tier. No per-chain mix without a new decision.                                        | Operator accepted planner recommendation, 2026-08-28 |
+| **D17** | Phase 9 Public/Private is live on Render. Hosted exit criteria treated as met on operator attestation. This session did not re-derive on-chain replenish hashes.                 | Operator, 2026-08-28                                 |
 
 These close the “do not start Phase 6 until…” gates from the 2026-08-28 review.
 
@@ -35,11 +35,11 @@ These close the “do not start Phase 6 until…” gates from the 2026-08-28 re
 
 ## Wave 1 — P6-PREP-1 planning-doc truth (done)
 
-| Field | Value |
-| ----- | ----- |
-| Branch | `docs/p6-prep-1-planning-truth` |
-| PR | [#105](https://github.com/StephenForte/ChainBank/pull/105) merged 2026-08-28T23:01:43Z as `2db27b7` |
-| Status | complete-with-caveats (planner D15–D17 commit rode along) |
+| Field  | Value                                                                                               |
+| ------ | --------------------------------------------------------------------------------------------------- |
+| Branch | `docs/p6-prep-1-planning-truth`                                                                     |
+| PR     | [#105](https://github.com/StephenForte/ChainBank/pull/105) merged 2026-08-28T23:01:43Z as `2db27b7` |
+| Status | complete-with-caveats (planner D15–D17 commit rode along)                                           |
 
 What landed:
 
@@ -75,31 +75,31 @@ or unsafe:
 
 ### Dispatch table
 
-| Order | Task | Model | Parallel with | After |
-| ----- | ---- | ----- | ------------- | ----- |
-| Wave 2 | **P6-PREP-2** enabled-kind unique + enable guard | Stronger (money path + migration) | P6-PREP-3 | Wave 1 (landed) |
-| Wave 2 | **P6-PREP-3** chain-scoped replenish keys | Stronger (money path, idempotency) | P6-PREP-2 | Wave 1 (landed) |
-| Wave 3 | **P6-PREP-4** runbooks + explorer URL + README `5+` | Cheap | P6-PREP-5 | P6-PREP-2 (runbooks mention the enable guard) |
-| Wave 3 | **P6-PREP-5** `blockTimeMs` on `SupportedChain` | Cheap | P6-PREP-4 | Wave 1 (landed) |
-| **Stop** | T6.1 chain-adapter registry | — | — | This entire wave |
+| Order    | Task                                                | Model                              | Parallel with | After                                         |
+| -------- | --------------------------------------------------- | ---------------------------------- | ------------- | --------------------------------------------- |
+| Wave 2   | **P6-PREP-2** enabled-kind unique + enable guard    | Stronger (money path + migration)  | P6-PREP-3     | Wave 1 (landed)                               |
+| Wave 2   | **P6-PREP-3** chain-scoped replenish keys           | Stronger (money path, idempotency) | P6-PREP-2     | Wave 1 (landed)                               |
+| Wave 3   | **P6-PREP-4** runbooks + explorer URL + README `5+` | Cheap                              | P6-PREP-5     | P6-PREP-2 (runbooks mention the enable guard) |
+| Wave 3   | **P6-PREP-5** `blockTimeMs` on `SupportedChain`     | Cheap                              | P6-PREP-4     | Wave 1 (landed)                               |
+| **Stop** | T6.1 chain-adapter registry                         | —                                  | —             | This entire wave                              |
 
 `tasks/DECISIONS.md` is append-only at C23/C24 and the log tail. Expect a rebase
 conflict; keep both sides.
 
 Shared-file collision map:
 
-| File | P6-PREP-2 | P6-PREP-3 | P6-PREP-4 | P6-PREP-5 |
-| ---- | --------- | --------- | --------- | --------- |
-| `src/infrastructure/db/schema.ts` | owned (index only) | no | no | no |
-| `drizzle/0010_*` + meta | owned | no | no | no |
-| `set-treasury-enabled.ts` | owned | no | no | no |
-| `ensure-environment-ready.ts` | no | owned | no | no |
-| `reconcile-wallets.ts` | no | owned (prelude key + failure copy) | no | no |
-| `funding-operations.ts` | no | no | owned | no |
-| `supported-chains.ts` | no | no | no | owned |
-| `reconciliation-decisions.ts` | no | no | no | owned |
-| `tasks/DECISIONS.md` | append C23 + log | append C24 + log | no | no |
-| runbooks / README | no | no | owned | no |
+| File                              | P6-PREP-2          | P6-PREP-3                          | P6-PREP-4 | P6-PREP-5 |
+| --------------------------------- | ------------------ | ---------------------------------- | --------- | --------- |
+| `src/infrastructure/db/schema.ts` | owned (index only) | no                                 | no        | no        |
+| `drizzle/0010_*` + meta           | owned              | no                                 | no        | no        |
+| `set-treasury-enabled.ts`         | owned              | no                                 | no        | no        |
+| `ensure-environment-ready.ts`     | no                 | owned                              | no        | no        |
+| `reconcile-wallets.ts`            | no                 | owned (prelude key + failure copy) | no        | no        |
+| `funding-operations.ts`           | no                 | no                                 | owned     | no        |
+| `supported-chains.ts`             | no                 | no                                 | no        | owned     |
+| `reconciliation-decisions.ts`     | no                 | no                                 | no        | owned     |
+| `tasks/DECISIONS.md`              | append C23 + log   | append C24 + log                   | no        | no        |
+| runbooks / README                 | no                 | no                                 | owned     | no        |
 
 ---
 
