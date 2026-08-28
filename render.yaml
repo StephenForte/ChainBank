@@ -7,14 +7,10 @@
 #   - Shared Postgres (private network only)
 #
 # Secrets are sync:false so the dashboard prompts once.
-# TREASURY_PRIVATE_KEY is declared only on signing-capable services (web +
-# wallet-reconciler). The treasury-monitor must never receive it.
-#
-# Phase 9 two-tier (optional hatch): leave TREASURY_OPERATIONAL_* unset so
-# wallets still spend from TREASURY_ADDRESS. At cutover, set
-# TREASURY_OPERATIONAL_ADDRESS, thresholds, policy ETH amounts, and
-# TREASURY_OPERATIONAL_PRIVATE_KEY on web + wallet-reconciler in the dashboard
-# (address/thresholds only on treasury-monitor — never the operational key).
+# TREASURY_PRIVATE_KEY and TREASURY_OPERATIONAL_PRIVATE_KEY are declared only
+# on signing-capable services (web + wallet-reconciler), both sync:false.
+# The treasury-monitor must never receive either key. Dashboard-only secrets
+# that are missing from this file are not reliably injected into cron runs.
 
 databases:
   - name: chainbank-db
@@ -89,7 +85,9 @@ services:
       # also receives it below. Never add to treasury-monitor.
       - key: TREASURY_PRIVATE_KEY
         sync: false
-      # Thresholds are version-controlled rather than dashboard-set (decision
+      - key: TREASURY_OPERATIONAL_PRIVATE_KEY
+        sync: false
+      # Thresholds are version-controlled rather than dashboard-set (decision)
       # D3) so an invalid ladder is caught by CI instead of failing the service
       # at boot. Quoted because the config schema parses decimal ETH strings.
       # Ordering must hold: reserve < critical <= warning <= recovery.
@@ -228,6 +226,8 @@ services:
       # Signing secret group — required when FUNDING_ENABLED=true. Same key as
       # web; never present on treasury-monitor.
       - key: TREASURY_PRIVATE_KEY
+        sync: false
+      - key: TREASURY_OPERATIONAL_PRIVATE_KEY
         sync: false
       # Must stay identical to web and treasury-monitor (D3 / CI ladder check).
       - key: TREASURY_WARNING_BALANCE_ETH
