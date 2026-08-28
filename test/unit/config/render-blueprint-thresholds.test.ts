@@ -108,6 +108,17 @@ describe('render.yaml treasury thresholds', () => {
     expect(hasSigningKey('chainbank-treasury-monitor')).toBe(false);
   });
 
+  it('gives TREASURY_OPERATIONAL_PRIVATE_KEY only to signing-capable services', () => {
+    const hasOperationalKey = (name: string): boolean => {
+      const block = services.get(name) ?? '';
+      return /- key:\s*TREASURY_OPERATIONAL_PRIVATE_KEY\b/.test(block);
+    };
+
+    expect(hasOperationalKey('chainbank-web')).toBe(true);
+    expect(hasOperationalKey('chainbank-wallet-reconciler')).toBe(true);
+    expect(hasOperationalKey('chainbank-treasury-monitor')).toBe(false);
+  });
+
   /**
    * The inverse of the threshold rule above, and it is deliberate rather than
    * inconsistent. Thresholds are declared literals because an invalid ladder
