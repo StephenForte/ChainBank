@@ -6,13 +6,12 @@ Treasury and wallet-funding service for EVM development environments.
 
 Humans replenish the treasury with testnet ETH. ChainBank monitors balances, alerts operators by email, and (from Phase 1 onward) funds approved managed wallets according to policy.
 
-**Current phase: Phases 1–4 are code-complete.** The reconciliation use case
-(C14), the 6-hourly reconciler cron, failure alerting (C15), the incremental
+**Current phase: Phases 1–4 are exited.** Phase 9 two-tier treasury (Public/Private,
+migration `0009`, contracts C23–C25) merged in PRs #103 and #104. The reconciliation
+use case (C14), the 6-hourly reconciler cron, failure alerting (C15), the incremental
 outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency coverage (C16),
 and crash-duplicate prevention (TX.10, C7 amendment) are all merged and deployed.
-Phase 4 is **not yet declared exited**: its §20 criterion that wallets remain
-above policy minimum during a test period has no live evidence, because no
-managed wallet has `reconciliation_enabled = true` yet.
+Phase 6 (multi-chain) has not started.
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -293,5 +292,5 @@ Short version:
 | 1     | Managed wallets, funding policy, on-demand funding, reserve                | ✅ complete (including reserve-exhaustion email and concurrency integration tests)                                                                                                                                                                                                                                                                                                                                                                                   |
 | 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)                                                                                                                                                                                                                                                                                                                                                          |
 | 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                                                                                                                                                                                                                                                                                                                                                                     |
-| 4     | Scheduled wallet reconciliation                                            | code-complete, awaiting live evidence — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), failure alerting (T4.3, C15), incremental forward-contiguous outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency tests (T4.4, C16), and crash-duplicate prevention (TX.10, C7) all merged. Not exited: no wallet has `reconciliation_enabled = true`, so the "wallets stay above minimum during a test period" criterion is unevidenced |
+| 4     | Scheduled wallet reconciliation                                            | ✅ exited — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), failure alerting (T4.3, C15), incremental forward-contiguous outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency tests (T4.4, C16), and crash-duplicate prevention (TX.10, C7) all merged; live unattended restorations verified on-chain (see `tasks/worker-plan.md`) |
 | 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | out of scope for this effort                                                                                                                                                                                                                                                                                                                                                                                                                                         |

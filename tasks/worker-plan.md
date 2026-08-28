@@ -9,18 +9,17 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-07 — **PHASE 4 EXITED**; this effort's scope is complete)
+## Status (updated 2026-08-28 — **Phase 4 exited**; Phase 9 merged; Phase 6 prep cleanup in progress)
 
-`main` is at **498 unit plus 37 dashboard plus 118 integration tests, 0 skipped** (all three
-counts re-run by the planner against `origin/main` on 2026-08-07), latest migration `0008`
-(next free `0009`), contracts through **C22** (next free **C23**).
+`main` latest migration **`0009`** (next free **`0010`**), contracts through **C25** (next free
+**C26**).
 
-**No open PRs. Every planned Phase 1–4 task is merged, plus the full post-exit operability
-wave TX.11–TX.25.** No known open defects and **no known open gaps** — TX.25 closed the last
-one. `dashboard/` went from zero automated tests to 37 with its own CI gate.
+**Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
+decisions D11–D14). **Phase 4 remains exited** with live evidence below (2026-08-06). **Phase 6
+has not started.** This P6-prep cleanup wave is in progress to align planning docs with `main`.
 
-**`main` is green in CI as of 2026-08-07T04:34Z** (push run, all jobs including
-`migration validation`). That is the first green push to `main` since 2026-08-06T23:48Z.
+Every planned Phase 1–4 task is merged, plus the full post-exit operability wave TX.11–TX.25.
+Phase 9 landed after that wave.
 
 > ⚠️ **This section previously claimed that nothing merged on 2026-08-06 was verified by CI,
 > and that Actions had not dispatched a runner all day. That was wrong**, and it was wrong in
