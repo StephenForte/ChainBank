@@ -1,12 +1,17 @@
 # Replenish treasury
 
-**Use this when:** the Sepolia hot-wallet treasury balance is at or below warning /
-critical thresholds (email alert, dashboard status, or `GET /v1/treasuries`), and
-you need to add ETH so funding and alerts can recover.
+**Use this when:** the **Public** (external) Sepolia treasury balance is at or
+below warning / critical thresholds (email alert, dashboard status, or
+`GET /v1/treasuries`), and you need to add ETH so funding and alerts can recover.
 
-**Do not use this for:** rotating the signing key or changing `TREASURY_ADDRESS`
-— use [`rotate-treasury-key.md`](./rotate-treasury-key.md). For emergency stop of
-signing while you refill, use
+Send ETH to the **Public** address only. The Private (operational) treasury is
+filled from Public by policy — do not send faucet ETH there.
+
+**Do not use this for:** rotating the Public signing key or changing
+`TREASURY_ADDRESS` — use [`rotate-treasury-key.md`](./rotate-treasury-key.md).
+To generate or rotate the Private key, use
+[`rotate-operational-treasury-key.md`](./rotate-operational-treasury-key.md).
+For emergency stop of signing while you refill, use
 [`disable-all-automated-funding.md`](./disable-all-automated-funding.md).
 
 ## Preconditions

@@ -1,5 +1,5 @@
 import { evaluateTreasuryAlerts } from '../app/alerts/evaluate-treasury-alerts.js';
-import { registerConfiguredTreasury } from '../app/bootstrap/register-configured-treasury.js';
+import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { checkTreasuryBalance } from '../app/treasury/check-treasury-balance.js';
 import { loadConfig } from '../config/index.js';
@@ -27,70 +27,85 @@ async function run(container: Container, operationId: string): Promise<void> {
     );
   }
 
-  const treasury = await registerConfiguredTreasury(
+  const registered = await registerConfiguredTreasuries(
     { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
-    {
-      chain: {
-        slug: config.chain.slug,
-        chainId: config.chain.chainId,
-        displayName: config.chain.displayName,
-        nativeSymbol: config.chain.nativeSymbol,
-        explorerBaseUrl: config.chain.explorerBaseUrl,
-      },
-      treasuryAddress: config.treasury.address.toLowerCase(),
-      treasuryAddressDisplay: config.treasury.address,
-      thresholds: {
-        warningBalanceWei: config.treasury.warningBalanceWei,
-        criticalBalanceWei: config.treasury.criticalBalanceWei,
-        recoveryBalanceWei: config.treasury.recoveryBalanceWei,
-        minimumReserveWei: config.treasury.minimumReserveWei,
-      },
-    },
+    config,
+  );
+  const toCheck = [registered.external, registered.operational].filter(
+    (row): row is NonNullable<typeof row> => row !== undefined,
   );
 
-  const result = await checkTreasuryBalance(
-    {
-      treasuries: container.repositories.treasuries,
-      balanceReader: container.balanceReader,
-      operatorMutations: container.operatorMutations,
-    },
-    {
-      treasuryId: treasury.id,
-      role: 'cron-treasury-monitor',
-      operationId,
-      actor: { type: 'cron', id: SERVICE_ROLE },
-    },
-  );
+  let anyUnavailable = false;
 
-  if (result.reading.kind === 'observed') {
-    const alertResult = await evaluateTreasuryAlerts(
+  for (const treasury of toCheck) {
+    const result = await checkTreasuryBalance(
       {
-        alerts: container.repositories.alerts,
-        emailSender: container.emailSender,
-        auditEvents: container.repositories.auditEvents,
-        clock: container.clock,
+        treasuries: container.repositories.treasuries,
+        balanceReader: container.balanceReader,
+        operatorMutations: container.operatorMutations,
       },
       {
-        treasury: result.treasury,
-        balanceWei: result.reading.balanceWei,
-        reminderIntervalMs: config.alerts.reminderIntervalMs,
-        operatorRecipients: config.email.operatorRecipients,
-        dashboardBaseUrl: config.app.publicBaseUrl,
-        environment: config.app.environment,
+        treasuryId: treasury.id,
+        role: 'cron-treasury-monitor',
         operationId,
         actor: { type: 'cron', id: SERVICE_ROLE },
       },
     );
 
-    logger.info(
-      {
-        operationId,
-        treasuryId: treasury.id,
-        transition: alertResult.transition.kind,
-        email: alertResult.email.kind,
-      },
-      'Treasury alert evaluation completed',
-    );
+    if (result.reading.kind === 'observed') {
+      const alertResult = await evaluateTreasuryAlerts(
+        {
+          alerts: container.repositories.alerts,
+          emailSender: container.emailSender,
+          auditEvents: container.repositories.auditEvents,
+          clock: container.clock,
+        },
+        {
+          treasury: result.treasury,
+          balanceWei: result.reading.balanceWei,
+          reminderIntervalMs: config.alerts.reminderIntervalMs,
+          operatorRecipients: config.email.operatorRecipients,
+          dashboardBaseUrl: config.app.publicBaseUrl,
+          environment: config.app.environment,
+          operationId,
+          actor: { type: 'cron', id: SERVICE_ROLE },
+        },
+      );
+
+      logger.info(
+        {
+          operationId,
+          treasuryId: treasury.id,
+          treasuryKind: treasury.kind,
+          transition: alertResult.transition.kind,
+          email: alertResult.email.kind,
+        },
+        'Treasury alert evaluation completed',
+      );
+
+      logger.info(
+        {
+          operationId,
+          treasuryId: treasury.id,
+          treasuryKind: treasury.kind,
+          status: result.treasury.status,
+          balanceWei: result.reading.balanceWei.toString(),
+          blockNumber: result.reading.blockNumber.toString(),
+        },
+        'Treasury observation recorded',
+      );
+    } else {
+      anyUnavailable = true;
+      logger.error(
+        {
+          operationId,
+          treasuryId: treasury.id,
+          treasuryKind: treasury.kind,
+          errorCode: result.reading.errorCode,
+        },
+        'Treasury balance could not be read',
+      );
+    }
   }
 
   await recordHeartbeat(
@@ -98,26 +113,18 @@ async function run(container: Container, operationId: string): Promise<void> {
     {
       serviceRole: SERVICE_ROLE,
       operationId,
-      detail: { event: 'run', outcome: result.reading.kind, treasuryId: treasury.id },
+      detail: {
+        event: 'run',
+        treasuryId: registered.external.id,
+        operationalTreasuryId: registered.operational?.id,
+        outcome: anyUnavailable ? 'unavailable' : 'observed',
+      },
     },
   );
 
-  if (result.reading.kind === 'unavailable') {
-    // An unreadable treasury is a failed run. Exiting non-zero is what makes
-    // the platform surface it instead of reporting a silent success.
-    throw new Error(`Treasury balance could not be read: ${result.reading.errorCode}`);
+  if (anyUnavailable) {
+    throw new Error('One or more treasury balances could not be read');
   }
-
-  logger.info(
-    {
-      operationId,
-      treasuryId: treasury.id,
-      status: result.treasury.status,
-      balanceWei: result.reading.balanceWei.toString(),
-      blockNumber: result.reading.blockNumber.toString(),
-    },
-    'Treasury observation recorded',
-  );
 }
 
 async function main(): Promise<void> {

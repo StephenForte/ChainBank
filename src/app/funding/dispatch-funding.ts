@@ -58,8 +58,16 @@ export interface DispatchFundingInput {
      */
     readonly balanceWei: bigint;
   };
-  /** Managed wallet id only — destination address must come from the repository. */
-  readonly walletId: string;
+  /**
+   * Wallet destination (legacy callers). Prefer {@link destination}.
+   * When `destination` is omitted, this is treated as `{ kind: 'managed_wallet' }`.
+   */
+  readonly walletId?: string;
+  /**
+   * Destination union (C24). `managed_wallet` is resolved from the repository
+   * (never a request address). `operational_treasury` is config/DB-bound.
+   */
+  readonly destination?: DispatchFundingDestination;
   readonly projectEnabled: boolean;
   readonly environmentEnabled: boolean;
   readonly policy: FundingPolicy;
@@ -69,6 +77,16 @@ export interface DispatchFundingInput {
    */
   readonly walletBalanceWei: bigint;
 }
+
+export type DispatchFundingDestination =
+  | { readonly kind: 'managed_wallet'; readonly walletId: string }
+  | {
+      readonly kind: 'operational_treasury';
+      readonly treasuryId: string;
+      readonly address: string;
+      readonly addressDisplay: string;
+      readonly enabled: boolean;
+    };
 
 export type DispatchFundingResult =
   | {
@@ -127,10 +145,12 @@ export async function dispatchFunding(
   dependencies: DispatchFundingDependencies,
   input: DispatchFundingInput,
 ): Promise<DispatchFundingResult> {
-  // Resolve destination from the DB before any gate or RPC work so a caller
-  // cannot influence the signed `to` address (AGENTS.md §7.1).
-  const wallet = await resolveAllowlistedWallet(dependencies, input);
-  assertFundingGates(dependencies, input, wallet);
+  const destination = resolveDispatchDestination(input);
+  const wallet =
+    destination.kind === 'managed_wallet'
+      ? await resolveAllowlistedWallet(dependencies, destination.walletId, input.treasury.evmChainId)
+      : undefined;
+  assertFundingGates(dependencies, input, destination, wallet);
 
   const ensured = await ensureIdempotentOperation(
     {
@@ -198,31 +218,47 @@ async function dispatchUnderLock(
     readonly transactions: FundingTransactionRepository;
   },
 ): Promise<LockOutcome> {
-  // Re-resolve and re-check gates inside the lock so a flip mid-flight (disable,
-  // address change) cannot race a send with a stale destination.
-  const lockedWallet = await resolveAllowlistedWallet(dependencies, input);
-  assertFundingGates(dependencies, input, lockedWallet);
+  const destination = resolveDispatchDestination(input);
+  const lockedWallet =
+    destination.kind === 'managed_wallet'
+      ? await resolveAllowlistedWallet(dependencies, destination.walletId, input.treasury.evmChainId)
+      : undefined;
+  assertFundingGates(dependencies, input, destination, lockedWallet);
 
   await uow.operations.markInProgress(operation.id);
 
-  const pending = await uow.transactions.findPendingByManagedWallet(lockedWallet.id);
+  const pending =
+    destination.kind === 'managed_wallet'
+      ? lockedWallet === undefined
+        ? undefined
+        : await uow.transactions.findPendingByManagedWallet(lockedWallet.id)
+      : await uow.transactions.findPendingByDestinationTreasury(destination.treasuryId);
   if (pending !== undefined) {
     const completedAt = dependencies.clock.now();
     const failed = await uow.operations.markFailed(
       operation.id,
       'PENDING_FUNDING_EXISTS',
-      'A funding transaction for this wallet is already in progress.',
+      destination.kind === 'managed_wallet'
+        ? 'A funding transaction for this wallet is already in progress.'
+        : 'A replenish transfer for the Private treasury is already in progress.',
       completedAt,
     );
     return {
       kind: 'throw',
       error: new ChainBankError(
         'PENDING_FUNDING_EXISTS',
-        `Managed wallet ${lockedWallet.id} already has pending funding transaction ${pending.id}`,
+        destination.kind === 'managed_wallet' && lockedWallet !== undefined
+          ? `Managed wallet ${lockedWallet.id} already has pending funding transaction ${pending.id}`
+          : `Operational treasury ${destination.kind === 'operational_treasury' ? destination.treasuryId : ''} already has pending replenish ${pending.id}`,
         {
-          publicMessage: 'A funding transfer for this wallet is already in progress.',
+          publicMessage:
+            destination.kind === 'managed_wallet'
+              ? 'A funding transfer for this wallet is already in progress.'
+              : 'A replenish transfer for the Private treasury is already in progress.',
           context: {
-            managedWalletId: lockedWallet.id,
+            managedWalletId: lockedWallet?.id ?? null,
+            destinationTreasuryId:
+              destination.kind === 'operational_treasury' ? destination.treasuryId : null,
             pendingTransactionId: pending.id,
             operationId: failed.id,
           },
@@ -259,8 +295,21 @@ async function dispatchUnderLock(
     };
   }
 
-  // Destination is the checksummed display form from the registered row only.
-  const destinationAddress = lockedWallet.addressDisplay;
+  const destinationAddress =
+    destination.kind === 'managed_wallet' && lockedWallet !== undefined
+      ? lockedWallet.addressDisplay
+      : destination.kind === 'operational_treasury'
+        ? destination.addressDisplay
+        : '';
+  if (destinationAddress === '') {
+    return {
+      kind: 'throw',
+      error: new ChainBankError('INVALID_REQUEST', 'Funding destination could not be resolved', {
+        publicMessage: 'The funding destination could not be resolved.',
+        context: { operationId: operation.id },
+      }),
+    };
+  }
 
   // Re-read balances inside the lock so a concurrent confirm that funded this
   // wallet cannot leave a second dispatcher signing from a stale pre-lock
@@ -272,9 +321,16 @@ async function dispatchUnderLock(
     operation,
     destinationAddress,
     {
-      entityLabel: 'managed wallet',
-      publicMessage: 'The managed wallet balance could not be read from the chain.',
-      context: { managedWalletId: lockedWallet.id, operationId: operation.id },
+      entityLabel: destination.kind === 'managed_wallet' ? 'managed wallet' : 'operational treasury',
+      publicMessage:
+        destination.kind === 'managed_wallet'
+          ? 'The managed wallet balance could not be read from the chain.'
+          : 'The Private treasury balance could not be read from the chain.',
+      context: {
+        managedWalletId: lockedWallet?.id ?? '',
+        destinationTreasuryId: destination.kind === 'operational_treasury' ? destination.treasuryId : '',
+        operationId: operation.id,
+      },
     },
   );
   if (typeof freshWalletBalanceWei !== 'bigint') {
@@ -353,7 +409,8 @@ async function dispatchUnderLock(
     id: dependencies.idGenerator.next(),
     operationId: operation.id,
     treasuryId: input.treasury.id,
-    managedWalletId: lockedWallet.id,
+    managedWalletId: lockedWallet?.id,
+    destinationTreasuryId: destination.kind === 'operational_treasury' ? destination.treasuryId : undefined,
     amountWei: decision.amountWei,
     nonce,
     createdAt: intentAt,
@@ -363,7 +420,8 @@ async function dispatchUnderLock(
       correlationId: input.correlationId,
       operationId: operation.id,
       transactionId: intent.id,
-      managedWalletId: lockedWallet.id,
+      managedWalletId: lockedWallet?.id,
+      destinationTreasuryId: destination.kind === 'operational_treasury' ? destination.treasuryId : undefined,
       treasuryId: input.treasury.id,
       amountWei: decision.amountWei.toString(),
       nonce,
@@ -402,7 +460,9 @@ async function dispatchUnderLock(
           correlationId: input.correlationId,
           operationId: operation.id,
           transactionId: intent.id,
-          managedWalletId: lockedWallet.id,
+          managedWalletId: lockedWallet?.id,
+          destinationTreasuryId:
+            destination.kind === 'operational_treasury' ? destination.treasuryId : undefined,
           nonce,
           errorCode,
         },
@@ -437,7 +497,8 @@ async function dispatchUnderLock(
       correlationId: input.correlationId,
       operationId: operation.id,
       transactionId: transaction.id,
-      managedWalletId: lockedWallet.id,
+      managedWalletId: lockedWallet?.id,
+      destinationTreasuryId: destination.kind === 'operational_treasury' ? destination.treasuryId : undefined,
       amountWei: decision.amountWei.toString(),
       nonce,
       transactionHash,
@@ -463,27 +524,40 @@ async function dispatchUnderLock(
  * Loads the registered managed wallet and verifies it belongs on the treasury's
  * chain. Destination allowlisting lives here — never accept an address from input.
  */
+function resolveDispatchDestination(input: DispatchFundingInput): DispatchFundingDestination {
+  if (input.destination !== undefined) {
+    return input.destination;
+  }
+  if (input.walletId !== undefined) {
+    return { kind: 'managed_wallet', walletId: input.walletId };
+  }
+  throw new ChainBankError('INVALID_REQUEST', 'Funding dispatch requires a destination', {
+    publicMessage: 'The funding destination could not be resolved.',
+  });
+}
+
 async function resolveAllowlistedWallet(
   dependencies: DispatchFundingDependencies,
-  input: DispatchFundingInput,
+  walletId: string,
+  evmChainId: number,
 ): Promise<ManagedWallet> {
-  const wallet = await dependencies.managedWallets.findById(input.walletId);
+  const wallet = await dependencies.managedWallets.findById(walletId);
   if (wallet === undefined) {
-    throw new ChainBankError('WALLET_NOT_FOUND', `Managed wallet ${input.walletId} does not exist`, {
+    throw new ChainBankError('WALLET_NOT_FOUND', `Managed wallet ${walletId} does not exist`, {
       publicMessage: 'The managed wallet was not found.',
-      context: { managedWalletId: input.walletId },
+      context: { managedWalletId: walletId },
     });
   }
-  if (wallet.chain.chainId !== input.treasury.evmChainId) {
+  if (wallet.chain.chainId !== evmChainId) {
     throw new ChainBankError(
       'INVALID_REQUEST',
-      `Managed wallet ${wallet.id} is on chain ${String(wallet.chain.chainId)}, treasury expects ${String(input.treasury.evmChainId)}`,
+      `Managed wallet ${wallet.id} is on chain ${String(wallet.chain.chainId)}, treasury expects ${String(evmChainId)}`,
       {
         publicMessage: 'The managed wallet is not registered on the treasury chain.',
         context: {
           managedWalletId: wallet.id,
           walletChainId: wallet.chain.chainId,
-          treasuryChainId: input.treasury.evmChainId,
+          treasuryChainId: evmChainId,
         },
       },
     );
@@ -494,7 +568,8 @@ async function resolveAllowlistedWallet(
 function assertFundingGates(
   dependencies: DispatchFundingDependencies,
   input: DispatchFundingInput,
-  wallet: ManagedWallet,
+  destination: DispatchFundingDestination,
+  wallet: ManagedWallet | undefined,
 ): void {
   if (!dependencies.isFundingEnabled) {
     throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_ENABLED is false; refusing to dispatch.', {
@@ -512,6 +587,20 @@ function assertFundingGates(
       context: { treasuryId: input.treasury.id },
     });
   }
+  if (destination.kind === 'operational_treasury') {
+    if (!destination.enabled) {
+      throw new ChainBankError(
+        'ENTITY_DISABLED',
+        'Operational treasury is disabled; refusing to replenish.',
+        {
+          publicMessage: 'The Private treasury is disabled.',
+          context: { destinationTreasuryId: destination.treasuryId },
+        },
+      );
+    }
+    return;
+  }
+
   if (!input.projectEnabled) {
     throw new ChainBankError('ENTITY_DISABLED', 'Project is disabled; refusing to dispatch.', {
       publicMessage: 'The project is disabled.',
@@ -524,10 +613,10 @@ function assertFundingGates(
       context: { environmentId: input.environmentId ?? null },
     });
   }
-  if (!wallet.enabled) {
+  if (wallet === undefined || !wallet.enabled) {
     throw new ChainBankError('ENTITY_DISABLED', 'Managed wallet is disabled; refusing to dispatch.', {
       publicMessage: 'The managed wallet is disabled.',
-      context: { managedWalletId: wallet.id },
+      context: { managedWalletId: wallet?.id ?? destination.walletId },
     });
   }
 }

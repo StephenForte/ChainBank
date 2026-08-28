@@ -164,6 +164,9 @@ describe.skipIf(!integrationEnabled)('GET /v1/wallets/:id/balance (integration)'
       },
       balanceReader,
       treasurySigner: createFakeSigner({}),
+      externalTreasurySigner: undefined,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({

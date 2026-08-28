@@ -68,6 +68,8 @@ function buildTreasury(overrides: Partial<Treasury> = {}): Treasury {
     },
     address: TREASURY_ADDRESS.toLowerCase(),
     addressDisplay: TREASURY_ADDRESS,
+    kind: 'external',
+    policy: undefined,
     thresholds: {
       warningBalanceWei: ONE_ETH,
       criticalBalanceWei: ONE_ETH / 4n,
@@ -896,6 +898,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
       operationId: 'op-unknown',
       treasuryId: 'treasury-1',
       managedWalletId: 'w-missing',
+      destinationTreasuryId: undefined,
       transactionHash: undefined,
       nonce: 5,
       amountWei: ONE_ETH / 2n,

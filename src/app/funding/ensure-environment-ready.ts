@@ -7,6 +7,7 @@ import type {
   ManagedWallet,
   ManagedWalletRepository,
   ProjectRepository,
+  TreasurySigner,
 } from '../ports.js';
 import {
   ensureWalletFunded,
@@ -14,6 +15,7 @@ import {
   type EnsureWalletFundedDependencies,
   type EnsureWalletFundedResult,
 } from './ensure-wallet-funded.js';
+import { replenishOperationalPrelude } from './replenish-operational-prelude.js';
 
 /** Page size for wallet listing; must stay within the repository's safe bound. */
 const WALLET_LIST_PAGE_SIZE = 100;
@@ -31,6 +33,8 @@ export type EnsureReadyOverallStatus = 'ready' | 'degraded' | 'pending' | 'block
 export interface EnsureEnvironmentReadyDependencies extends EnsureWalletFundedDependencies {
   readonly environments: EnvironmentRepository;
   readonly projects: ProjectRepository;
+  /** Public-treasury signer for the D14 replenish prelude. */
+  readonly externalSigner?: TreasurySigner;
   /** Injectable for unit tests; production uses {@link ensureWalletFunded}. */
   readonly fundWallet?: typeof ensureWalletFunded;
 }
@@ -128,6 +132,24 @@ export async function ensureEnvironmentReady(
 
   const wallets = await listAllEnabledWallets(dependencies.managedWallets, environment.id);
   const fundWallet = dependencies.fundWallet ?? ensureWalletFunded;
+
+  const preludeChainId = wallets[0]?.chain.chainId;
+  if (preludeChainId !== undefined && dependencies.externalSigner !== undefined) {
+    await replenishOperationalPrelude(
+      {
+        ...dependencies,
+        externalSigner: dependencies.externalSigner,
+      },
+      {
+        evmChainId: preludeChainId,
+        role: input.role,
+        credentialId: input.credentialId,
+        correlationId: input.correlationId,
+        sourceIp: input.sourceIp,
+        idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}`,
+      },
+    );
+  }
 
   const walletResults: EnsureReadyWalletResult[] = [];
   for (const wallet of wallets) {

@@ -91,6 +91,8 @@ function buildTreasury(): Treasury {
     },
     address: '0x1111111111111111111111111111111111111111',
     addressDisplay: '0x1111111111111111111111111111111111111111',
+    kind: 'external',
+    policy: undefined,
     // Compliant ladder: reserve < critical (D3 / assertValidTreasuryThresholds).
     thresholds: {
       warningBalanceWei: (ONE_ETH * 75n) / 100n,
@@ -514,6 +516,7 @@ describe('ensureWalletFunded', () => {
       operationId: 'prior-op',
       treasuryId: 'treasury-1',
       managedWalletId: WALLET_ID,
+      destinationTreasuryId: undefined,
       amountWei: ONE_ETH,
       createdAt: now,
     });
@@ -688,6 +691,31 @@ describe('ensureWalletFunded', () => {
     // returning this wallet's transfer as though the other one was funded.
     expect(operations[0]?.idempotencyKey).toBe(`${WALLET_ID}:${input.idempotencyKey}`);
     expect(operations[0]?.idempotencyKey).not.toBe(input.idempotencyKey);
+  });
+
+  it('funds from the operational treasury when both kinds are enabled (C23)', async () => {
+    const external = buildTreasury();
+    const operational: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-operational',
+      kind: 'operational',
+      address: '0x3333333333333333333333333333333333333333',
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+      policy: {
+        minimumBalanceWei: ONE_ETH,
+        targetBalanceWei: 2n * ONE_ETH,
+        maximumTopUpWei: 5n * ONE_ETH,
+      },
+    };
+    const signer = createFakeSigner({ address: operational.addressDisplay });
+    const { dependencies, input } = buildDeps({
+      signer,
+      enabledTreasuries: [external, operational],
+    });
+
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('funded');
+    expect(signer.sendCalls).toBe(1);
   });
 
   it('returns WALLET_NOT_FOUND when the id is unknown', async () => {

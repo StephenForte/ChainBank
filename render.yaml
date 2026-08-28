@@ -9,6 +9,12 @@
 # Secrets are sync:false so the dashboard prompts once.
 # TREASURY_PRIVATE_KEY is declared only on signing-capable services (web +
 # wallet-reconciler). The treasury-monitor must never receive it.
+#
+# Phase 9 two-tier (optional hatch): leave TREASURY_OPERATIONAL_* unset so
+# wallets still spend from TREASURY_ADDRESS. At cutover, set
+# TREASURY_OPERATIONAL_ADDRESS, thresholds, policy ETH amounts, and
+# TREASURY_OPERATIONAL_PRIVATE_KEY on web + wallet-reconciler in the dashboard
+# (address/thresholds only on treasury-monitor — never the operational key).
 
 databases:
   - name: chainbank-db

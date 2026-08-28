@@ -1,7 +1,7 @@
 import { loadConfig } from '../config/index.js';
 import { loadDotEnvFile } from '../config/load-dotenv.js';
 import { buildContainer } from '../container.js';
-import { registerConfiguredTreasury } from '../app/bootstrap/register-configured-treasury.js';
+import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { describeUnknownError, isChainBankError } from '../domain/errors.js';
 import { buildApp } from './app.js';
@@ -16,25 +16,9 @@ async function main(): Promise<void> {
   const { logger } = container;
 
   try {
-    const treasury = await registerConfiguredTreasury(
+    const treasuries = await registerConfiguredTreasuries(
       { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
-      {
-        chain: {
-          slug: config.chain.slug,
-          chainId: config.chain.chainId,
-          displayName: config.chain.displayName,
-          nativeSymbol: config.chain.nativeSymbol,
-          explorerBaseUrl: config.chain.explorerBaseUrl,
-        },
-        treasuryAddress: config.treasury.address.toLowerCase(),
-        treasuryAddressDisplay: config.treasury.address,
-        thresholds: {
-          warningBalanceWei: config.treasury.warningBalanceWei,
-          criticalBalanceWei: config.treasury.criticalBalanceWei,
-          recoveryBalanceWei: config.treasury.recoveryBalanceWei,
-          minimumReserveWei: config.treasury.minimumReserveWei,
-        },
-      },
+      config,
     );
 
     await recordHeartbeat(
@@ -60,7 +44,8 @@ async function main(): Promise<void> {
       {
         port: config.app.port,
         chainId: config.chain.chainId,
-        treasuryId: treasury.id,
+        treasuryId: treasuries.external.id,
+        operationalTreasuryId: treasuries.operational?.id,
         fundingEnabled: config.isFundingEnabled,
       },
       'ChainBank web service started',

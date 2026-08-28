@@ -24,6 +24,8 @@ export const PERMISSIONS = [
   'treasury:read',
   'treasury:check',
   'treasury:write',
+  /** Operator + cron-reconciler: Public → Private replenish (C24). */
+  'treasury:replenish',
   'email:test',
   'wallet:read',
   'wallet:write',
@@ -58,6 +60,7 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
     'treasury:read',
     'treasury:check',
     'treasury:write',
+    'treasury:replenish',
     'email:test',
     'wallet:read',
     'wallet:write',
@@ -76,7 +79,7 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
   // No Phase 0/1 wallet-admin capabilities. Deny by default until scoping lands.
   'project-service': [],
   // Scheduled reconciliation only (C14). API roles cannot trigger the sweep.
-  'cron-reconciler': ['reconciliation:run'],
+  'cron-reconciler': ['reconciliation:run', 'treasury:replenish'],
 };
 
 export function isRole(value: unknown): value is Role {

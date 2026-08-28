@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { isNull } from 'drizzle-orm';
-import { registerConfiguredTreasury } from '../app/bootstrap/register-configured-treasury.js';
+import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import {
   reconcileWallets,
@@ -91,6 +91,16 @@ export function buildReconcileWalletsDependencies(
     lock: container.fundingDispatchLock,
     receiptTracker: container.transactionReceiptTracker,
     signer: container.treasurySigner,
+    ...(container.externalTreasurySigner === undefined
+      ? {}
+      : { externalSigner: container.externalTreasurySigner }),
+    ...(container.treasurySigners === undefined
+      ? {}
+      : {
+          getSignerForTreasury: container.treasurySigners.getSignerForTreasury.bind(
+            container.treasurySigners,
+          ),
+        }),
     clock: container.clock,
     idGenerator: container.idGenerator,
     logger: container.logger,
@@ -181,25 +191,9 @@ export async function runWalletReconciler(
 
   // Keep the configured treasury row in sync with env thresholds (same upsert
   // the monitor and web boot paths perform) before the sweep reads enabled rows.
-  await registerConfiguredTreasury(
+  await registerConfiguredTreasuries(
     { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
-    {
-      chain: {
-        slug: config.chain.slug,
-        chainId: config.chain.chainId,
-        displayName: config.chain.displayName,
-        nativeSymbol: config.chain.nativeSymbol,
-        explorerBaseUrl: config.chain.explorerBaseUrl,
-      },
-      treasuryAddress: config.treasury.address.toLowerCase(),
-      treasuryAddressDisplay: config.treasury.address,
-      thresholds: {
-        warningBalanceWei: config.treasury.warningBalanceWei,
-        criticalBalanceWei: config.treasury.criticalBalanceWei,
-        recoveryBalanceWei: config.treasury.recoveryBalanceWei,
-        minimumReserveWei: config.treasury.minimumReserveWei,
-      },
-    },
+    config,
   );
 
   const deps = options.reconcileDeps ?? buildReconcileWalletsDependencies(container);

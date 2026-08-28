@@ -2,25 +2,26 @@ import type { Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
 import type { FundingPolicy } from '../../domain/funding/funding-math.js';
+import {
+  resolveOperationalTreasury,
+  resolveReplenishSource,
+  throwTreasuryResolution,
+} from '../../domain/treasury/resolve-treasury.js';
 import type { Logger } from '../../observability/logger.js';
 import {
   notifyTreasuryReserveRefusal,
   resolveTreasuryReserveAlert,
 } from '../alerts/notify-treasury-reserve-alert.js';
-import { resolveFundingTreasury, throwTreasuryResolution } from '../../domain/treasury/resolve-treasury.js';
-import { authorizeScope } from '../auth/authorize-scope.js';
 import type {
   AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
   BalanceReader,
-  CredentialScopeRepository,
   EmailSender,
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransaction,
   FundingTransactionRepository,
-  ManagedWallet,
   ManagedWalletRepository,
   TransactionReceiptTracker,
   Treasury,
@@ -35,24 +36,21 @@ import {
 } from './dispatch-funding.js';
 import { trackTransaction } from './track-transaction.js';
 
-export type EnsureFundedStatus = 'no-op' | 'funded' | 'pending' | 'blocked' | 'failed';
+export type ReplenishOperationalStatus = 'no-op' | 'funded' | 'pending' | 'blocked' | 'failed';
 
-export interface EnsureWalletFundedDependencies {
-  readonly managedWallets: ManagedWalletRepository;
+export interface EnsureOperationalTreasuryFundedDependencies {
   readonly treasuries: TreasuryRepository;
   readonly balanceObservations: BalanceObservationRepository;
   readonly balanceReader: BalanceReader;
-  readonly credentialScopes: CredentialScopeRepository;
   readonly auditEvents: AuditEventRepository;
   readonly alerts: AlertRepository;
   readonly emailSender: EmailSender | undefined;
   readonly operations: FundingOperationRepository;
   readonly transactions: FundingTransactionRepository;
+  readonly managedWallets: ManagedWalletRepository;
   readonly lock: FundingDispatchLock;
   readonly receiptTracker: TransactionReceiptTracker;
-  readonly signer: TreasurySigner | undefined;
-  /** C25. When omitted, {@link signer} is used for every treasury. */
-  readonly getSignerForTreasury?: (treasury: Treasury) => TreasurySigner;
+  readonly externalSigner: TreasurySigner | undefined;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -65,8 +63,8 @@ export interface EnsureWalletFundedDependencies {
   readonly environment: string;
 }
 
-export interface EnsureWalletFundedInput {
-  readonly walletId: string;
+export interface EnsureOperationalTreasuryFundedInput {
+  readonly operationalTreasuryId: string;
   readonly idempotencyKey: string;
   readonly role: Role;
   readonly credentialId: string;
@@ -74,9 +72,11 @@ export interface EnsureWalletFundedInput {
   readonly sourceIp: string | undefined;
 }
 
-export interface EnsureWalletFundedResult {
-  readonly status: EnsureFundedStatus;
+export interface EnsureOperationalTreasuryFundedResult {
+  readonly status: ReplenishOperationalStatus;
   readonly operationId: string;
+  readonly sourceTreasuryId: string;
+  readonly destinationTreasuryId: string;
   readonly balanceBeforeWei: bigint;
   readonly minimumBalanceWei: bigint;
   readonly targetBalanceWei: bigint;
@@ -87,91 +87,89 @@ export interface EnsureWalletFundedResult {
 }
 
 /**
- * On-demand funding for one managed wallet (PRD P1-US3).
- *
- * Security order:
- * 1. Load wallet by id (404) — destination address never comes from the request.
- * 2. Authorize operator / scoped project-service; deny read-only and cron.
- * 3. Refuse when funding is disabled or the kill switch is active (no signer touch).
- * 4. Fresh on-chain balance reads for wallet and treasury (never trust stored observations).
- * 5. Dispatch under the existing lock/idempotency engine, then wait for confirmations.
+ * Tops up the Private (operational) treasury from the Public (external) treasury
+ * (C24 / P9-US2). Destination is the operational row — never a request address.
  */
-export async function ensureWalletFunded(
-  dependencies: EnsureWalletFundedDependencies,
-  input: EnsureWalletFundedInput,
-): Promise<EnsureWalletFundedResult> {
-  const wallet = await dependencies.managedWallets.findById(input.walletId);
-  if (wallet === undefined) {
-    throw new ChainBankError('WALLET_NOT_FOUND', `Managed wallet ${input.walletId} does not exist`, {
-      publicMessage: 'The managed wallet was not found.',
+export async function ensureOperationalTreasuryFunded(
+  dependencies: EnsureOperationalTreasuryFundedDependencies,
+  input: EnsureOperationalTreasuryFundedInput,
+): Promise<EnsureOperationalTreasuryFundedResult> {
+  const operational = await dependencies.treasuries.findById(input.operationalTreasuryId);
+  if (operational === undefined) {
+    throw new ChainBankError('TREASURY_NOT_FOUND', `Treasury ${input.operationalTreasuryId} does not exist`, {
+      publicMessage: 'The treasury was not found.',
+    });
+  }
+  if (operational.kind !== 'operational') {
+    throw new ChainBankError(
+      'INVALID_REQUEST',
+      `Treasury ${operational.id} is ${operational.kind}; replenish targets the operational treasury only`,
+      { publicMessage: 'Only the Private treasury can be replenished from the Public treasury.' },
+    );
+  }
+
+  const enabled = await dependencies.treasuries.listEnabled();
+  const source = throwTreasuryResolution(resolveReplenishSource(enabled, operational.chain.chainId));
+  const resolvedOperational = throwTreasuryResolution(
+    resolveOperationalTreasury(enabled, operational.chain.chainId),
+  );
+  if (resolvedOperational.id !== operational.id) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      `Requested operational treasury ${operational.id} is not the enabled operational treasury ${resolvedOperational.id}`,
+      { publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.' },
+    );
+  }
+
+  assertFundingArmed(dependencies);
+  const policy = requireOperationalPolicy(operational);
+
+  const destReading = await dependencies.balanceReader.readBalance(operational.addressDisplay);
+  if (destReading.kind === 'unavailable') {
+    throw new ChainBankError(destReading.errorCode, destReading.reason, {
+      publicMessage: 'The Private treasury balance could not be read from the chain.',
+      context: { treasuryId: operational.id },
     });
   }
 
-  await authorizeScope(
-    { credentialScopes: dependencies.credentialScopes },
-    {
-      role: input.role,
-      credentialId: input.credentialId,
-      action: 'fund',
-      projectId: wallet.project.id,
-      environmentId: wallet.environment.id,
-    },
-  );
+  const sourceReading = await dependencies.balanceReader.readBalance(source.addressDisplay);
+  if (sourceReading.kind === 'unavailable') {
+    throw new ChainBankError(sourceReading.errorCode, sourceReading.reason, {
+      publicMessage: 'The Public treasury balance could not be read from the chain.',
+      context: { treasuryId: source.id },
+    });
+  }
 
-  // Every authorized attempt is audited, including disabled/kill-switch refusals.
+  await dependencies.balanceObservations.record({
+    chainRowId: operational.chain.id,
+    walletAddress: operational.address,
+    walletType: 'treasury',
+    balanceWei: destReading.balanceWei,
+    blockNumber: destReading.blockNumber,
+    observedAt: destReading.observedAt,
+    sourceOperationId: input.correlationId,
+  });
+  await dependencies.balanceObservations.record({
+    chainRowId: source.chain.id,
+    walletAddress: source.address,
+    walletType: 'treasury',
+    balanceWei: sourceReading.balanceWei,
+    blockNumber: sourceReading.blockNumber,
+    observedAt: sourceReading.observedAt,
+    sourceOperationId: input.correlationId,
+  });
+
+  const signer = dependencies.externalSigner;
+  if (signer === undefined) {
+    throw new ChainBankError(
+      'SIGNER_UNAVAILABLE',
+      'Funding is enabled but no Public treasury signer is configured for this process.',
+      { publicMessage: 'Funding is unavailable because the treasury signer is not configured.' },
+    );
+  }
+  assertSignerMatchesTreasury(signer, source);
+
   try {
-    const policy = requireFundingPolicy(wallet);
-
-    // Fail closed before any RPC or signer construction path.
-    assertFundingArmed(dependencies);
-
-    const treasury = await resolveTreasuryForWallet(dependencies, wallet);
-    const walletReading = await dependencies.balanceReader.readBalance(wallet.addressDisplay);
-    if (walletReading.kind === 'unavailable') {
-      throw new ChainBankError(walletReading.errorCode, walletReading.reason, {
-        publicMessage: 'The managed wallet balance could not be read from the chain.',
-        context: { managedWalletId: wallet.id },
-      });
-    }
-
-    const treasuryReading = await dependencies.balanceReader.readBalance(treasury.address);
-    if (treasuryReading.kind === 'unavailable') {
-      throw new ChainBankError(treasuryReading.errorCode, treasuryReading.reason, {
-        publicMessage: 'The treasury balance could not be read from the chain.',
-        context: { treasuryId: treasury.id },
-      });
-    }
-
-    await dependencies.balanceObservations.record({
-      chainRowId: wallet.chain.id,
-      walletAddress: wallet.address,
-      walletType: 'managed_wallet',
-      balanceWei: walletReading.balanceWei,
-      blockNumber: walletReading.blockNumber,
-      observedAt: walletReading.observedAt,
-      sourceOperationId: input.correlationId,
-    });
-    await dependencies.balanceObservations.record({
-      chainRowId: treasury.chain.id,
-      walletAddress: treasury.address,
-      walletType: 'treasury',
-      balanceWei: treasuryReading.balanceWei,
-      blockNumber: treasuryReading.blockNumber,
-      observedAt: treasuryReading.observedAt,
-      sourceOperationId: input.correlationId,
-    });
-
-    const signer = dependencies.getSignerForTreasury?.(treasury) ?? dependencies.signer;
-    if (signer === undefined) {
-      throw new ChainBankError(
-        'SIGNER_UNAVAILABLE',
-        'Funding is enabled but no treasury signer is configured for this process.',
-        { publicMessage: 'Funding is unavailable because the treasury signer is not configured.' },
-      );
-    }
-
-    assertSignerMatchesTreasury(signer, treasury);
-
     const dispatchResult = await dispatchFunding(
       {
         operations: dependencies.operations,
@@ -179,8 +177,6 @@ export async function ensureWalletFunded(
         managedWallets: dependencies.managedWallets,
         lock: dependencies.lock,
         signer,
-        // In-lock re-reads drive the money decision; pre-lock readings above
-        // remain the recorded observations / API balanceBeforeWei (TX.8).
         balanceReader: dependencies.balanceReader,
         clock: dependencies.clock,
         idGenerator: dependencies.idGenerator,
@@ -189,54 +185,55 @@ export async function ensureWalletFunded(
         isFundingKillSwitchActive: dependencies.isFundingKillSwitchActive,
       },
       {
-        operationType: 'ensure_funded',
-        projectId: wallet.project.id,
-        environmentId: wallet.environment.id,
-        // Namespaced by wallet so one caller reusing a key across wallets
-        // cannot replay a different wallet's transfer and be told the wallet in
-        // hand was funded. The stored key stays unique per (credential, key).
-        idempotencyKey: `${wallet.id}:${input.idempotencyKey}`,
+        operationType: 'replenish_operational',
+        projectId: undefined,
+        environmentId: undefined,
+        idempotencyKey: `replenish:${operational.id}:${input.idempotencyKey}`,
         requestedBy: input.credentialId,
         correlationId: input.correlationId,
         treasury: {
-          id: treasury.id,
-          evmChainId: treasury.chain.chainId,
-          enabled: treasury.enabled,
-          reserveWei: treasury.thresholds.minimumReserveWei,
-          address: treasury.addressDisplay,
-          balanceWei: treasuryReading.balanceWei,
+          id: source.id,
+          evmChainId: source.chain.chainId,
+          enabled: source.enabled,
+          reserveWei: source.thresholds.minimumReserveWei,
+          address: source.addressDisplay,
+          balanceWei: sourceReading.balanceWei,
         },
-        walletId: wallet.id,
-        projectEnabled: wallet.project.enabled,
-        environmentEnabled: wallet.environment.enabled,
+        destination: {
+          kind: 'operational_treasury',
+          treasuryId: operational.id,
+          address: operational.address,
+          addressDisplay: operational.addressDisplay,
+          enabled: operational.enabled,
+        },
+        projectEnabled: true,
+        environmentEnabled: true,
         policy,
-        walletBalanceWei: walletReading.balanceWei,
+        walletBalanceWei: destReading.balanceWei,
       },
     );
 
-    // Reserve alert is best-effort: never mask FUNDING_BLOCKED_RESERVE or
-    // convert a correct refusal into a different caller-visible error (T1.8).
     await maybeNotifyReserveAlert(dependencies, {
       dispatchResult,
-      wallet,
-      treasury,
-      treasuryBalanceWei: treasuryReading.balanceWei,
+      source,
+      operational,
+      sourceBalanceWei: sourceReading.balanceWei,
       policy,
-      walletBalanceWei: walletReading.balanceWei,
+      destBalanceWei: destReading.balanceWei,
       correlationId: input.correlationId,
       credentialId: input.credentialId,
     });
 
     const result = await mapDispatchOutcome(dependencies, {
       dispatchResult,
-      wallet,
-      treasury,
-      balanceBeforeWei: walletReading.balanceWei,
+      source,
+      operational,
+      balanceBeforeWei: destReading.balanceWei,
       policy,
       correlationId: input.correlationId,
     });
 
-    await recordAttemptAudit(dependencies, input, wallet, {
+    await recordAttemptAudit(dependencies, input, operational, source, {
       outcome: result.status,
       operationId: result.operationId,
       reasonCode: result.reasonCode,
@@ -244,7 +241,7 @@ export async function ensureWalletFunded(
 
     return result;
   } catch (error) {
-    await recordAttemptAudit(dependencies, input, wallet, {
+    await recordAttemptAudit(dependencies, input, operational, source, {
       outcome: 'error',
       errorCode: error instanceof ChainBankError ? error.code : 'INTERNAL_ERROR',
     });
@@ -252,47 +249,38 @@ export async function ensureWalletFunded(
   }
 }
 
-function requireFundingPolicy(wallet: ManagedWallet): FundingPolicy {
-  if (wallet.policy === undefined) {
-    throw new ChainBankError('INVALID_REQUEST', `Managed wallet ${wallet.id} has no funding policy`, {
-      publicMessage: 'A funding policy must be configured before this wallet can be funded.',
-      context: { managedWalletId: wallet.id },
-    });
+function requireOperationalPolicy(treasury: Treasury): FundingPolicy {
+  if (treasury.policy === undefined) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      `Operational treasury ${treasury.id} has no funding policy`,
+      {
+        publicMessage: 'The Private treasury has no refill policy configured.',
+        context: { treasuryId: treasury.id },
+      },
+    );
   }
   return {
-    minimumBalanceWei: wallet.policy.minimumBalanceWei,
-    targetBalanceWei: wallet.policy.targetBalanceWei,
-    maximumTopUpWei: wallet.policy.maximumTopUpWei,
-    // Entity enable flags are enforced separately; policy amounts stay active when present.
+    minimumBalanceWei: treasury.policy.minimumBalanceWei,
+    targetBalanceWei: treasury.policy.targetBalanceWei,
+    maximumTopUpWei: treasury.policy.maximumTopUpWei,
     isEnabled: true,
   };
 }
 
-function assertFundingArmed(dependencies: EnsureWalletFundedDependencies): void {
+function assertFundingArmed(dependencies: EnsureOperationalTreasuryFundedDependencies): void {
   if (!dependencies.isFundingEnabled) {
-    throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_ENABLED is false; refusing ensure-funded.', {
+    throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_ENABLED is false; refusing replenish.', {
       publicMessage: 'Funding is disabled.',
     });
   }
   if (dependencies.isFundingKillSwitchActive) {
-    throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_KILL_SWITCH is active; refusing ensure-funded.', {
+    throw new ChainBankError('FUNDING_DISABLED', 'FUNDING_KILL_SWITCH is active; refusing replenish.', {
       publicMessage: 'Funding is temporarily disabled.',
     });
   }
 }
 
-/**
- * Refuses to spend unless the signing account IS the treasury whose reserve is
- * being enforced.
- *
- * The treasury row's address and the signing key arrive as independent
- * configuration (`TREASURY_ADDRESS` and `TREASURY_PRIVATE_KEY`). If they ever
- * diverge — a rotated key, a staging key in production — then the balance read,
- * the reserve floor, the in-flight accounting, and the nonce probe all describe
- * an account that is not the one spending, and every gate reports healthy while
- * the real treasury drains. Compared case-insensitively because one side is
- * checksummed and the other is stored normalized.
- */
 function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury): void {
   if (signer.address.toLowerCase() !== treasury.address.toLowerCase()) {
     throw new ChainBankError(
@@ -300,27 +288,21 @@ function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury)
       'Treasury signing key does not match the configured treasury address; refusing to sign.',
       {
         publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.',
-        // The signer address is deliberately omitted: it is the public half of
-        // the key this process holds, and the caller has no need for it.
         context: { treasuryId: treasury.id },
       },
     );
   }
 }
 
-/**
- * Side-effect notifications for reserve exhaustion / recovery. Failures are
- * logged only — the caller's dispatch outcome must remain unchanged.
- */
 async function maybeNotifyReserveAlert(
-  dependencies: EnsureWalletFundedDependencies,
+  dependencies: EnsureOperationalTreasuryFundedDependencies,
   input: {
     readonly dispatchResult: DispatchFundingResult;
-    readonly wallet: ManagedWallet;
-    readonly treasury: Treasury;
-    readonly treasuryBalanceWei: bigint;
+    readonly source: Treasury;
+    readonly operational: Treasury;
+    readonly sourceBalanceWei: bigint;
     readonly policy: FundingPolicy;
-    readonly walletBalanceWei: bigint;
+    readonly destBalanceWei: bigint;
     readonly correlationId: string;
     readonly credentialId: string;
   },
@@ -330,7 +312,7 @@ async function maybeNotifyReserveAlert(
   try {
     if (input.dispatchResult.kind === 'blocked' && input.dispatchResult.reason === 'reserve') {
       const requestedAmountWei = provisionalTopUpAmountWei({
-        walletBalanceWei: input.walletBalanceWei,
+        walletBalanceWei: input.destBalanceWei,
         policy: input.policy,
       });
 
@@ -343,10 +325,10 @@ async function maybeNotifyReserveAlert(
           logger: dependencies.logger,
         },
         {
-          treasury: input.treasury,
-          treasuryBalanceWei: input.treasuryBalanceWei,
-          managedWalletAddressDisplay: input.wallet.addressDisplay,
-          managedWalletId: input.wallet.id,
+          treasury: input.source,
+          treasuryBalanceWei: input.sourceBalanceWei,
+          managedWalletAddressDisplay: input.operational.addressDisplay,
+          managedWalletId: input.operational.id,
           requestedAmountWei,
           operatorRecipients: dependencies.operatorRecipients,
           dashboardBaseUrl: dependencies.dashboardBaseUrl,
@@ -358,8 +340,6 @@ async function maybeNotifyReserveAlert(
       return;
     }
 
-    // A successful submit proves spendable capacity again — resolve any open
-    // reserve alert for this treasury (C10 resolution rule).
     if (input.dispatchResult.kind === 'submitted') {
       await resolveTreasuryReserveAlert(
         {
@@ -368,7 +348,7 @@ async function maybeNotifyReserveAlert(
           clock: dependencies.clock,
         },
         {
-          treasuryId: input.treasury.id,
+          treasuryId: input.source.id,
           operationId: input.correlationId,
           actor,
         },
@@ -378,48 +358,35 @@ async function maybeNotifyReserveAlert(
     dependencies.logger.error(
       {
         event: 'treasury.reserve_alert.notification_failed',
-        treasuryId: input.treasury.id,
+        treasuryId: input.source.id,
         operationId: input.correlationId,
         dispatchKind: input.dispatchResult.kind,
         err:
           error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
       },
-      'Reserve alert notification failed; funding outcome unchanged',
+      'Reserve alert notification failed; replenish outcome unchanged',
     );
   }
 }
 
-async function resolveTreasuryForWallet(
-  dependencies: EnsureWalletFundedDependencies,
-  wallet: ManagedWallet,
-): Promise<Treasury> {
-  const treasuries = await dependencies.treasuries.listEnabled();
-  const resolution = resolveFundingTreasury(treasuries, wallet.chain.chainId);
-  if (resolution.kind === 'error') {
-    throw new ChainBankError(resolution.error.code, resolution.error.message, {
-      publicMessage: resolution.error.publicMessage,
-      context: { ...resolution.error.context, managedWalletId: wallet.id },
-    });
-  }
-  return throwTreasuryResolution(resolution);
-}
-
 async function mapDispatchOutcome(
-  dependencies: EnsureWalletFundedDependencies,
+  dependencies: EnsureOperationalTreasuryFundedDependencies,
   input: {
     readonly dispatchResult: DispatchFundingResult;
-    readonly wallet: ManagedWallet;
-    readonly treasury: Treasury;
+    readonly source: Treasury;
+    readonly operational: Treasury;
     readonly balanceBeforeWei: bigint;
     readonly policy: FundingPolicy;
     readonly correlationId: string;
   },
-): Promise<EnsureWalletFundedResult> {
+): Promise<EnsureOperationalTreasuryFundedResult> {
   const base = {
+    sourceTreasuryId: input.source.id,
+    destinationTreasuryId: input.operational.id,
     balanceBeforeWei: input.balanceBeforeWei,
     minimumBalanceWei: input.policy.minimumBalanceWei,
     targetBalanceWei: input.policy.targetBalanceWei,
-    explorerBaseUrl: input.wallet.chain.explorerBaseUrl,
+    explorerBaseUrl: input.operational.chain.explorerBaseUrl,
   };
 
   switch (input.dispatchResult.kind) {
@@ -433,7 +400,6 @@ async function mapDispatchOutcome(
         reasonCode: undefined,
       };
     case 'blocked': {
-      // Map domain block reasons to stable machine-readable codes (P1-US5).
       const reasonCode =
         input.dispatchResult.reason === 'reserve' ? 'FUNDING_BLOCKED_RESERVE' : 'FUNDING_DISABLED';
       return {
@@ -461,7 +427,7 @@ async function mapDispatchOutcome(
         {
           transactionId: input.dispatchResult.transaction.id,
           correlationId: input.correlationId,
-          senderAddress: input.treasury.addressDisplay,
+          senderAddress: input.source.addressDisplay,
         },
       );
 
@@ -517,6 +483,8 @@ async function mapDispatchOutcome(
 
 function mapReplayResult(
   base: {
+    readonly sourceTreasuryId: string;
+    readonly destinationTreasuryId: string;
     readonly balanceBeforeWei: bigint;
     readonly minimumBalanceWei: bigint;
     readonly targetBalanceWei: bigint;
@@ -524,7 +492,7 @@ function mapReplayResult(
   },
   operationId: string,
   transaction: FundingTransaction | undefined,
-): EnsureWalletFundedResult {
+): EnsureOperationalTreasuryFundedResult {
   if (transaction === undefined) {
     return {
       ...base,
@@ -575,23 +543,23 @@ function mapReplayResult(
 }
 
 async function recordAttemptAudit(
-  dependencies: EnsureWalletFundedDependencies,
-  input: EnsureWalletFundedInput,
-  wallet: ManagedWallet,
+  dependencies: EnsureOperationalTreasuryFundedDependencies,
+  input: EnsureOperationalTreasuryFundedInput,
+  operational: Treasury,
+  source: Treasury,
   metadata: Readonly<Record<string, unknown>>,
 ): Promise<void> {
   await dependencies.auditEvents.record({
-    actorType: 'api_credential',
+    actorType: input.role === 'cron-reconciler' ? 'cron' : 'api_credential',
     actorId: input.credentialId,
-    action: 'wallet.ensure_funded',
-    entityType: 'managed_wallet',
-    entityId: wallet.id,
+    action: 'treasury.replenish_operational',
+    entityType: 'treasury',
+    entityId: operational.id,
     requestId: input.correlationId,
     sourceIp: input.sourceIp,
     metadata: {
       role: input.role,
-      projectId: wallet.project.id,
-      environmentId: wallet.environment.id,
+      sourceTreasuryId: source.id,
       ...metadata,
     },
   });

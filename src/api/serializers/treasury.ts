@@ -1,4 +1,6 @@
 import type { Treasury } from '../../app/ports.js';
+import type { TreasuryKind } from '../../domain/treasury/treasury-kind.js';
+import { treasuryKindDisplayName } from '../../domain/treasury/treasury-kind.js';
 import { calculateSpendableWei, type TreasuryStatus } from '../../domain/treasury/treasury-status.js';
 import { formatWeiAsEther } from '../../domain/wei.js';
 
@@ -11,6 +13,8 @@ import { formatWeiAsEther } from '../../domain/wei.js';
  */
 export interface TreasuryResource {
   readonly id: string;
+  readonly kind: TreasuryKind;
+  readonly displayKind: 'Public' | 'Private';
   readonly status: TreasuryStatus;
   readonly enabled: boolean;
   readonly address: string;
@@ -42,6 +46,11 @@ export interface TreasuryResource {
   };
   readonly lastCheckedAt: string | null;
   readonly lastCheckErrorCode: string | null;
+  readonly policy: {
+    readonly minimumBalanceWei: string;
+    readonly targetBalanceWei: string;
+    readonly maximumTopUpWei: string;
+  } | null;
 }
 
 export function serializeTreasury(treasury: Treasury): TreasuryResource {
@@ -51,6 +60,8 @@ export function serializeTreasury(treasury: Treasury): TreasuryResource {
 
   return {
     id: treasury.id,
+    kind: treasury.kind,
+    displayKind: treasuryKindDisplayName(treasury.kind),
     status: treasury.status,
     enabled: treasury.enabled,
     address: treasury.addressDisplay,
@@ -82,5 +93,13 @@ export function serializeTreasury(treasury: Treasury): TreasuryResource {
     },
     lastCheckedAt: treasury.lastCheckedAt?.toISOString() ?? null,
     lastCheckErrorCode: treasury.lastCheckErrorCode ?? null,
+    policy:
+      treasury.policy === undefined
+        ? null
+        : {
+            minimumBalanceWei: treasury.policy.minimumBalanceWei.toString(),
+            targetBalanceWei: treasury.policy.targetBalanceWei.toString(),
+            maximumTopUpWei: treasury.policy.maximumTopUpWei.toString(),
+          },
   };
 }

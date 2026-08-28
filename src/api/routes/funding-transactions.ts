@@ -37,36 +37,66 @@ const fundingTransactionResponseProperties = {
     },
   },
   project: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['id', 'slug', 'name', 'enabled'],
-    properties: {
-      id: { type: 'string', format: 'uuid' },
-      slug: { type: 'string' },
-      name: { type: 'string' },
-      enabled: { type: 'boolean' },
-    },
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'slug', 'name', 'enabled'],
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          slug: { type: 'string' },
+          name: { type: 'string' },
+          enabled: { type: 'boolean' },
+        },
+      },
+    ],
   },
   environment: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['id', 'slug', 'name', 'enabled'],
-    properties: {
-      id: { type: 'string', format: 'uuid' },
-      slug: { type: 'string' },
-      name: { type: 'string' },
-      enabled: { type: 'boolean' },
-    },
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'slug', 'name', 'enabled'],
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          slug: { type: 'string' },
+          name: { type: 'string' },
+          enabled: { type: 'boolean' },
+        },
+      },
+    ],
   },
   wallet: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['id', 'role', 'address'],
-    properties: {
-      id: { type: 'string', format: 'uuid' },
-      role: { type: 'string' },
-      address: { type: 'string' },
-    },
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'role', 'address'],
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          role: { type: 'string' },
+          address: { type: 'string' },
+        },
+      },
+    ],
+  },
+  destinationTreasury: {
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'kind', 'address'],
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          kind: { type: 'string', enum: ['external', 'operational'] },
+          address: { type: 'string' },
+        },
+      },
+    ],
   },
   chain: {
     type: 'object',
@@ -100,6 +130,7 @@ const fundingTransactionResponseSchema = {
     'project',
     'environment',
     'wallet',
+    'destinationTreasury',
     'chain',
     'amountWei',
     'amountEther',

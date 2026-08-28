@@ -64,6 +64,7 @@ function buildHistoryItem(
       address: '0x2222222222222222222222222222222222222222',
       addressDisplay: '0x2222222222222222222222222222222222222222',
     },
+    destinationTreasury: undefined,
     project: {
       id: PROJECT_A,
       slug: 'fortel2',

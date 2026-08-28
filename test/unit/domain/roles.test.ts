@@ -12,6 +12,7 @@ describe('role permissions', () => {
     expect(roleHasPermission('operator', 'treasury:read')).toBe(true);
     expect(roleHasPermission('operator', 'treasury:check')).toBe(true);
     expect(roleHasPermission('operator', 'treasury:write')).toBe(true);
+    expect(roleHasPermission('operator', 'treasury:replenish')).toBe(true);
     expect(roleHasPermission('operator', 'email:test')).toBe(true);
     expect(roleHasPermission('operator', 'wallet:read')).toBe(true);
     expect(roleHasPermission('operator', 'wallet:write')).toBe(true);
@@ -33,6 +34,7 @@ describe('role permissions', () => {
     expect(roleHasPermission('read-only', 'alert:acknowledge')).toBe(false);
     expect(roleHasPermission('read-only', 'treasury:check')).toBe(false);
     expect(roleHasPermission('read-only', 'treasury:write')).toBe(false);
+    expect(roleHasPermission('read-only', 'treasury:replenish')).toBe(false);
     expect(roleHasPermission('read-only', 'email:test')).toBe(false);
     expect(roleHasPermission('read-only', 'wallet:write')).toBe(false);
     expect(roleHasPermission('read-only', 'project:write')).toBe(false);
@@ -50,6 +52,7 @@ describe('role permissions', () => {
       'treasury:read',
       'treasury:check',
       'treasury:write',
+      'treasury:replenish',
       'email:test',
       'wallet:read',
       'wallet:write',
@@ -67,8 +70,9 @@ describe('role permissions', () => {
     }
   });
 
-  it('grants cron-reconciler only reconciliation:run (C14)', () => {
+  it('grants cron-reconciler reconciliation:run and treasury:replenish (C14 / C24)', () => {
     expect(roleHasPermission('cron-reconciler', 'reconciliation:run')).toBe(true);
+    expect(roleHasPermission('cron-reconciler', 'treasury:replenish')).toBe(true);
     const denied: readonly Permission[] = [
       'treasury:read',
       'treasury:check',

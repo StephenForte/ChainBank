@@ -53,6 +53,7 @@ async function seedSubmitted(options?: {
     operationId: operation.id,
     treasuryId: 'treasury-1',
     managedWalletId: 'wallet-1',
+    destinationTreasuryId: undefined,
     amountWei: 10n ** 18n,
     createdAt: clock.now(),
   });
@@ -175,6 +176,7 @@ describe('getOperationStatus', () => {
       operationId: operation.id,
       treasuryId: 'treasury-1',
       managedWalletId: 'wallet-1',
+      destinationTreasuryId: undefined,
       amountWei: 5n * 10n ** 17n,
       createdAt: clock.now(),
     });

@@ -527,6 +527,72 @@ As an operator, I want email after repeated funding failures so silent degradati
 
 This is a separate security, compliance, key-management, and risk project. No production funds may be introduced merely by enabling a configuration flag.
 
+## Phase 9 - Two-Tier Treasury (Public + Private)
+
+**Goal:** Separate the human refill address from the working-capital wallet that funds managed wallets.
+
+Humans still send testnet ETH to the **Public** (external) treasury. ChainBank fills the **Private** (operational) treasury from Public according to a min/target/max policy and Public reserve. All managed-wallet auto-fill (`ensure-funded`, `ensure-ready`, wallet-reconciler) spends from Private only.
+
+Code and database use `external` / `operational`. Dashboard copy uses Public / Private.
+
+### User Story P9-US1: Observe Public and Private Treasuries
+
+As an operator, I can see both treasuries with distinct balances, thresholds, and kind labels.
+
+Acceptance criteria:
+
+- `GET /v1/treasuries` returns `kind` (`external` | `operational`) for each enabled row.
+- The dashboard labels them Public and Private and shows the fill chain (Public → Private → wallets).
+- Existing `TREASURY_ADDRESS` remains the Public treasury (D13).
+
+### User Story P9-US2: Replenish Private from Public by Policy
+
+As the system, I top up the Private treasury from Public when Private is below its minimum, without accepting a caller-supplied destination.
+
+Acceptance criteria:
+
+- Operational policy is min / target / max, same math as wallet funding.
+- Public reserve plus estimated gas plus in-flight wei is enforced on the Public source.
+- Destination is the configured operational address only (config/DB-bound).
+- Operator can trigger `POST /v1/treasuries/{id}/replenish` when `{id}` is the operational treasury.
+- Project-service credentials are denied.
+- Repeating the same idempotency key does not create a second transfer.
+
+### User Story P9-US3: Wallets Spend from Private Only
+
+As a project service or reconciler, managed-wallet funding debits the Private treasury.
+
+Acceptance criteria:
+
+- `ensure-funded`, `ensure-ready`, and scheduled reconciliation resolve the operational treasury for wallet transfers.
+- `ensure-ready` and the wallet-reconciler replenish Private first when it is below minimum and Public can serve it (D14).
+- Two enabled operational (or two enabled external) rows on one chain refuse funding (`INVALID_CONFIGURATION`).
+
+### User Story P9-US4: Human Refill Still Names Public
+
+As an operator, refill emails and the replenish runbook still tell me to send ETH to the Public address.
+
+Acceptance criteria:
+
+- Warning / critical / recovery emails for the external treasury name Public and that address.
+- Private-empty while Public is healthy is an operational/replenish failure, not a faucet instruction.
+- `docs/runbooks/replenish-treasury.md` sends to the Public address.
+
+### User Story P9-US5: Rotate One Tier at a Time
+
+As an operator, I can rotate Public or Private without silently spending from a retired row.
+
+Acceptance criteria:
+
+- Disable-then-rotate still works per kind (C12 API + C23).
+- More than one enabled row of the same kind on a chain is a hard error before any signer call.
+
+### Phase 9 Exit Criteria
+
+- Hosted instance shows Public = current refill address and Private = new operational address.
+- A `replenish_operational` transfer is recorded and explained by the outgoing scanner.
+- A subsequent `ensure-funded` debit is attributed to the Private treasury row.
+
 ## 12. Functional Requirements
 
 ### 12.1 API

@@ -142,6 +142,9 @@ describe.skipIf(!integrationEnabled)('POST /v1/wallets/:id/ensure-funded (integr
       },
       balanceReader,
       treasurySigner: signer,
+      externalTreasurySigner: signer,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({

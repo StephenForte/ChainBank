@@ -39,6 +39,8 @@ const treasury: Treasury = {
   },
   address: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
   addressDisplay: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+  kind: 'external',
+  policy: undefined,
   thresholds: {
     criticalBalanceWei: parseEtherToWei('0.3', 'c'),
     warningBalanceWei: parseEtherToWei('0.75', 'w'),

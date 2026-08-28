@@ -55,6 +55,9 @@ export function createFundingHealthQuery(db: Database): FundingHealthQuery {
 
         const latest = new Map<string, WalletLastFundedRecord>();
         for (const row of rows) {
+          if (row.managedWalletId === null) {
+            continue;
+          }
           if (latest.has(row.managedWalletId)) {
             continue;
           }

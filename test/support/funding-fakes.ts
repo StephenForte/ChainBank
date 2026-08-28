@@ -124,6 +124,14 @@ export function createInMemoryFundingStores(): {
       }
       return Promise.resolve(undefined);
     },
+    findPendingByDestinationTreasury(destinationTreasuryId) {
+      for (const tx of txsById.values()) {
+        if (tx.destinationTreasuryId === destinationTreasuryId && isPendingTransactionStatus(tx.status)) {
+          return Promise.resolve(tx);
+        }
+      }
+      return Promise.resolve(undefined);
+    },
     sumInFlightAmountWeiByTreasury(treasuryId) {
       let total = 0n;
       for (const tx of txsById.values()) {
@@ -139,6 +147,7 @@ export function createInMemoryFundingStores(): {
         operationId: input.operationId,
         treasuryId: input.treasuryId,
         managedWalletId: input.managedWalletId,
+        destinationTreasuryId: input.destinationTreasuryId,
         amountWei: input.amountWei,
         transactionHash: undefined,
         nonce: undefined,
@@ -157,6 +166,7 @@ export function createInMemoryFundingStores(): {
         operationId: input.operationId,
         treasuryId: input.treasuryId,
         managedWalletId: input.managedWalletId,
+        destinationTreasuryId: input.destinationTreasuryId,
         amountWei: input.amountWei,
         transactionHash: undefined,
         nonce: input.nonce,

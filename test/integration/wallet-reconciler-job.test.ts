@@ -273,6 +273,9 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
         balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
       }),
       treasurySigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+      externalTreasurySigner: undefined,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(database.db),
       operatorMutations: createOperatorMutationTransaction(database.db),
       transactionReceiptTracker: createFakeReceiptTracker({

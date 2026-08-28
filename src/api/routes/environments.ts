@@ -126,6 +126,16 @@ export function registerEnvironmentRoutes(app: AppInstance, container: Container
           lock: container.fundingDispatchLock,
           receiptTracker: container.transactionReceiptTracker,
           signer: container.treasurySigner,
+          ...(container.treasurySigners === undefined
+            ? {}
+            : {
+                getSignerForTreasury: container.treasurySigners.getSignerForTreasury.bind(
+                  container.treasurySigners,
+                ),
+              }),
+          ...(container.externalTreasurySigner === undefined
+            ? {}
+            : { externalSigner: container.externalTreasurySigner }),
           clock: container.clock,
           idGenerator: container.idGenerator,
           logger: container.logger,

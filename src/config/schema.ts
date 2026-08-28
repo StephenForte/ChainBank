@@ -68,6 +68,22 @@ export const environmentSchema = z.object({
   TREASURY_RECOVERY_BALANCE_ETH: decimalEther,
   TREASURY_MINIMUM_RESERVE_ETH: decimalEther,
 
+  /**
+   * Private (operational) treasury. When unset, the process stays in the
+   * single-treasury hatch (C23): wallets still spend from TREASURY_ADDRESS.
+   */
+  TREASURY_OPERATIONAL_ADDRESS: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+  TREASURY_OPERATIONAL_WARNING_BALANCE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_TARGET_BALANCE_ETH: decimalEther.optional(),
+  TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH: decimalEther.optional(),
+
   EMAIL_PROVIDER: z.enum(['resend', 'log-only']).default('resend'),
   RESEND_API_KEY: z.string().trim().min(1).optional(),
   EMAIL_FROM_ADDRESS: emailAddress.optional(),
@@ -102,6 +118,12 @@ export const environmentSchema = z.object({
    * roles. Never accepted into treasury-monitor configuration.
    */
   TREASURY_PRIVATE_KEY: z.string().trim().min(1).optional(),
+
+  /**
+   * Operational-treasury signing key. Parsed only for signing-capable roles.
+   * Required when FUNDING_ENABLED=true and TREASURY_OPERATIONAL_ADDRESS is set.
+   */
+  TREASURY_OPERATIONAL_PRIVATE_KEY: z.string().trim().min(1).optional(),
 
   /** Receipt confirmations before a funding tx is marked confirmed (D4). */
   FUNDING_CONFIRMATIONS: positiveInteger.default(1),

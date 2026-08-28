@@ -1,5 +1,6 @@
 import { getAddress, isAddress, isHex } from 'viem';
 import { ChainBankError } from '../domain/errors.js';
+import { validatePolicy } from '../domain/funding/funding-math.js';
 import { assertValidTreasuryThresholds } from '../domain/treasury/treasury-status.js';
 import { parseEtherToWei } from '../domain/wei.js';
 import { environmentSchema, type RawEnvironment } from './schema.js';
@@ -55,6 +56,21 @@ export interface TreasuryConfig {
   readonly minimumReserveWei: bigint;
 }
 
+export interface OperationalTreasuryPolicyConfig {
+  readonly minimumBalanceWei: bigint;
+  readonly targetBalanceWei: bigint;
+  readonly maximumTopUpWei: bigint;
+}
+
+export interface OperationalTreasuryConfig {
+  readonly address: `0x${string}`;
+  readonly warningBalanceWei: bigint;
+  readonly criticalBalanceWei: bigint;
+  readonly recoveryBalanceWei: bigint;
+  readonly minimumReserveWei: bigint;
+  readonly policy: OperationalTreasuryPolicyConfig;
+}
+
 export type EmailConfig =
   | {
       readonly provider: 'resend';
@@ -91,6 +107,11 @@ export interface FundingConfig {
    * serialization cannot leak it.
    */
   readonly privateKey: `0x${string}` | undefined;
+  /**
+   * Operational-treasury key. Present only for signing-capable roles in
+   * two-tier mode. Non-enumerable; use {@link getOperationalTreasuryPrivateKey}.
+   */
+  readonly operationalPrivateKey: `0x${string}` | undefined;
 }
 
 export interface AlertsConfig {
@@ -113,6 +134,8 @@ export interface ChainBankConfig {
   readonly database: DatabaseConfig;
   readonly chain: ChainConfig;
   readonly treasury: TreasuryConfig;
+  /** Present when TREASURY_OPERATIONAL_ADDRESS is set (C23 two-tier mode). */
+  readonly operationalTreasury: OperationalTreasuryConfig | undefined;
   /**
    * Present for web, treasury-monitor, and cron-reconciler; absent for roles
    * that never send mail.
@@ -163,9 +186,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
   const source = options.env ?? process.env;
   // Strip signing material before parse for non-signing roles so the monitor
   // never observes TREASURY_PRIVATE_KEY, even when a shared env injects it.
-  const envSource = isSigningCapableRole(options.serviceRole)
-    ? source
-    : omitEnvKey(source, 'TREASURY_PRIVATE_KEY');
+  const envSource = isSigningCapableRole(options.serviceRole) ? source : omitSigningKeys(source);
   const parsed = environmentSchema.safeParse(envSource);
 
   if (!parsed.success) {
@@ -195,6 +216,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     database: buildDatabaseConfig(env, options.serviceRole, isHosted),
     chain: buildChainConfig(env),
     treasury: buildTreasuryConfig(env),
+    operationalTreasury: buildOperationalTreasuryConfig(env),
     email: requiresEmailConfig(options.serviceRole) ? buildEmailConfig(env, options.serviceRole) : undefined,
     apiSecurity: options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted) : undefined,
     alerts: {
@@ -211,6 +233,13 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
   };
 }
 
+function omitSigningKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const copy: NodeJS.ProcessEnv = { ...env };
+  delete copy.TREASURY_PRIVATE_KEY;
+  delete copy.TREASURY_OPERATIONAL_PRIVATE_KEY;
+  return copy;
+}
+
 function requiresEmailConfig(serviceRole: ServiceRole): boolean {
   return serviceRole === 'web' || serviceRole === 'treasury-monitor' || serviceRole === 'cron-reconciler';
 }
@@ -221,6 +250,10 @@ function requiresEmailConfig(serviceRole: ServiceRole): boolean {
  */
 export function getTreasuryPrivateKey(config: ChainBankConfig): `0x${string}` | undefined {
   return config.funding.privateKey;
+}
+
+export function getOperationalTreasuryPrivateKey(config: ChainBankConfig): `0x${string}` | undefined {
+  return config.funding.operationalPrivateKey;
 }
 
 function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): FundingConfig {
@@ -237,11 +270,15 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
       confirmations,
       confirmationTimeoutMs,
       privateKey: undefined,
+      operationalPrivateKey: undefined,
     });
   }
 
   const rawKey = env.TREASURY_PRIVATE_KEY;
-  const privateKey = rawKey === undefined ? undefined : parseTreasuryPrivateKey(rawKey, env.FUNDING_ENABLED);
+  const privateKey =
+    rawKey === undefined
+      ? undefined
+      : parseTreasuryPrivateKey(rawKey, env.FUNDING_ENABLED, 'TREASURY_PRIVATE_KEY');
 
   if (env.FUNDING_ENABLED && privateKey === undefined) {
     throw new ChainBankError(
@@ -253,12 +290,32 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
     );
   }
 
+  const rawOperationalKey = env.TREASURY_OPERATIONAL_PRIVATE_KEY;
+  const operationalPrivateKey =
+    rawOperationalKey === undefined
+      ? undefined
+      : parseTreasuryPrivateKey(rawOperationalKey, env.FUNDING_ENABLED, 'TREASURY_OPERATIONAL_PRIVATE_KEY');
+
+  if (
+    env.FUNDING_ENABLED &&
+    env.TREASURY_OPERATIONAL_ADDRESS !== undefined &&
+    operationalPrivateKey === undefined
+  ) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'FUNDING_ENABLED=true with TREASURY_OPERATIONAL_ADDRESS requires a structurally valid ' +
+        'TREASURY_OPERATIONAL_PRIVATE_KEY for this signing-capable service role.',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
   return createFundingConfig({
     enabled: env.FUNDING_ENABLED,
     killSwitch,
     confirmations,
     confirmationTimeoutMs,
     privateKey,
+    operationalPrivateKey,
   });
 }
 
@@ -268,8 +325,9 @@ function createFundingConfig(input: {
   readonly confirmations: number;
   readonly confirmationTimeoutMs: number;
   readonly privateKey: `0x${string}` | undefined;
+  readonly operationalPrivateKey: `0x${string}` | undefined;
 }): FundingConfig {
-  // Keep the private key non-enumerable so JSON.stringify(config) cannot leak it.
+  // Keep signing keys non-enumerable so JSON.stringify(config) cannot leak them.
   const funding = {
     enabled: input.enabled,
     killSwitch: input.killSwitch,
@@ -282,13 +340,13 @@ function createFundingConfig(input: {
     writable: false,
     configurable: false,
   });
+  Object.defineProperty(funding, 'operationalPrivateKey', {
+    value: input.operationalPrivateKey,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
   return funding;
-}
-
-function omitEnvKey(env: NodeJS.ProcessEnv, key: string): NodeJS.ProcessEnv {
-  const copy: NodeJS.ProcessEnv = { ...env };
-  delete copy[key];
-  return copy;
 }
 
 /**
@@ -298,15 +356,19 @@ function omitEnvKey(env: NodeJS.ProcessEnv, key: string): NodeJS.ProcessEnv {
  * When funding is disabled, a present-but-malformed value still fails closed so
  * a bad secret cannot sit unnoticed until the operator flips the gate.
  */
-function parseTreasuryPrivateKey(rawKey: string, isFundingEnabled: boolean): `0x${string}` | undefined {
+function parseTreasuryPrivateKey(
+  rawKey: string,
+  isFundingEnabled: boolean,
+  envName: 'TREASURY_PRIVATE_KEY' | 'TREASURY_OPERATIONAL_PRIVATE_KEY',
+): `0x${string}` | undefined {
   if (!isStructurallyValidPrivateKey(rawKey)) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
       isFundingEnabled
-        ? 'FUNDING_ENABLED=true but TREASURY_PRIVATE_KEY is malformed. ' +
+        ? `FUNDING_ENABLED=true but ${envName} is malformed. ` +
             'Expected a 0x-prefixed 32-byte hex private key (64 hex digits). ' +
             'Fix or remove the key, or set FUNDING_ENABLED=false.'
-        : 'TREASURY_PRIVATE_KEY is present but malformed. ' +
+        : `${envName} is present but malformed. ` +
             'Expected a 0x-prefixed 32-byte hex private key (64 hex digits). ' +
             'Fix or remove the key before enabling funding.',
       { publicMessage: 'The service is misconfigured.' },
@@ -413,6 +475,102 @@ function buildTreasuryConfig(env: RawEnvironment): TreasuryConfig {
   assertValidTreasuryThresholds(thresholds);
 
   return { address: getAddress(env.TREASURY_ADDRESS), ...thresholds };
+}
+
+function buildOperationalTreasuryConfig(env: RawEnvironment): OperationalTreasuryConfig | undefined {
+  const rawAddress = env.TREASURY_OPERATIONAL_ADDRESS;
+  if (rawAddress === undefined) {
+    return undefined;
+  }
+
+  if (!isAddress(rawAddress, { strict: false })) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'TREASURY_OPERATIONAL_ADDRESS is not a valid EVM address',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
+  const required = {
+    TREASURY_OPERATIONAL_WARNING_BALANCE_ETH: env.TREASURY_OPERATIONAL_WARNING_BALANCE_ETH,
+    TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH: env.TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH,
+    TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH: env.TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH,
+    TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH: env.TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH,
+    TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH: env.TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH,
+    TREASURY_OPERATIONAL_TARGET_BALANCE_ETH: env.TREASURY_OPERATIONAL_TARGET_BALANCE_ETH,
+    TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH: env.TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH,
+  } as const;
+
+  for (const [name, value] of Object.entries(required)) {
+    if (value === undefined) {
+      throw new ChainBankError(
+        'INVALID_CONFIGURATION',
+        `${name} is required when TREASURY_OPERATIONAL_ADDRESS is set`,
+        { publicMessage: 'The service is misconfigured.' },
+      );
+    }
+  }
+
+  const thresholds = {
+    warningBalanceWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_WARNING_BALANCE_ETH ?? '',
+      'TREASURY_OPERATIONAL_WARNING_BALANCE_ETH',
+    ),
+    criticalBalanceWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH ?? '',
+      'TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH',
+    ),
+    recoveryBalanceWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH ?? '',
+      'TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH',
+    ),
+    minimumReserveWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH ?? '',
+      'TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH',
+    ),
+  };
+  assertValidTreasuryThresholds(thresholds);
+
+  const policyInput = {
+    minimumBalanceWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH ?? '',
+      'TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH',
+    ),
+    targetBalanceWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_TARGET_BALANCE_ETH ?? '',
+      'TREASURY_OPERATIONAL_TARGET_BALANCE_ETH',
+    ),
+    maximumTopUpWei: parseEtherToWei(
+      env.TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH ?? '',
+      'TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH',
+    ),
+    isEnabled: true,
+  };
+  const policy = validatePolicy(policyInput);
+  if (!policy.ok) {
+    throw new ChainBankError(policy.code, policy.message, {
+      publicMessage: 'The service is misconfigured.',
+    });
+  }
+
+  const address = getAddress(rawAddress);
+  if (address.toLowerCase() === getAddress(env.TREASURY_ADDRESS).toLowerCase()) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'TREASURY_OPERATIONAL_ADDRESS must differ from TREASURY_ADDRESS',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
+  return {
+    address,
+    ...thresholds,
+    policy: {
+      minimumBalanceWei: policy.policy.minimumBalanceWei,
+      targetBalanceWei: policy.policy.targetBalanceWei,
+      maximumTopUpWei: policy.policy.maximumTopUpWei,
+    },
+  };
 }
 
 function buildEmailConfig(env: RawEnvironment, serviceRole: ServiceRole): EmailConfig {
