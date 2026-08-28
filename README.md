@@ -11,7 +11,8 @@ migration `0009`, contracts C23–C25) merged in PRs #103 and #104. The reconcil
 use case (C14), the 6-hourly reconciler cron, failure alerting (C15), the incremental
 outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency coverage (C16),
 and crash-duplicate prevention (TX.10, C7 amendment) are all merged and deployed.
-Phase 6 (multi-chain) has not started.
+Phase 9 is live on Render (D17). Phase 5 (ERC-20) is deferred (D15). Phase 6
+(multi-chain) has not started; the C23 hatch stays process-global (D16).
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and

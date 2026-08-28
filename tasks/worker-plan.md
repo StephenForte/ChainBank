@@ -2,7 +2,7 @@
 
 Planner-owned. Scope: finish the application per `tasks/ChainBank_PRD_v4.md`.
 Phase 0 is complete (read-only monitoring, auth, test email, cron, Render blueprint).
-Phases 5–8 are explicitly out of scope for this effort.
+Phase 5 is deferred (D15). Phase 6 is next after this cleanup wave. Phases 7–8 remain later.
 
 Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting, and must
 follow the **[commit and merge contract](#commit-and-merge-contract)** below — it
@@ -15,8 +15,10 @@ the report handed back on completion.
 **C26**).
 
 **Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
-decisions D11–D14). **Phase 4 remains exited** with live evidence below (2026-08-06). **Phase 6
-has not started.** This P6-prep cleanup wave is in progress to align planning docs with `main`.
+decisions D11–D14) and **live on Render (D17)**. **Phase 4 remains exited** with live evidence
+below (2026-08-06). **Phase 5 deferred (D15)** until a concrete ERC-20 need. **C23 hatch is
+process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** This
+P6-prep cleanup wave is in progress.
 
 Every planned Phase 1–4 task is merged, plus the full post-exit operability wave TX.11–TX.25.
 Phase 9 landed after that wave.
