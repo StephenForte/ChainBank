@@ -17,8 +17,8 @@ the report handed back on completion.
 **Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
 decisions D11–D14) and **live on Render (D17)**. **Phase 4 remains exited** with live evidence
 below (2026-08-06). **Phase 5 deferred (D15)** until a concrete ERC-20 need. **C23 hatch is
-process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** This
-P6-prep cleanup wave is in progress.
+process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** P6-PREP-1 landed (PR #105). Remaining cleanup lives in
+[`tasks/p6-prep-plan.md`](./p6-prep-plan.md); do not start T6.1 until that wave finishes.
 
 Every planned Phase 1–4 task is merged, plus the full post-exit operability wave TX.11–TX.25.
 Phase 9 landed after that wave.
@@ -296,7 +296,7 @@ Classify every file you are about to edit:
   `src/domain/errors.ts`, `src/infrastructure/db/schema.ts`,
   `test/support/funding-fakes.ts`, `README.md`, `tasks/DECISIONS.md`.
 - **Off-limits without explicit instruction** — `AGENTS.md`, `tasks/ChainBank_PRD_v4.md`
-  sections 1–24, `tasks/worker-plan.md`, `.github/workflows/`, `package.json`
+  sections 1–24, `tasks/worker-plan.md`, `tasks/p6-prep-plan.md`, `.github/workflows/`, `package.json`
   dependencies, and any existing `drizzle/*.sql` migration file. Adding a _new_
   migration is fine; editing a committed one is not.
 
