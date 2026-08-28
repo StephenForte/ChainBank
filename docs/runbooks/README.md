@@ -11,8 +11,9 @@ Phase 0 deploy checklist (Blueprint, TLS pin, first credential):
 
 | Runbook                                                                                    | Use this when…                                                                                               |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| [`replenish-treasury.md`](./replenish-treasury.md)                                         | The hot-wallet treasury is low on Sepolia ETH and funding or alerts need a refill.                           |
-| [`rotate-treasury-key.md`](./rotate-treasury-key.md)                                       | The treasury signing key must be replaced (compromise, rotation policy, or new hot wallet).                  |
+| [`replenish-treasury.md`](./replenish-treasury.md)                                         | The Public treasury is low on Sepolia ETH. Send refill ETH to the Public address only.                       |
+| [`rotate-treasury-key.md`](./rotate-treasury-key.md)                                       | The Public treasury signing key must be replaced (compromise, rotation policy, or new hot wallet).           |
+| [`rotate-operational-treasury-key.md`](./rotate-operational-treasury-key.md)               | The Private (operational) treasury signing key must be generated or rotated.                                 |
 | [`rotate-service-token.md`](./rotate-service-token.md)                                     | An API bearer token must be replaced as a planned rotation (not an active compromise).                       |
 | [`investigate-failed-funding.md`](./investigate-failed-funding.md)                         | An ensure-funded call or funding row failed / stuck and you have an error code or transaction status.        |
 | [`recover-stuck-pending-nonce.md`](./recover-stuck-pending-nonce.md)                       | A funding row is in-flight (`created` / `submitted` / `submission_unknown`) and blocking further top-ups.    |

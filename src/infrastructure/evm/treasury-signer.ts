@@ -23,6 +23,11 @@ export interface CreateTreasurySignerOptions {
   readonly privateKey: `0x${string}`;
   readonly isKillSwitchActive: boolean;
   readonly logger: Logger;
+  /**
+   * When set, `sendNativeTransfer` refuses any other destination (C25).
+   * Compared case-insensitively. Empty means no extra signer-level allowlist.
+   */
+  readonly allowedDestinationAddresses?: readonly string[];
   /** Test-only transport override. Production always uses HTTP to the configured RPC. */
   readonly transport?: Transport;
 }
@@ -35,6 +40,9 @@ export interface CreateTreasurySignerOptions {
  */
 export function createTreasurySigner(options: CreateTreasurySignerOptions): TreasurySigner {
   const { chain, privateKey, isKillSwitchActive, logger } = options;
+  const allowedDestinations = new Set(
+    (options.allowedDestinationAddresses ?? []).map((address) => address.toLowerCase()),
+  );
   const viemChain: Chain = resolveViemChain(chain.chainId);
   const transport =
     options.transport ??
@@ -204,6 +212,16 @@ export function createTreasurySigner(options: CreateTreasurySignerOptions): Trea
       }
 
       await assertChainMatchesBeforeSend();
+
+      if (allowedDestinations.size > 0 && !allowedDestinations.has(input.to.toLowerCase())) {
+        throw new ChainBankError(
+          'INVALID_ADDRESS',
+          'External treasury signer refused a destination outside the operational-treasury allowlist.',
+          {
+            publicMessage: 'The transfer destination is not allowed.',
+          },
+        );
+      }
 
       try {
         const client = getWalletClient();

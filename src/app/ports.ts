@@ -2,6 +2,7 @@ import type { AlertSeverity } from '../domain/alerts/treasury-alert.js';
 import type { BalanceReading } from '../domain/balance-reading.js';
 import type { Role } from '../domain/auth/roles.js';
 import type { FundingOperationStatus, FundingTransactionStatus } from '../domain/funding/statuses.js';
+import type { TreasuryKind } from '../domain/treasury/treasury-kind.js';
 import type { TreasuryStatus, TreasuryThresholds } from '../domain/treasury/treasury-status.js';
 
 /**
@@ -18,11 +19,20 @@ export interface ChainDescriptor {
   readonly explorerBaseUrl: string;
 }
 
+export interface TreasuryFundingPolicyAmounts {
+  readonly minimumBalanceWei: bigint;
+  readonly targetBalanceWei: bigint;
+  readonly maximumTopUpWei: bigint;
+}
+
 export interface Treasury {
   readonly id: string;
   readonly chain: ChainDescriptor;
   readonly address: string;
   readonly addressDisplay: string;
+  readonly kind: TreasuryKind;
+  /** Present only for operational treasuries (C23). */
+  readonly policy: TreasuryFundingPolicyAmounts | undefined;
   readonly thresholds: TreasuryThresholds;
   readonly status: TreasuryStatus;
   readonly lastObservedBalanceWei: bigint | undefined;
@@ -52,7 +62,10 @@ export interface TreasuryRegistration {
   readonly chainRowId: string;
   readonly address: string;
   readonly addressDisplay: string;
+  readonly kind: TreasuryKind;
   readonly thresholds: TreasuryThresholds;
+  /** Required when kind is operational; ignored for external. */
+  readonly policy: TreasuryFundingPolicyAmounts | undefined;
 }
 
 export interface RecordCheckSuccessInput {
@@ -232,6 +245,11 @@ export interface TreasurySigner {
   /** Fails closed when gas estimation fails — no fallback constant. */
   estimateTransferCostWei(to: string, valueWei: bigint): Promise<bigint>;
   verifyChainId(): Promise<{ readonly matches: boolean; readonly observedChainId: number | undefined }>;
+}
+
+/** C25 — signer keyed by the treasury row being debited. */
+export interface TreasurySignerRegistry {
+  getSignerForTreasury(treasury: { readonly id: string; readonly address: string }): TreasurySigner;
 }
 
 export interface EmailMessage {
@@ -603,7 +621,8 @@ export interface FundingTransaction {
   readonly id: string;
   readonly operationId: string;
   readonly treasuryId: string;
-  readonly managedWalletId: string;
+  readonly managedWalletId: string | undefined;
+  readonly destinationTreasuryId: string | undefined;
   readonly amountWei: bigint;
   readonly transactionHash: string | undefined;
   readonly nonce: number | undefined;
@@ -654,14 +673,24 @@ export interface FundingTransactionHistoryItem {
     readonly startedAt: Date;
     readonly completedAt: Date | undefined;
   };
-  readonly wallet: {
-    readonly id: string;
-    readonly role: string;
-    readonly address: string;
-    readonly addressDisplay: string;
-  };
-  readonly project: ProjectSummary;
-  readonly environment: EnvironmentSummary;
+  readonly wallet:
+    | {
+        readonly id: string;
+        readonly role: string;
+        readonly address: string;
+        readonly addressDisplay: string;
+      }
+    | undefined;
+  readonly destinationTreasury:
+    | {
+        readonly id: string;
+        readonly kind: TreasuryKind;
+        readonly address: string;
+        readonly addressDisplay: string;
+      }
+    | undefined;
+  readonly project: ProjectSummary | undefined;
+  readonly environment: EnvironmentSummary | undefined;
   readonly chain: ChainDescriptor;
 }
 
@@ -684,7 +713,8 @@ export interface InsertFundingTransactionInput {
   readonly id: string;
   readonly operationId: string;
   readonly treasuryId: string;
-  readonly managedWalletId: string;
+  readonly managedWalletId: string | undefined;
+  readonly destinationTreasuryId: string | undefined;
   readonly amountWei: bigint;
   readonly createdAt: Date;
 }
@@ -697,7 +727,8 @@ export interface InsertBroadcastIntentInput {
   readonly id: string;
   readonly operationId: string;
   readonly treasuryId: string;
-  readonly managedWalletId: string;
+  readonly managedWalletId: string | undefined;
+  readonly destinationTreasuryId: string | undefined;
   readonly amountWei: bigint;
   readonly nonce: number;
   readonly createdAt: Date;
@@ -732,6 +763,7 @@ export interface FundingTransactionRepository {
    * Used to prevent duplicate top-ups (AGENTS.md §7.5).
    */
   findPendingByManagedWallet(managedWalletId: string): Promise<FundingTransaction | undefined>;
+  findPendingByDestinationTreasury(destinationTreasuryId: string): Promise<FundingTransaction | undefined>;
   /**
    * Total wei committed to in-flight transfers for this treasury across all
    * wallets. Required for the reserve check: an on-chain balance read cannot

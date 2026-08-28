@@ -502,6 +502,8 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
         },
         treasuryAddress: TREASURY_ADDRESS.toLowerCase(),
         treasuryAddressDisplay: TREASURY_ADDRESS,
+        kind: 'external',
+        policy: undefined,
         thresholds: {
           warningBalanceWei: ONE_ETH,
           criticalBalanceWei: ONE_ETH / 4n,

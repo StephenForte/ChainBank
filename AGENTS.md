@@ -108,6 +108,8 @@ These invariants are mandatory and require tests.
 - Service credentials may fund only registered, enabled managed wallets within their authorized project/environment.
 - Never accept an arbitrary destination address from a project-service caller.
 - Operator-only administrative endpoints that alter wallet registration require audit logging.
+- When two-tier treasury is configured, managed-wallet funding spends from the operational (Private) treasury only.
+- Public → Private replenish destinations are the configured operational address only (config/DB-bound). Project-service cannot trigger a standalone replenish.
 
 ### 7.2 Chain verification
 
@@ -126,14 +128,15 @@ These invariants are mandatory and require tests.
 ### 7.4 Treasury reserve
 
 - A transfer must not reduce spendable treasury balance below configured reserve plus conservative transaction cost.
+- Public (external) reserve limits how much can move to Private; Private (operational) reserve limits how much can move to wallets. Both checks re-run immediately before each sign.
 - Reserve checks fail closed when gas cost cannot be estimated safely.
 
 ### 7.5 Idempotency and concurrency
 
 - Mutating funding endpoints require an idempotency key where specified by the PRD.
 - Persist idempotency state before submitting a transaction.
-- Enforce one transaction dispatcher per treasury/chain using a database-backed lock or equivalent reviewed mechanism.
-- Detect an existing pending funding transaction before creating another for the same wallet.
+- Enforce one transaction dispatcher per treasury/chain using a database-backed lock or equivalent reviewed mechanism. External and operational treasuries have independent locks.
+- Detect an existing pending funding transaction before creating another for the same wallet or the same operational-treasury destination.
 - Retry only after reconciling transaction hash, nonce, replacement, and receipt state.
 
 ### 7.6 Secret handling
@@ -142,7 +145,7 @@ These invariants are mandatory and require tests.
 - Do not write secrets to Postgres.
 - Do not log secrets, even at debug level.
 - Redact common credential fields centrally.
-- The read-only treasury monitor must run without treasury signing credentials.
+- The read-only treasury monitor must run without treasury signing credentials (neither Public nor Private keys).
 - Test fixtures use generated disposable keys only.
 
 ### 7.7 Authentication and authorization
@@ -301,6 +304,7 @@ Keep PRs focused. Separate mechanical refactoring from behavior changes when pra
 
 - Provide a global kill switch that disables all transaction submission while preserving read-only status.
 - Provide per-project, per-environment, per-wallet, and per-treasury enable flags.
+- When two-tier treasuries are configured, exactly one enabled Public (`external`) and one enabled Private (`operational`) treasury may exist per chain. Disabled historical rows remain for rotation.
 - A disabled entity cannot be funded by API or cron.
 - Manual “check now” is read-only.
 - Policy changes do not retroactively modify historical transaction records.

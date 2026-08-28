@@ -95,12 +95,21 @@ export function FundingHistoryPanel({
                     {fundingHistory.map((row) => (
                       <tr key={row.id}>
                         <td>
-                          <strong>{row.project.slug}</strong>
-                          <span className="muted"> / {row.environment.slug}</span>
+                          <strong>{row.project?.slug ?? 'treasury'}</strong>
+                          <span className="muted">
+                            {' '}
+                            / {row.environment?.slug ?? row.operation.operationType}
+                          </span>
                         </td>
                         <td className="mono">
-                          {row.wallet.role}{' '}
-                          <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                          {row.wallet === null
+                            ? row.destinationTreasury === undefined || row.destinationTreasury === null
+                              ? '—'
+                              : `Private ${shortAddress(row.destinationTreasury.address)}`
+                            : `${row.wallet.role} `}
+                          {row.wallet === null ? null : (
+                            <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                          )}
                         </td>
                         <td className="mono">
                           {row.amountEther} {row.chain.nativeSymbol}

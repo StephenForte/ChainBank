@@ -26,6 +26,8 @@ import {
   type DispatchFundingResult,
 } from '../funding/dispatch-funding.js';
 import { trackTransaction } from '../funding/track-transaction.js';
+import { replenishOperationalPrelude } from '../funding/replenish-operational-prelude.js';
+import { resolveFundingTreasury } from '../../domain/treasury/resolve-treasury.js';
 import type {
   AlertRepository,
   AuditEventRepository,
@@ -86,6 +88,8 @@ export interface ReconcileWalletsDependencies {
   readonly lock: FundingDispatchLock;
   readonly receiptTracker: TransactionReceiptTracker;
   readonly signer: TreasurySigner | undefined;
+  readonly externalSigner?: TreasurySigner;
+  readonly getSignerForTreasury?: (treasury: Treasury) => TreasurySigner;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -199,8 +203,6 @@ export async function reconcileWallets(
     let anyScanIncomplete = false;
 
     for (const treasury of treasuries) {
-      assertSignerMatchesTreasury(signer, treasury);
-
       const resolution = await resolveSubmissionUnknownForTreasury(dependencies, {
         treasury,
         maxLookbackBlocks: lookbackBlocks,
@@ -234,6 +236,46 @@ export async function reconcileWallets(
     }
 
     const wallets = await listAllEligibleWallets(dependencies.managedWallets);
+
+    if (dependencies.externalSigner !== undefined) {
+      const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
+      for (const evmChainId of chainIds) {
+        await replenishOperationalPrelude(
+          {
+            treasuries: dependencies.treasuries,
+            balanceObservations: dependencies.balanceObservations,
+            balanceReader: dependencies.balanceReader,
+            auditEvents: dependencies.auditEvents,
+            alerts: dependencies.alerts,
+            emailSender: dependencies.emailSender,
+            operations: dependencies.operations,
+            transactions: dependencies.transactions,
+            managedWallets: dependencies.managedWallets,
+            lock: dependencies.lock,
+            receiptTracker: dependencies.receiptTracker,
+            externalSigner: dependencies.externalSigner,
+            clock: dependencies.clock,
+            idGenerator: dependencies.idGenerator,
+            logger: dependencies.logger,
+            isFundingEnabled: dependencies.isFundingEnabled,
+            isFundingKillSwitchActive: dependencies.isFundingKillSwitchActive,
+            confirmations: dependencies.confirmations,
+            confirmationTimeoutMs: dependencies.confirmationTimeoutMs,
+            operatorRecipients: dependencies.operatorRecipients,
+            dashboardBaseUrl: dependencies.dashboardBaseUrl,
+            environment: dependencies.environment,
+          },
+          {
+            evmChainId,
+            role: input.role,
+            credentialId: input.credentialId,
+            correlationId: input.correlationId,
+            sourceIp: undefined,
+            idempotencyKey: `reconcile:${runId}`,
+          },
+        );
+      }
+    }
 
     for (const wallet of wallets) {
       const treasury = resolveTreasuryForWallet(treasuries, wallet);
@@ -273,10 +315,12 @@ export async function reconcileWallets(
       const reserveStopped = reserveStoppedByTreasury.get(treasury.id) === true;
 
       try {
+        const walletSigner = dependencies.getSignerForTreasury?.(treasury) ?? signer;
+        assertSignerMatchesTreasury(walletSigner, treasury);
         const outcome = await assessAndMaybeFundWallet(dependencies, {
           wallet,
           treasury,
-          signer,
+          signer: walletSigner,
           runId,
           credentialId: input.credentialId,
           correlationId: input.correlationId,
@@ -673,11 +717,8 @@ function resolveTreasuryForWallet(
   treasuries: readonly Treasury[],
   wallet: ManagedWallet,
 ): Treasury | undefined {
-  const matches = treasuries.filter((row) => row.chain.chainId === wallet.chain.chainId);
-  if (matches.length !== 1) {
-    return undefined;
-  }
-  return matches[0];
+  const resolution = resolveFundingTreasury(treasuries, wallet.chain.chainId);
+  return resolution.kind === 'ok' ? resolution.treasury : undefined;
 }
 
 interface SweepWalletAttribution {
@@ -1206,14 +1247,17 @@ async function settleSubmissionUnknownRow(
     };
   }
 
-  const wallet = await dependencies.managedWallets.findById(row.managedWalletId);
-  if (wallet === undefined) {
-    return { kind: 'pending', reason: 'managed wallet for submission_unknown row was not found' };
+  const destinationAddress = await resolveSubmissionUnknownDestination(dependencies, row);
+  if (destinationAddress === undefined) {
+    return {
+      kind: 'pending',
+      reason: 'submission_unknown row has no resolvable destination',
+    };
   }
 
   const isOurs = isMatchingSubmissionTransfer({
     transfer: found.transfer,
-    walletAddress: wallet.address,
+    walletAddress: destinationAddress,
     amountWei: row.amountWei,
   });
 
@@ -1257,6 +1301,21 @@ async function settleSubmissionUnknownRow(
   );
 
   return { kind: 'resolved' };
+}
+
+async function resolveSubmissionUnknownDestination(
+  dependencies: ReconcileWalletsDependencies,
+  row: FundingTransaction,
+): Promise<string | undefined> {
+  if (row.destinationTreasuryId !== undefined) {
+    const destination = await dependencies.treasuries.findById(row.destinationTreasuryId);
+    return destination?.address;
+  }
+  if (row.managedWalletId === undefined) {
+    return undefined;
+  }
+  const wallet = await dependencies.managedWallets.findById(row.managedWalletId);
+  return wallet?.address;
 }
 
 function isTerminalOp(status: string): boolean {

@@ -1,6 +1,7 @@
 import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -23,6 +24,9 @@ import {
 const weiColumn = (name: string) => numeric(name, { precision: 78, scale: 0 });
 
 export const treasuryStatusEnum = pgEnum('treasury_status', ['healthy', 'warning', 'critical', 'unknown']);
+
+/** D11 / C23 — Public = external, Private = operational. */
+export const treasuryKindEnum = pgEnum('treasury_kind', ['external', 'operational']);
 
 export const walletTypeEnum = pgEnum('wallet_type', ['treasury', 'managed_wallet']);
 
@@ -115,11 +119,39 @@ export const treasuries = pgTable(
      */
     lastOutgoingScanNonce: integer('last_outgoing_scan_nonce'),
 
+    /**
+     * D11 / C23. Existing rows backfill to `external` (migration 0009).
+     * Application enforces one enabled row per (chain, kind); disabled
+     * historical rows remain for C12 disable-then-rotate.
+     */
+    kind: treasuryKindEnum('kind').notNull().default('external'),
+
     enabled: boolean('enabled').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('treasuries_chain_address_key').on(table.chainId, table.address)],
+);
+
+/**
+ * Operational-treasury refill policy (C23). External treasuries have no row —
+ * humans fill them. 1:1 so external rows do not carry dead policy columns.
+ */
+export const treasuryFundingPolicies = pgTable(
+  'treasury_funding_policies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    treasuryId: uuid('treasury_id')
+      .notNull()
+      .references(() => treasuries.id, { onDelete: 'restrict' }),
+    minimumBalanceWei: weiColumn('minimum_balance_wei').notNull(),
+    targetBalanceWei: weiColumn('target_balance_wei').notNull(),
+    maximumTopUpWei: weiColumn('maximum_top_up_wei').notNull(),
+    version: integer('version').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('treasury_funding_policies_treasury_id_key').on(table.treasuryId)],
 );
 
 /**
@@ -327,26 +359,46 @@ export const fundingOperations = pgTable(
   ],
 );
 
-export const fundingTransactions = pgTable('funding_transactions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  operationId: uuid('operation_id')
-    .notNull()
-    .references(() => fundingOperations.id, { onDelete: 'restrict' }),
-  treasuryId: uuid('treasury_id')
-    .notNull()
-    .references(() => treasuries.id, { onDelete: 'restrict' }),
-  managedWalletId: uuid('managed_wallet_id')
-    .notNull()
-    .references(() => managedWallets.id, { onDelete: 'restrict' }),
-  amountWei: weiColumn('amount_wei').notNull(),
-  transactionHash: text('transaction_hash'),
-  nonce: integer('nonce'),
-  status: fundingTransactionStatusEnum('status').notNull().default('created'),
-  errorCode: text('error_code'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  submittedAt: timestamp('submitted_at', { withTimezone: true }),
-  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
-});
+export const fundingTransactions = pgTable(
+  'funding_transactions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    operationId: uuid('operation_id')
+      .notNull()
+      .references(() => fundingOperations.id, { onDelete: 'restrict' }),
+    /** Source treasury — the signer being debited. */
+    treasuryId: uuid('treasury_id')
+      .notNull()
+      .references(() => treasuries.id, { onDelete: 'restrict' }),
+    /** Wallet destination. Null on inter-treasury replenish (C24). */
+    managedWalletId: uuid('managed_wallet_id').references(() => managedWallets.id, {
+      onDelete: 'restrict',
+    }),
+    /** Operational-treasury destination. Null on wallet funding (C24). */
+    destinationTreasuryId: uuid('destination_treasury_id').references(() => treasuries.id, {
+      onDelete: 'restrict',
+    }),
+    amountWei: weiColumn('amount_wei').notNull(),
+    transactionHash: text('transaction_hash'),
+    nonce: integer('nonce'),
+    status: fundingTransactionStatusEnum('status').notNull().default('created'),
+    errorCode: text('error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  },
+  (table) => [
+    /**
+     * Exactly one destination (C24). Wallet funding sets managed_wallet_id;
+     * replenish sets destination_treasury_id.
+     */
+    check(
+      'funding_transactions_exactly_one_destination_check',
+      sql`(${table.managedWalletId} is not null and ${table.destinationTreasuryId} is null)
+        or (${table.managedWalletId} is null and ${table.destinationTreasuryId} is not null)`,
+    ),
+  ],
+);
 
 export const alerts = pgTable(
   'alerts',
@@ -423,6 +475,15 @@ export const chainsRelations = relations(chains, ({ many }) => ({
 export const treasuriesRelations = relations(treasuries, ({ one, many }) => ({
   chain: one(chains, { fields: [treasuries.chainId], references: [chains.id] }),
   fundingTransactions: many(fundingTransactions),
+  destinationFundingTransactions: many(fundingTransactions, { relationName: 'destinationTreasury' }),
+  fundingPolicy: one(treasuryFundingPolicies),
+}));
+
+export const treasuryFundingPoliciesRelations = relations(treasuryFundingPolicies, ({ one }) => ({
+  treasury: one(treasuries, {
+    fields: [treasuryFundingPolicies.treasuryId],
+    references: [treasuries.id],
+  }),
 }));
 
 export const reconciliationRunsRelations = relations(reconciliationRuns, () => ({}));
@@ -493,6 +554,11 @@ export const fundingTransactionsRelations = relations(fundingTransactions, ({ on
     fields: [fundingTransactions.treasuryId],
     references: [treasuries.id],
   }),
+  destinationTreasury: one(treasuries, {
+    fields: [fundingTransactions.destinationTreasuryId],
+    references: [treasuries.id],
+    relationName: 'destinationTreasury',
+  }),
   managedWallet: one(managedWallets, {
     fields: [fundingTransactions.managedWalletId],
     references: [managedWallets.id],
@@ -501,6 +567,7 @@ export const fundingTransactionsRelations = relations(fundingTransactions, ({ on
 
 export type ChainRow = typeof chains.$inferSelect;
 export type TreasuryRow = typeof treasuries.$inferSelect;
+export type TreasuryFundingPolicyRow = typeof treasuryFundingPolicies.$inferSelect;
 export type BalanceObservationRow = typeof balanceObservations.$inferSelect;
 export type ApiCredentialRow = typeof apiCredentials.$inferSelect;
 export type ApiCredentialScopeRow = typeof apiCredentialScopes.$inferSelect;

@@ -346,6 +346,7 @@ describe('dispatchFunding', () => {
       operationId: 'prior-op',
       treasuryId: 'treasury-1',
       managedWalletId: 'wallet-1',
+      destinationTreasuryId: undefined,
       amountWei: ONE_ETH,
       createdAt: clock.now(),
     });
@@ -591,5 +592,46 @@ describe('dispatchFunding', () => {
       .filter((tx) => tx.status === 'submitted')
       .reduce((sum, tx) => sum + tx.amountWei, 0n);
     expect(inFlightWei).toBeLessThanOrEqual(10n * ONE_ETH - reserveWei);
+  });
+
+  it('credits the operational treasury destination without a managed wallet (C24)', async () => {
+    const operationalAddress = '0x3333333333333333333333333333333333333333';
+    const destinations: string[] = [];
+    const { dependencies, signer, stores } = deps({
+      signer: createFakeSigner({
+        send: (input) => {
+          destinations.push(input.to);
+          return Promise.resolve({ transactionHash: `0x${'ef'.repeat(32)}` });
+        },
+      }),
+      walletAddresses: [operationalAddress],
+    });
+
+    const result = await dispatchFunding(
+      dependencies,
+      baseInput({
+        operationType: 'replenish_operational',
+        projectId: undefined,
+        environmentId: undefined,
+        walletId: undefined,
+        destination: {
+          kind: 'operational_treasury',
+          treasuryId: 'treasury-op',
+          address: operationalAddress,
+          addressDisplay: operationalAddress,
+          enabled: true,
+        },
+      }),
+    );
+
+    expect(result.kind).toBe('submitted');
+    if (result.kind !== 'submitted') {
+      return;
+    }
+    expect(result.transaction.managedWalletId).toBeUndefined();
+    expect(result.transaction.destinationTreasuryId).toBe('treasury-op');
+    expect(destinations).toEqual([operationalAddress]);
+    expect(signer.sendCalls).toBe(1);
+    expect(stores.txsById.size).toBe(1);
   });
 });

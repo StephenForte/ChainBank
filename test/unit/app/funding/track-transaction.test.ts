@@ -25,6 +25,7 @@ async function seedSubmitted(txId = 'tx-1', opId = 'op-1') {
     operationId: operation.id,
     treasuryId: 'treasury-1',
     managedWalletId: 'wallet-1',
+    destinationTreasuryId: undefined,
     amountWei: 10n ** 18n,
     createdAt: clock.now(),
   });

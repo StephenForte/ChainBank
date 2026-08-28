@@ -19,6 +19,8 @@ const treasury: Treasury = {
   },
   address: '0x1111111111111111111111111111111111111111',
   addressDisplay: '0x1111111111111111111111111111111111111111',
+  kind: 'external',
+  policy: undefined,
   thresholds: {
     warningBalanceWei: 750_000_000_000_000_000n,
     criticalBalanceWei: 300_000_000_000_000_000n,

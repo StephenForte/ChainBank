@@ -228,6 +228,9 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
       },
       balanceReader,
       treasurySigner: signer,
+      externalTreasurySigner: signer,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({

@@ -4,22 +4,32 @@ import type {
   RecordCheckSuccessInput,
   RecordOutgoingScanCompleteInput,
   Treasury,
+  TreasuryFundingPolicyAmounts,
   TreasuryRegistration,
   TreasuryRepository,
 } from '../../../app/ports.js';
 import { ChainBankError } from '../../../domain/errors.js';
 import { weiFromDatabaseNumeric, weiToDatabaseNumeric } from '../../../domain/wei.js';
 import { withDatabaseErrors, type Database } from '../client.js';
-import { treasuries, type ChainRow, type TreasuryRow } from '../schema.js';
+import {
+  treasuries,
+  treasuryFundingPolicies,
+  type ChainRow,
+  type TreasuryFundingPolicyRow,
+  type TreasuryRow,
+} from '../schema.js';
 import { toChainDescriptor } from './chain-repository.js';
 
-type TreasuryWithChain = TreasuryRow & { chain: ChainRow };
+type TreasuryWithChain = TreasuryRow & {
+  chain: ChainRow;
+  fundingPolicy: TreasuryFundingPolicyRow | null;
+};
 
 export function createTreasuryRepository(db: Database): TreasuryRepository {
   async function loadById(id: string): Promise<Treasury> {
     const row = await db.query.treasuries.findFirst({
       where: eq(treasuries.id, id),
-      with: { chain: true },
+      with: { chain: true, fundingPolicy: true },
     });
     if (row === undefined) {
       throw new ChainBankError('TREASURY_NOT_FOUND', `Treasury ${id} was not found after write`);
@@ -52,11 +62,13 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
               registration.thresholds.minimumReserveWei,
               'minimumReserveWei',
             ),
+            kind: registration.kind,
           })
           .onConflictDoUpdate({
             target: [treasuries.chainId, treasuries.address],
             set: {
               addressDisplay: registration.addressDisplay,
+              kind: registration.kind,
               warningBalanceWei: weiToDatabaseNumeric(
                 registration.thresholds.warningBalanceWei,
                 'warningBalanceWei',
@@ -81,6 +93,11 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
         if (row === undefined) {
           throw new ChainBankError('DATABASE_UNAVAILABLE', 'Treasury upsert returned no row');
         }
+
+        if (registration.kind === 'operational' && registration.policy !== undefined) {
+          await upsertTreasuryPolicy(db, row.id, registration.policy);
+        }
+
         return loadById(row.id);
       });
     },
@@ -89,7 +106,7 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
       return withDatabaseErrors('treasuries.findById', async () => {
         const row = await db.query.treasuries.findFirst({
           where: eq(treasuries.id, id),
-          with: { chain: true },
+          with: { chain: true, fundingPolicy: true },
         });
         return row === undefined ? undefined : toTreasury(row);
       });
@@ -99,7 +116,7 @@ export function createTreasuryRepository(db: Database): TreasuryRepository {
       return withDatabaseErrors('treasuries.listEnabled', async () => {
         const rows = await db.query.treasuries.findMany({
           where: eq(treasuries.enabled, true),
-          with: { chain: true },
+          with: { chain: true, fundingPolicy: true },
           orderBy: (table, { asc }) => [asc(table.createdAt)],
         });
         return rows.map(toTreasury);
@@ -193,10 +210,36 @@ export async function findTreasuryByAddress(
   const row = await withDatabaseErrors('treasuries.findByAddress', () =>
     db.query.treasuries.findFirst({
       where: and(eq(treasuries.chainId, chainRowId), eq(treasuries.address, address)),
-      with: { chain: true },
+      with: { chain: true, fundingPolicy: true },
     }),
   );
   return row === undefined ? undefined : toTreasury(row);
+}
+
+async function upsertTreasuryPolicy(
+  db: Database,
+  treasuryId: string,
+  policy: TreasuryFundingPolicyAmounts,
+): Promise<void> {
+  await db
+    .insert(treasuryFundingPolicies)
+    .values({
+      treasuryId,
+      minimumBalanceWei: weiToDatabaseNumeric(policy.minimumBalanceWei, 'minimumBalanceWei'),
+      targetBalanceWei: weiToDatabaseNumeric(policy.targetBalanceWei, 'targetBalanceWei'),
+      maximumTopUpWei: weiToDatabaseNumeric(policy.maximumTopUpWei, 'maximumTopUpWei'),
+      version: 1,
+    })
+    .onConflictDoUpdate({
+      target: [treasuryFundingPolicies.treasuryId],
+      set: {
+        minimumBalanceWei: weiToDatabaseNumeric(policy.minimumBalanceWei, 'minimumBalanceWei'),
+        targetBalanceWei: weiToDatabaseNumeric(policy.targetBalanceWei, 'targetBalanceWei'),
+        maximumTopUpWei: weiToDatabaseNumeric(policy.maximumTopUpWei, 'maximumTopUpWei'),
+        version: 1,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 function toTreasury(row: TreasuryWithChain): Treasury {
@@ -205,6 +248,18 @@ function toTreasury(row: TreasuryWithChain): Treasury {
     chain: toChainDescriptor(row.chain),
     address: row.address,
     addressDisplay: row.addressDisplay,
+    kind: row.kind,
+    policy:
+      row.fundingPolicy === null
+        ? undefined
+        : {
+            minimumBalanceWei: weiFromDatabaseNumeric(
+              row.fundingPolicy.minimumBalanceWei,
+              'minimumBalanceWei',
+            ),
+            targetBalanceWei: weiFromDatabaseNumeric(row.fundingPolicy.targetBalanceWei, 'targetBalanceWei'),
+            maximumTopUpWei: weiFromDatabaseNumeric(row.fundingPolicy.maximumTopUpWei, 'maximumTopUpWei'),
+          },
     thresholds: {
       warningBalanceWei: weiFromDatabaseNumeric(row.warningBalanceWei, 'warningBalanceWei'),
       criticalBalanceWei: weiFromDatabaseNumeric(row.criticalBalanceWei, 'criticalBalanceWei'),

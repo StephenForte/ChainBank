@@ -24,6 +24,10 @@ Status values: **PENDING** (blocks dependent work), **DECIDED** (cite date + dec
 | D8  | Rate limiting implementation                                                   | DECIDED (moot)                          | `@fastify/rate-limit` was already a dependency from the Phase 0 bootstrap and is registered in `src/api/app.ts` alongside helmet and deny-by-default CORS. Raised as needing approval in error; no new dependency was ever introduced.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 2026-07-29                        | planner (correction)                     |
 | D9  | CI secret-scan tooling                                                         | DECIDED (default)                       | `gitleaks` official GitHub Action, pinned by commit SHA. A CI action, not an npm dependency; override if operator prefers another scanner.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 2026-07-28                        | planner                                  |
 | D10 | Credential project/environment scoping storage                                 | DECIDED (default)                       | New `api_credential_scopes` table (credential FK + project FK + nullable environment FK), migration `0002`, owned by T2.1. Null environment = all environments in that project. Non-scoped roles (operator, read-only, crons) ignore the table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 2026-07-28                        | planner                                  |
+| D11 | Two-tier treasury kinds                                                        | DECIDED                                 | Code/DB: `external` (dashboard: Public) and `operational` (dashboard: Private). Avoid “public” in code — the PRD uses that word for faucets. Existing `TREASURY_ADDRESS` is the external row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 2026-08-27                        | operator                                 |
+| D12 | Dual-treasury signing-key placement                                            | DECIDED                                 | Same process as today: `web` and `cron-reconciler` hold **both** keys. `treasury-monitor` holds neither. A web compromise can still drain the public pile; the split is operational (stable refill address + working-capital wallet), not key isolation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 2026-08-27                        | operator                                 |
+| D13 | Two-tier cutover identity                                                      | DECIDED                                 | Today’s `TREASURY_ADDRESS` / `TREASURY_PRIVATE_KEY` stay the public (external) treasury. A new keypair is the private (operational) treasury. Human refill habit does not change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 2026-08-27                        | planner (operator refill unchanged)      |
+| D14 | When operational replenish may run                                             | DECIDED                                 | Because keys share a process (D12), `ensure-ready` and wallet-reconciler replenish the operational treasury first when it is below minimum and the external treasury can serve it. Project-service callers cannot choose destinations or trigger a standalone public→private send. Operator + `cron-reconciler` only for `replenish_operational`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 2026-08-27                        | planner                                  |
 
 ## 2. Interface contracts (append-only; workers add entries)
 
@@ -301,9 +305,8 @@ setTreasuryEnabled(deps, input): Promise<Treasury>;
 // Unknown id → TREASURY_NOT_FOUND (404)
 // Disabling the only enabled treasury for a chain is allowed (fail closed downstream)
 
-// Funding resolution (src/app/funding/ensure-wallet-funded.ts)
-// resolveTreasuryForWallet: >1 enabled row for wallet.chain → INVALID_CONFIGURATION
-// before any signer call (publicMessage: ambiguous treasury configuration)
+// Funding resolution: superseded by C23 (one enabled row per kind per chain).
+// C12's enable/disable API and fail-loud rotation story are unchanged.
 ```
 
 Local design choices (TX.5, 2026-08-01):
@@ -1343,19 +1346,108 @@ failed to render` with the error (WeakSet-deduped under StrictMode);
 - **Unchanged:** every C17/C20/TX.20 Reconciliation invariant; acknowledge
   flows; LoadState `error-inline` paths; session token storage.
 
+### C23 — Two-tier treasury resolution (owner: Phase 9)
+
+Replaces C12's "exactly one enabled treasury per chain" resolution rule.
+C12's operator enable/disable API and fail-loud rotation story are unchanged;
+ambiguity is now **per kind**, not per chain.
+
+```ts
+type TreasuryKind = 'external' | 'operational';
+
+// Exactly one enabled row of each kind per EVM chain.
+// resolveFundingTreasuryForWallet → operational, or the sole enabled row (legacy hatch).
+// resolveReplenishSource → the enabled external row.
+// >1 enabled row of the same kind → INVALID_CONFIGURATION
+```
+
+Local design choices (Phase 9, 2026-08-27):
+
+- **Kinds (D11):** `external` is the human-refilled Public treasury;
+  `operational` is the Private working-capital treasury. Dashboard copy uses
+  Public / Private; code and DB use external / operational.
+- **Legacy hatch:** when no operational row is configured, wallet funding
+  still spends from the single enabled treasury (today's `TREASURY_ADDRESS`,
+  stored as `external`). Two enabled `external` rows still refuse (C12).
+- **Two-tier mode:** `TREASURY_OPERATIONAL_ADDRESS` is set. Wallet funding
+  resolves the operational treasury only. Replenish source is the external
+  treasury only.
+- **Policy storage:** 1:1 `treasury_funding_policies` on the operational
+  treasury (`minimum_balance_wei`, `target_balance_wei`, `maximum_top_up_wei`).
+  External rows have no policy row — humans fill them.
+- **No unique on `(chain_id, kind)`:** disabled historical rows must remain
+  (C12 disable-then-rotate). Application enforces one _enabled_ row per kind.
+- **Migration `0009`.** Existing treasury rows backfill `kind = 'external'`.
+
+### C24 — Inter-treasury replenish (owner: Phase 9)
+
+```ts
+// funding_operations.operation_type = 'replenish_operational'
+// Destination address is the operational treasury row (config/DB-bound).
+// Never a request-body `to`. Operator + cron-reconciler only.
+
+// funding_transactions:
+//   treasury_id              = source (external) — the signer being debited
+//   destination_treasury_id  = operational treasury (nullable)
+//   managed_wallet_id        = nullable
+//   CHECK: exactly one of managed_wallet_id / destination_treasury_id is set
+```
+
+Local design choices (Phase 9, 2026-08-27):
+
+- Reuses `dispatchFunding` with a destination union
+  (`managed_wallet` | `operational_treasury`). No second funding engine.
+- Pending gate for replenish is per destination treasury (same in-flight
+  statuses as C4). Reserve + in-flight wei apply to the **source** treasury.
+- `POST /v1/treasuries/:id/replenish` — `:id` must be the operational
+  treasury. Project-service denied. Idempotency key required.
+- D14: `ensureEnvironmentReady` and `reconcileWallets` call
+  `ensureOperationalTreasuryFunded` first when two-tier is configured.
+- Outgoing scan (C14) explains a public→private transfer when its hash
+  matches a `replenish_operational` `funding_transactions` row.
+
+### C25 — Dual treasury signer (owner: Phase 9)
+
+Extends C1. Each treasury that may sign has its own `TreasurySigner`.
+`getSignerForTreasury(treasury)` returns the signer whose address matches
+that row (`assertSignerMatchesTreasury`).
+
+Local design choices (Phase 9, 2026-08-27):
+
+- **D12:** `web` and `cron-reconciler` construct both signers when both
+  keys are present. `treasury-monitor` strips `TREASURY_PRIVATE_KEY` and
+  `TREASURY_OPERATIONAL_PRIVATE_KEY` before parse.
+- **External signer hard-allowlist:** `sendNativeTransfer` refuses any `to`
+  other than the configured operational address (`INVALID_ADDRESS`).
+  Application allowlist is not the only gate (AGENTS.md §7.1).
+- **Operational signer:** destinations remain managed-wallet rows from DB
+  (existing T1.6 / C7 hardening).
+- Kill switch still gates `sendNativeTransfer` on both signers.
+- Legacy hatch: a single `TREASURY_PRIVATE_KEY` builds one signer with no
+  extra destination allowlist (today's behavior).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
-| Var                                  | Service roles                  | Required                    | Default                                          | Owner task                                |
-| ------------------------------------ | ------------------------------ | --------------------------- | ------------------------------------------------ | ----------------------------------------- |
-| `TREASURY_PRIVATE_KEY`               | web (funding), reconciler cron | when `FUNDING_ENABLED=true` | —                                                | T1.4                                      |
-| `FUNDING_ENABLED`                    | all                            | no                          | `false`                                          | exists (gate flips in T1.4)               |
-| `FUNDING_KILL_SWITCH`                | all                            | no                          | `false` (true blocks all signing, reads stay up) | T1.4                                      |
-| `TREASURY_MINIMUM_RESERVE_ETH`       | web, reconciler                | yes                         | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)                 |
-| `FUNDING_CONFIRMATIONS`              | web, reconciler                | no                          | `1`                                              | T1.5 (resume UX in T2.3)                  |
-| `FUNDING_CONFIRMATION_TIMEOUT_MS`    | web                            | no                          | `60000`                                          | T1.5 (resume UX in T2.3)                  |
-| `ALERT_REMINDER_INTERVAL_HOURS`      | treasury-monitor cron          | no                          | `24`                                             | T3.3                                      |
-| `RECONCILE_FAILURE_ALERT_THRESHOLD`  | reconciler                     | no                          | `3`                                              | T4.3                                      |
-| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` | reconciler                     | no                          | `20000` (per-run max window; TX.9)               | T4.2 (registered in T4.1; semantics TX.9) |
+| Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
+| ------------------------------------------- | ------------------------------ | ---------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| `TREASURY_PRIVATE_KEY`                      | web (funding), reconciler cron | when `FUNDING_ENABLED=true`  | —                                                | T1.4                                      |
+| `FUNDING_ENABLED`                           | all                            | no                           | `false`                                          | exists (gate flips in T1.4)               |
+| `FUNDING_KILL_SWITCH`                       | all                            | no                           | `false` (true blocks all signing, reads stay up) | T1.4                                      |
+| `TREASURY_MINIMUM_RESERVE_ETH`              | web, reconciler                | yes                          | — (parsed to `minimumReserveWei`)                | exists (enforced in T1.6)                 |
+| `FUNDING_CONFIRMATIONS`                     | web, reconciler                | no                           | `1`                                              | T1.5 (resume UX in T2.3)                  |
+| `FUNDING_CONFIRMATION_TIMEOUT_MS`           | web                            | no                           | `60000`                                          | T1.5 (resume UX in T2.3)                  |
+| `ALERT_REMINDER_INTERVAL_HOURS`             | treasury-monitor cron          | no                           | `24`                                             | T3.3                                      |
+| `RECONCILE_FAILURE_ALERT_THRESHOLD`         | reconciler                     | no                           | `3`                                              | T4.3                                      |
+| `RECONCILE_OUTGOING_LOOKBACK_BLOCKS`        | reconciler                     | no                           | `20000` (per-run max window; TX.9)               | T4.2 (registered in T4.1; semantics TX.9) |
+| `TREASURY_OPERATIONAL_ADDRESS`              | all                            | two-tier mode                | — (legacy hatch if unset)                        | Phase 9                                   |
+| `TREASURY_OPERATIONAL_PRIVATE_KEY`          | web, reconciler                | two-tier + `FUNDING_ENABLED` | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_WARNING_BALANCE_ETH`  | all                            | when operational address set | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH` | all                            | when operational address set | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH` | all                            | when operational address set | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH`  | all                            | when operational address set | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH`  | all                            | when operational address set | — (policy min)                                   | Phase 9                                   |
+| `TREASURY_OPERATIONAL_TARGET_BALANCE_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
+| `TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
 
 ## 4. Decision log (append-only)
 
@@ -1416,4 +1508,5 @@ failed to render` with the error (WeakSet-deduped under StrictMode);
 - 2026-08-06 — TX.21 published C21: `OperatorMutationTransaction` / `OperatorMutationUnitOfWork` so database-only operator mutations and their audit entries commit atomically (generalizes `createFundingDispatchLock`); persist-then-send alert/funding paths remain out of scope.
 - 2026-08-06 — TX.22 amended C20 (finding-identity acknowledgement) and C17 (compact always-visible critical) in place: `POST /v1/alerts/acknowledge-finding` creates persist-only open+ack when no alert row exists (C21 atomic, no email), acknowledges an existing open row rather than inserting a second (TX.19 `23505` adopt), and the dashboard always-visible critical is one dense expandable row with Acknowledge — reducing height, not presence.
 - 2026-08-06 — TX.23 published C22: per-panel React error boundaries plus a root backstop so a render throw isolates to one panel; alarm fallbacks for Reconciliation and Treasuries (unacknowledged criticals / reserve state must not look quietly empty); LoadState paths and fail-permissive finding rendering unchanged.
+- 2026-08-27 — **Phase 9 two-tier treasury.** D11 kinds (`external` / `operational`), D12 same-process dual keys, D13 existing `TREASURY_ADDRESS` stays Public, D14 replenish-first prelude. C23 resolution (per-kind ambiguity; legacy hatch), C24 `replenish_operational` + nullable destination on `funding_transactions` (migration `0009`), C25 dual signer with external hard-allowlist. C12 enable/disable API unchanged; its "one enabled treasury per chain" resolution rule is superseded by C23.
 - 2026-08-12 — **CB-04: Blueprint sync reverted an operator funding flip; funding gates moved to `sync: false`.** `render.yaml` declared `FUNDING_ENABLED` and `FUNDING_KILL_SWITCH` as literal `value: 'false'` on the signing-capable services, so every Blueprint sync reapplied them over the dashboard value — and Render re-syncs the whole Blueprint on any change to the file, on every service in it. Commit `1559dfe` (PR #99, "Declare FUNDING_HEALTH_TOKEN on the web Render service") therefore re-disabled `chainbank-wallet-reconciler`, which had `FUNDING_ENABLED=true` set only in the dashboard: last good run 2026-08-11 18:00 UTC (`exitKind: success`), `blueprint_sync` deploy `dep-d9todupchf5c73cp5f40` at 20:33, then three consecutive `policy-disabled` runs (00:00 / 06:00 / 12:00) until the operator re-enabled it by hand at 14:11. **Nothing alerted** — C15 classifies `FUNDING_DISABLED` as policy rather than failure (deliberately, so a week-long kill switch does not page twenty-eight times), so Render reported "run finished successfully" for ~18 h of no funding. `chainbank-web` was unaffected: it has logged `fundingEnabled: false` since Aug 7 by intent. Both gates are now `sync: false` on web + reconciler (keys still declared, so an incident edit is still one value; both default `false` in `src/config/schema.ts`, so unset fails closed), enforced by `test/unit/config/render-blueprint-thresholds.test.ts` and mutation-checked. `chainbank-treasury-monitor` keeps a literal `false` on purpose — it holds no key and reasserting the value each sync is desirable there. The dangerous direction is the inverse of what was observed: a literal would equally have cleared a kill switch set mid-incident, silently re-arming funding. Also closed a real gap in `disable-all-automated-funding.md`, which halted only `chainbank-web` and would have left the six-hourly reconciler signing with the treasury key.

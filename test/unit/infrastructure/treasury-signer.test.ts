@@ -223,4 +223,32 @@ describe('createTreasurySigner', () => {
     expect(serialized).not.toContain(privateKey);
     expect(serialized).not.toContain(privateKey.slice(2));
   });
+
+  it('refuses destinations outside the operational-treasury allowlist (C25)', async () => {
+    const privateKey = generatePrivateKey();
+    const allowed = privateKeyToAccount(generatePrivateKey()).address;
+    const sendRawTransaction = vi.fn((): `0x${string}` => `0x${'ab'.repeat(32)}`);
+    const signer = createTreasurySigner({
+      chain: chainConfig(),
+      privateKey,
+      isKillSwitchActive: false,
+      logger: testLogger(),
+      allowedDestinationAddresses: [allowed],
+      transport: mockTransport({
+        getChainId: () => SEPOLIA_CHAIN_ID,
+        estimateGas: () => 21_000n,
+        gasPrice: () => 1_000_000_000n,
+        sendRawTransaction,
+      }),
+    });
+
+    await expect(
+      signer.sendNativeTransfer({
+        to: privateKeyToAccount(generatePrivateKey()).address,
+        valueWei: 1n,
+        nonce: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ADDRESS' } satisfies Partial<ChainBankError>);
+    expect(sendRawTransaction).not.toHaveBeenCalled();
+  });
 });

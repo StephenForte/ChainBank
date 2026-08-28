@@ -148,6 +148,9 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
       },
       balanceReader,
       treasurySigner: signer,
+      externalTreasurySigner: signer,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
       transactionReceiptTracker: createFakeReceiptTracker({
@@ -190,6 +193,8 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
         },
         treasuryAddress: NEW_TREASURY_ADDRESS.toLowerCase(),
         treasuryAddressDisplay: getAddress(NEW_TREASURY_ADDRESS),
+        kind: 'external',
+        policy: undefined,
         thresholds: {
           warningBalanceWei: ONE_ETH,
           criticalBalanceWei: ONE_ETH / 4n,

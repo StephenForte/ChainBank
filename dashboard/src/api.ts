@@ -2,6 +2,8 @@ export type TreasuryStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
 export interface TreasuryResource {
   readonly id: string;
+  readonly kind?: 'external' | 'operational';
+  readonly displayKind?: 'Public' | 'Private';
   readonly status: TreasuryStatus;
   readonly enabled: boolean;
   readonly address: string;
@@ -167,18 +169,23 @@ export interface FundingTransactionResource {
     readonly slug: string;
     readonly name: string;
     readonly enabled: boolean;
-  };
+  } | null;
   readonly environment: {
     readonly id: string;
     readonly slug: string;
     readonly name: string;
     readonly enabled: boolean;
-  };
+  } | null;
   readonly wallet: {
     readonly id: string;
     readonly role: string;
     readonly address: string;
-  };
+  } | null;
+  readonly destinationTreasury?: {
+    readonly id: string;
+    readonly kind: string;
+    readonly address: string;
+  } | null;
   readonly chain: {
     readonly slug: string;
     readonly chainId: number;

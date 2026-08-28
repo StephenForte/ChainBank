@@ -38,8 +38,16 @@ export function TreasuriesPanel({
             <article key={treasury.id} className="treasury">
               <div className="treasury-head">
                 <span className={statusClass(treasury.status)}>{treasury.status}</span>
-                <h3>{treasury.chain.displayName}</h3>
+                <h3>
+                  {treasury.displayKind ?? (treasury.kind === 'operational' ? 'Private' : 'Public')} ·{' '}
+                  {treasury.chain.displayName}
+                </h3>
               </div>
+              {treasury.kind === 'operational' ? (
+                <p className="muted">Filled from the Public treasury by policy. Wallets spend from here.</p>
+              ) : (
+                <p className="muted">Human refill address. ChainBank never auto-fills this pile.</p>
+              )}
               <p className="mono">
                 <a href={treasury.explorerUrl} target="_blank" rel="noreferrer">
                   {treasury.address}

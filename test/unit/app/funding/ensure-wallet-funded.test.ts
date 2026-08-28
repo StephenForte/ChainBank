@@ -91,6 +91,8 @@ function buildTreasury(): Treasury {
     },
     address: '0x1111111111111111111111111111111111111111',
     addressDisplay: '0x1111111111111111111111111111111111111111',
+    kind: 'external',
+    policy: undefined,
     // Compliant ladder: reserve < critical (D3 / assertValidTreasuryThresholds).
     thresholds: {
       warningBalanceWei: (ONE_ETH * 75n) / 100n,
@@ -318,6 +320,8 @@ function buildDeps(options?: {
   readonly estimatedCostWei?: bigint;
   readonly emailBehavior?: 'sent' | 'fail';
   readonly enabledTreasuries?: readonly Treasury[];
+  readonly treasuryBalances?: Readonly<Record<string, bigint>>;
+  readonly externalSigner?: ReturnType<typeof createFakeSigner>;
 }) {
   const wallet = options && 'wallet' in options ? options.wallet : buildWallet();
   const treasury = buildTreasury();
@@ -340,7 +344,8 @@ function buildDeps(options?: {
     [REGISTERED_ADDRESS.toLowerCase()]: options?.walletBalanceWei ?? ONE_ETH / 10n,
   };
   for (const row of enabledTreasuries) {
-    balances[row.address.toLowerCase()] = options?.treasuryBalanceWei ?? 20n * ONE_ETH;
+    balances[row.address.toLowerCase()] =
+      options?.treasuryBalances?.[row.address.toLowerCase()] ?? options?.treasuryBalanceWei ?? 20n * ONE_ETH;
   }
   const balanceReader = createBalanceReader(balances);
   const auditEvents: AuditEventRepository = {
@@ -358,7 +363,7 @@ function buildDeps(options?: {
   };
   const treasuries: TreasuryRepository = {
     listEnabled: vi.fn(() => Promise.resolve(enabledTreasuries)),
-    findById: vi.fn(),
+    findById: vi.fn((id: string) => Promise.resolve(enabledTreasuries.find((row) => row.id === id))),
     upsert: vi.fn(),
     setEnabled: vi.fn(),
     recordCheckSuccess: vi.fn(),
@@ -384,6 +389,7 @@ function buildDeps(options?: {
       options?.receiptOutcome === 'pending' ? { kind: 'pending' } : { kind: 'confirmed', confirmedAt: now },
     ),
     signer,
+    ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
     clock,
     idGenerator: { next: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` },
     logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
@@ -514,6 +520,7 @@ describe('ensureWalletFunded', () => {
       operationId: 'prior-op',
       treasuryId: 'treasury-1',
       managedWalletId: WALLET_ID,
+      destinationTreasuryId: undefined,
       amountWei: ONE_ETH,
       createdAt: now,
     });
@@ -688,6 +695,142 @@ describe('ensureWalletFunded', () => {
     // returning this wallet's transfer as though the other one was funded.
     expect(operations[0]?.idempotencyKey).toBe(`${WALLET_ID}:${input.idempotencyKey}`);
     expect(operations[0]?.idempotencyKey).not.toBe(input.idempotencyKey);
+  });
+
+  it('funds from the operational treasury when both kinds are enabled (C23)', async () => {
+    const external = buildTreasury();
+    const operational: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-operational',
+      kind: 'operational',
+      address: '0x3333333333333333333333333333333333333333',
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+      policy: {
+        minimumBalanceWei: ONE_ETH,
+        targetBalanceWei: 2n * ONE_ETH,
+        maximumTopUpWei: 5n * ONE_ETH,
+      },
+    };
+    const signer = createFakeSigner({ address: operational.addressDisplay });
+    const { dependencies, input } = buildDeps({
+      signer,
+      enabledTreasuries: [external, operational],
+    });
+
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('funded');
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('runs the replenish prelude from Public before funding the wallet (D14)', async () => {
+    const external = buildTreasury();
+    const operationalAddress = '0x3333333333333333333333333333333333333333';
+    const operational: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-operational',
+      kind: 'operational',
+      address: operationalAddress.toLowerCase(),
+      addressDisplay: operationalAddress,
+      policy: {
+        minimumBalanceWei: 10n * ONE_ETH,
+        targetBalanceWei: 12n * ONE_ETH,
+        maximumTopUpWei: 5n * ONE_ETH,
+      },
+    };
+    const replenishDestinations: string[] = [];
+    const walletDestinations: string[] = [];
+    const externalSigner = createFakeSigner({
+      address: external.addressDisplay,
+      send: (input) => {
+        replenishDestinations.push(input.to);
+        return Promise.resolve({ transactionHash: `0x${'aa'.repeat(32)}` });
+      },
+    });
+    const signer = createFakeSigner({
+      address: operational.addressDisplay,
+      send: (input) => {
+        walletDestinations.push(input.to);
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+    const { dependencies, input } = buildDeps({
+      signer,
+      externalSigner,
+      enabledTreasuries: [external, operational],
+      treasuryBalances: {
+        [external.address.toLowerCase()]: 20n * ONE_ETH,
+        [operational.address.toLowerCase()]: 8n * ONE_ETH,
+      },
+    });
+
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('funded');
+    expect(replenishDestinations).toEqual([operationalAddress]);
+    expect(walletDestinations).toEqual([REGISTERED_ADDRESS]);
+    expect(externalSigner.sendCalls).toBe(1);
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('continues wallet funding when a Private replenish is already in flight', async () => {
+    const external = buildTreasury();
+    const operationalAddress = '0x3333333333333333333333333333333333333333';
+    const operational: Treasury = {
+      ...buildTreasury(),
+      id: 'treasury-operational',
+      kind: 'operational',
+      address: operationalAddress.toLowerCase(),
+      addressDisplay: operationalAddress,
+      policy: {
+        minimumBalanceWei: 10n * ONE_ETH,
+        targetBalanceWei: 12n * ONE_ETH,
+        maximumTopUpWei: 5n * ONE_ETH,
+      },
+    };
+    const externalSigner = createFakeSigner({ address: external.addressDisplay });
+    const signer = createFakeSigner({
+      address: operational.addressDisplay,
+      send: (input) => {
+        expect(input.to.toLowerCase()).toBe(REGISTERED_ADDRESS.toLowerCase());
+        return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+      },
+    });
+    const { dependencies, input } = buildDeps({
+      signer,
+      externalSigner,
+      enabledTreasuries: [external, operational],
+      treasuryBalances: {
+        [external.address.toLowerCase()]: 20n * ONE_ETH,
+        [operational.address.toLowerCase()]: 8n * ONE_ETH,
+      },
+    });
+    await dependencies.operations.insertPending({
+      id: 'prior-replenish-op',
+      operationType: 'replenish_operational',
+      projectId: undefined,
+      environmentId: undefined,
+      idempotencyKey: undefined,
+      requestedBy: 'other',
+      startedAt: now,
+    });
+    await dependencies.transactions.insertCreated({
+      id: 'prior-replenish-tx',
+      operationId: 'prior-replenish-op',
+      treasuryId: external.id,
+      managedWalletId: undefined,
+      destinationTreasuryId: operational.id,
+      amountWei: 4n * ONE_ETH,
+      createdAt: now,
+    });
+    await dependencies.transactions.markSubmitted('prior-replenish-tx', {
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      nonce: 1,
+      submittedAt: now,
+    });
+
+    const result = await ensureWalletFunded(dependencies, input);
+    expect(result.status).toBe('funded');
+    expect(externalSigner.sendCalls).toBe(0);
+    expect(signer.sendCalls).toBe(1);
   });
 
   it('returns WALLET_NOT_FOUND when the id is unknown', async () => {

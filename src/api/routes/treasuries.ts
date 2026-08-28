@@ -6,6 +6,8 @@ import { setTreasuryEnabled } from '../../app/treasury/set-treasury-enabled.js';
 import type { Container } from '../../container.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
+import { assertPermission } from '../../domain/auth/roles.js';
+import { ensureOperationalTreasuryFunded } from '../../app/funding/ensure-operational-treasury-funded.js';
 import { serializeTreasury } from '../serializers/treasury.js';
 
 const treasuryIdParams = {
@@ -72,6 +74,81 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
       );
 
       return { data: serializeTreasury(treasury) };
+    },
+  );
+
+  app.post(
+    '/v1/treasuries/:id/replenish',
+    {
+      preHandler: app.authenticate,
+      schema: {
+        params: treasuryIdParams,
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['idempotencyKey'],
+          properties: {
+            idempotencyKey: { type: 'string', minLength: 1, maxLength: 128 },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const actor = requireActor(request);
+      assertPermission(actor.role, 'treasury:replenish');
+      const { id } = request.params as { id: string };
+      const body = request.body as { idempotencyKey: string };
+
+      const result = await ensureOperationalTreasuryFunded(
+        {
+          treasuries: container.repositories.treasuries,
+          balanceObservations: container.repositories.balanceObservations,
+          balanceReader: container.balanceReader,
+          auditEvents: container.repositories.auditEvents,
+          alerts: container.repositories.alerts,
+          emailSender: container.emailSender,
+          operations: container.repositories.fundingOperations,
+          transactions: container.repositories.fundingTransactions,
+          managedWallets: container.repositories.managedWallets,
+          lock: container.fundingDispatchLock,
+          receiptTracker: container.transactionReceiptTracker,
+          externalSigner: container.externalTreasurySigner,
+          clock: container.clock,
+          idGenerator: container.idGenerator,
+          logger: container.logger,
+          isFundingEnabled: container.config.isFundingEnabled,
+          isFundingKillSwitchActive: container.config.isFundingKillSwitchActive,
+          confirmations: container.config.funding.confirmations,
+          confirmationTimeoutMs: container.config.funding.confirmationTimeoutMs,
+          operatorRecipients: container.config.email?.operatorRecipients ?? [],
+          dashboardBaseUrl: container.config.app.publicBaseUrl,
+          environment: container.config.app.environment,
+        },
+        {
+          operationalTreasuryId: id,
+          idempotencyKey: body.idempotencyKey,
+          role: actor.role,
+          credentialId: actor.credentialId,
+          correlationId: request.id,
+          sourceIp: request.ip,
+        },
+      );
+
+      return {
+        data: {
+          status: result.status,
+          operationId: result.operationId,
+          sourceTreasuryId: result.sourceTreasuryId,
+          destinationTreasuryId: result.destinationTreasuryId,
+          balanceBeforeWei: result.balanceBeforeWei.toString(),
+          minimumBalanceWei: result.minimumBalanceWei.toString(),
+          targetBalanceWei: result.targetBalanceWei.toString(),
+          transferredWei: result.transferredWei?.toString() ?? null,
+          transactionHash: result.transactionHash ?? null,
+          explorerBaseUrl: result.explorerBaseUrl,
+          reasonCode: result.reasonCode ?? null,
+        },
+      };
     },
   );
 

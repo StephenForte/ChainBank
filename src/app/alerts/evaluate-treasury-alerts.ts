@@ -400,6 +400,7 @@ async function sendTransitionEmail(
     environment: input.environment,
     chainDisplayName: input.treasury.chain.displayName,
     treasuryAddressDisplay: input.treasury.addressDisplay,
+    treasuryKind: input.treasury.kind,
     observedBalanceWei: input.balanceWei,
     dashboardBaseUrl: input.dashboardBaseUrl,
   };

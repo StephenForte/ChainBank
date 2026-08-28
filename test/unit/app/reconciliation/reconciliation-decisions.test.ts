@@ -158,6 +158,14 @@ describe('reconciliation decisions', () => {
         classifyOutgoingAgainstRecords(transfer, new Set([transfer.transactionHash.toLowerCase()])),
       ).toEqual({ kind: 'explained' });
     });
+
+    it('explains a public→private replenish when the funding_transactions hash is recorded', () => {
+      const replenishHash = `0x${'cc'.repeat(32)}`;
+      const transfer = buildTransfer({ transactionHash: replenishHash });
+      expect(classifyOutgoingAgainstRecords(transfer, new Set([replenishHash]))).toEqual({
+        kind: 'explained',
+      });
+    });
   });
 
   describe('isMatchingSubmissionTransfer', () => {

@@ -23,8 +23,14 @@ import type {
   TreasuryOutgoingScanner,
   TreasuryRepository,
   TreasurySigner,
+  TreasurySignerRegistry,
 } from './app/ports.js';
-import { getTreasuryPrivateKey, isSigningCapableRole, type ChainBankConfig } from './config/index.js';
+import {
+  getOperationalTreasuryPrivateKey,
+  getTreasuryPrivateKey,
+  isSigningCapableRole,
+  type ChainBankConfig,
+} from './config/index.js';
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
 import { createFundingDispatchLock } from './infrastructure/db/funding-dispatch-lock.js';
@@ -52,6 +58,7 @@ import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
 import { createTransactionReceiptTracker } from './infrastructure/evm/transaction-tracker.js';
 import { createTreasuryOutgoingScanner } from './infrastructure/evm/treasury-outgoing-scanner.js';
 import { createTreasurySigner } from './infrastructure/evm/treasury-signer.js';
+import { ChainBankError } from './domain/errors.js';
 import { createLogger, type Logger } from './observability/logger.js';
 import { systemClock, uuidGenerator } from './shared/system-ports.js';
 
@@ -90,6 +97,11 @@ export interface Container {
   readonly balanceReader: BalanceReader;
   /** Present only for signing-capable roles with a validated treasury key. */
   readonly treasurySigner: TreasurySigner | undefined;
+  /** Public-treasury signer (C25). Same as treasurySigner in the legacy hatch. */
+  readonly externalTreasurySigner: TreasurySigner | undefined;
+  /** Private-treasury signer when two-tier is configured. */
+  readonly operationalTreasurySigner: TreasurySigner | undefined;
+  readonly treasurySigners: TreasurySignerRegistry | undefined;
   /** Per-treasury/chain advisory lock for funding dispatch (D7). */
   readonly fundingDispatchLock: FundingDispatchLock;
   /** Atomic operator mutation + audit unit of work (C21). */
@@ -151,7 +163,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
       fundingHealth: createFundingHealthQuery(database.db),
     },
     balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
-    treasurySigner: buildTreasurySigner(config, logger),
+    ...buildSigners(config, logger),
     fundingDispatchLock: createFundingDispatchLock(database.db),
     operatorMutations: createOperatorMutationTransaction(database.db),
     transactionReceiptTracker: createTransactionReceiptTracker({
@@ -167,22 +179,84 @@ export function buildContainer(options: BuildContainerOptions): Container {
   };
 }
 
-function buildTreasurySigner(config: ChainBankConfig, logger: Logger): TreasurySigner | undefined {
+function buildSigners(
+  config: ChainBankConfig,
+  logger: Logger,
+): {
+  readonly treasurySigner: TreasurySigner | undefined;
+  readonly externalTreasurySigner: TreasurySigner | undefined;
+  readonly operationalTreasurySigner: TreasurySigner | undefined;
+  readonly treasurySigners: TreasurySignerRegistry | undefined;
+} {
   if (!isSigningCapableRole(config.app.serviceRole)) {
-    return undefined;
+    return {
+      treasurySigner: undefined,
+      externalTreasurySigner: undefined,
+      operationalTreasurySigner: undefined,
+      treasurySigners: undefined,
+    };
   }
 
-  const privateKey = getTreasuryPrivateKey(config);
-  if (privateKey === undefined) {
-    return undefined;
-  }
+  const externalKey = getTreasuryPrivateKey(config);
+  const operationalKey = getOperationalTreasuryPrivateKey(config);
 
-  return createTreasurySigner({
-    chain: config.chain,
-    privateKey,
-    isKillSwitchActive: config.isFundingKillSwitchActive,
-    logger,
-  });
+  const externalTreasurySigner =
+    externalKey === undefined
+      ? undefined
+      : createTreasurySigner({
+          chain: config.chain,
+          privateKey: externalKey,
+          isKillSwitchActive: config.isFundingKillSwitchActive,
+          logger,
+          ...(config.operationalTreasury === undefined
+            ? {}
+            : { allowedDestinationAddresses: [config.operationalTreasury.address] }),
+        });
+
+  const operationalTreasurySigner =
+    operationalKey === undefined
+      ? undefined
+      : createTreasurySigner({
+          chain: config.chain,
+          privateKey: operationalKey,
+          isKillSwitchActive: config.isFundingKillSwitchActive,
+          logger,
+        });
+
+  const walletFundingSigner = operationalTreasurySigner ?? externalTreasurySigner;
+
+  const treasurySigners: TreasurySignerRegistry | undefined =
+    externalTreasurySigner === undefined && operationalTreasurySigner === undefined
+      ? undefined
+      : {
+          getSignerForTreasury(treasury) {
+            const address = treasury.address.toLowerCase();
+            if (
+              operationalTreasurySigner !== undefined &&
+              operationalTreasurySigner.address.toLowerCase() === address
+            ) {
+              return operationalTreasurySigner;
+            }
+            if (
+              externalTreasurySigner !== undefined &&
+              externalTreasurySigner.address.toLowerCase() === address
+            ) {
+              return externalTreasurySigner;
+            }
+            throw new ChainBankError(
+              'INVALID_CONFIGURATION',
+              `No signer is configured for treasury ${treasury.id}`,
+              { publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.' },
+            );
+          },
+        };
+
+  return {
+    treasurySigner: walletFundingSigner,
+    externalTreasurySigner,
+    operationalTreasurySigner,
+    treasurySigners,
+  };
 }
 
 function buildEmailSender(config: ChainBankConfig, logger: Logger): EmailSender | undefined {

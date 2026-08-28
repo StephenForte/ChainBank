@@ -1,3 +1,4 @@
+import { alias } from 'drizzle-orm/pg-core';
 import { and, count, desc, eq, gte, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
 import { getAddress } from 'viem';
 import type {
@@ -24,13 +25,18 @@ import {
   fundingTransactions,
   managedWallets,
   projects,
+  treasuries,
   type ChainRow,
   type EnvironmentRow,
   type FundingOperationRow,
   type FundingTransactionRow,
   type ManagedWalletRow,
   type ProjectRow,
+  type TreasuryRow,
 } from '../schema.js';
+
+const destinationTreasuries = alias(treasuries, 'destination_treasuries');
+const sourceTreasuries = alias(treasuries, 'source_treasuries');
 import { toChainDescriptor } from './chain-repository.js';
 
 /**
@@ -71,6 +77,20 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
       });
     },
 
+    async findPendingByDestinationTreasury(
+      destinationTreasuryId: string,
+    ): Promise<FundingTransaction | undefined> {
+      return withDatabaseErrors('funding_transactions.findPendingByDestinationTreasury', async () => {
+        const row = await db.query.fundingTransactions.findFirst({
+          where: and(
+            eq(fundingTransactions.destinationTreasuryId, destinationTreasuryId),
+            inArray(fundingTransactions.status, IN_FLIGHT_STATUSES),
+          ),
+        });
+        return row === undefined ? undefined : toFundingTransaction(row);
+      });
+    },
+
     async sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint> {
       return withDatabaseErrors('funding_transactions.sumInFlightAmountWeiByTreasury', async () => {
         const rows = await db
@@ -99,6 +119,7 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
             operationId: input.operationId,
             treasuryId: input.treasuryId,
             managedWalletId: input.managedWalletId,
+            destinationTreasuryId: input.destinationTreasuryId,
             amountWei: weiToDatabaseNumeric(input.amountWei, 'amountWei'),
             status: 'created',
             createdAt: input.createdAt,
@@ -123,6 +144,7 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
             operationId: input.operationId,
             treasuryId: input.treasuryId,
             managedWalletId: input.managedWalletId,
+            destinationTreasuryId: input.destinationTreasuryId,
             amountWei: weiToDatabaseNumeric(input.amountWei, 'amountWei'),
             nonce: input.nonce,
             status: 'submission_unknown',
@@ -193,10 +215,15 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
           .select({ value: count() })
           .from(fundingTransactions)
           .innerJoin(fundingOperations, eq(fundingTransactions.operationId, fundingOperations.id))
-          .innerJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
-          .innerJoin(environments, eq(managedWallets.environmentId, environments.id))
-          .innerJoin(projects, eq(environments.projectId, projects.id))
-          .innerJoin(chains, eq(managedWallets.chainId, chains.id))
+          .innerJoin(sourceTreasuries, eq(fundingTransactions.treasuryId, sourceTreasuries.id))
+          .innerJoin(chains, eq(sourceTreasuries.chainId, chains.id))
+          .leftJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
+          .leftJoin(environments, eq(managedWallets.environmentId, environments.id))
+          .leftJoin(projects, eq(environments.projectId, projects.id))
+          .leftJoin(
+            destinationTreasuries,
+            eq(fundingTransactions.destinationTreasuryId, destinationTreasuries.id),
+          )
           .where(where);
 
         const rows = await db
@@ -207,13 +234,19 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
             environment: environments,
             project: projects,
             chain: chains,
+            destinationTreasury: destinationTreasuries,
           })
           .from(fundingTransactions)
           .innerJoin(fundingOperations, eq(fundingTransactions.operationId, fundingOperations.id))
-          .innerJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
-          .innerJoin(environments, eq(managedWallets.environmentId, environments.id))
-          .innerJoin(projects, eq(environments.projectId, projects.id))
-          .innerJoin(chains, eq(managedWallets.chainId, chains.id))
+          .innerJoin(sourceTreasuries, eq(fundingTransactions.treasuryId, sourceTreasuries.id))
+          .innerJoin(chains, eq(sourceTreasuries.chainId, chains.id))
+          .leftJoin(managedWallets, eq(fundingTransactions.managedWalletId, managedWallets.id))
+          .leftJoin(environments, eq(managedWallets.environmentId, environments.id))
+          .leftJoin(projects, eq(environments.projectId, projects.id))
+          .leftJoin(
+            destinationTreasuries,
+            eq(fundingTransactions.destinationTreasuryId, destinationTreasuries.id),
+          )
           .where(where)
           .orderBy(desc(fundingTransactions.createdAt), desc(fundingTransactions.id))
           .limit(pagination.limit)
@@ -285,7 +318,8 @@ function toFundingTransaction(row: FundingTransactionRow): FundingTransaction {
     id: row.id,
     operationId: row.operationId,
     treasuryId: row.treasuryId,
-    managedWalletId: row.managedWalletId,
+    managedWalletId: row.managedWalletId ?? undefined,
+    destinationTreasuryId: row.destinationTreasuryId ?? undefined,
     amountWei: weiFromDatabaseNumeric(row.amountWei, 'amountWei'),
     transactionHash: row.transactionHash ?? undefined,
     nonce: row.nonce ?? undefined,
@@ -300,12 +334,12 @@ function toFundingTransaction(row: FundingTransactionRow): FundingTransaction {
 function toFundingTransactionHistoryItem(row: {
   readonly tx: FundingTransactionRow;
   readonly op: FundingOperationRow;
-  readonly wallet: ManagedWalletRow;
-  readonly environment: EnvironmentRow;
-  readonly project: ProjectRow;
+  readonly wallet: ManagedWalletRow | null;
+  readonly environment: EnvironmentRow | null;
+  readonly project: ProjectRow | null;
   readonly chain: ChainRow;
+  readonly destinationTreasury: TreasuryRow | null;
 }): FundingTransactionHistoryItem {
-  const addressDisplay = getAddress(row.wallet.address);
   return {
     id: row.tx.id,
     operationId: row.tx.operationId,
@@ -325,25 +359,43 @@ function toFundingTransactionHistoryItem(row: {
       startedAt: row.op.startedAt,
       completedAt: row.op.completedAt ?? undefined,
     },
-    wallet: {
-      id: row.wallet.id,
-      role: row.wallet.role,
-      address: row.wallet.address,
-      addressDisplay,
-    },
-    project: {
-      id: row.project.id,
-      slug: row.project.slug,
-      name: row.project.name,
-      enabled: row.project.enabled,
-    },
-    environment: {
-      id: row.environment.id,
-      projectId: row.environment.projectId,
-      slug: row.environment.slug,
-      name: row.environment.name,
-      enabled: row.environment.enabled,
-    },
+    wallet:
+      row.wallet === null
+        ? undefined
+        : {
+            id: row.wallet.id,
+            role: row.wallet.role,
+            address: row.wallet.address,
+            addressDisplay: getAddress(row.wallet.address),
+          },
+    destinationTreasury:
+      row.destinationTreasury === null
+        ? undefined
+        : {
+            id: row.destinationTreasury.id,
+            kind: row.destinationTreasury.kind,
+            address: row.destinationTreasury.address,
+            addressDisplay: row.destinationTreasury.addressDisplay,
+          },
+    project:
+      row.project === null
+        ? undefined
+        : {
+            id: row.project.id,
+            slug: row.project.slug,
+            name: row.project.name,
+            enabled: row.project.enabled,
+          },
+    environment:
+      row.environment === null
+        ? undefined
+        : {
+            id: row.environment.id,
+            projectId: row.environment.projectId,
+            slug: row.environment.slug,
+            name: row.environment.name,
+            enabled: row.environment.enabled,
+          },
     chain: toChainDescriptor(row.chain),
   };
 }

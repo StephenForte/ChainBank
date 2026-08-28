@@ -9,14 +9,24 @@ export interface TreasuryWarningEmailContext {
   readonly environment: string;
   readonly chainDisplayName: string;
   readonly treasuryAddressDisplay: string;
+  readonly treasuryKind?: 'external' | 'operational';
   readonly observedBalanceWei: bigint;
   readonly warningThresholdWei: bigint;
   readonly dashboardBaseUrl: string;
 }
 
-const RECOMMENDED_ACTION =
-  'Review the treasury balance and replenish funds to at least the recovery threshold. ' +
-  'Monitor managed wallet funding demand in the dashboard.';
+function recommendedAction(kind: 'external' | 'operational' | undefined): string {
+  if (kind === 'operational') {
+    return (
+      'The Private treasury is low. ChainBank should refill it from the Public treasury. ' +
+      'If Public is healthy, this is an operational failure — do not send faucet ETH here.'
+    );
+  }
+  return (
+    'Review the Public treasury balance and send testnet ETH to this address until it is ' +
+    'at least the recovery threshold. Monitor managed wallet funding demand in the dashboard.'
+  );
+}
 
 /**
  * Sent once when the treasury transitions from healthy to the warning band (PRD P3-US2).
@@ -24,17 +34,18 @@ const RECOMMENDED_ACTION =
 export function renderTreasuryWarningEmail(context: TreasuryWarningEmailContext): RenderedEmailTemplate {
   const observedBalance = formatBalanceDisplay(context.observedBalanceWei);
   const warningThreshold = formatBalanceDisplay(context.warningThresholdWei);
-  const subject = `[WARNING] ChainBank treasury below warning threshold (${context.chainDisplayName})`;
+  const label = context.treasuryKind === 'operational' ? 'Private' : 'Public';
+  const subject = `[WARNING] ChainBank ${label} treasury below warning threshold (${context.chainDisplayName})`;
 
   const text = [
-    'ChainBank treasury balance is below the configured warning threshold.',
+    `ChainBank ${label} treasury balance is below the configured warning threshold.`,
     '',
     `Environment:          ${context.environment}`,
     `Chain:                ${context.chainDisplayName}`,
-    `Treasury:             ${context.treasuryAddressDisplay}`,
+    `${label} treasury:      ${context.treasuryAddressDisplay}`,
     `Observed balance:     ${observedBalance}`,
     `Warning threshold:    ${warningThreshold}`,
-    `Recommended action:   ${RECOMMENDED_ACTION}`,
+    `Recommended action:   ${recommendedAction(context.treasuryKind)}`,
     `Dashboard:            ${context.dashboardBaseUrl}`,
   ].join('\n');
 
@@ -44,10 +55,10 @@ export function renderTreasuryWarningEmail(context: TreasuryWarningEmailContext)
     [
       htmlRow('Environment', context.environment),
       htmlRow('Chain', context.chainDisplayName),
-      htmlRow('Treasury', context.treasuryAddressDisplay),
+      htmlRow(`${label} treasury`, context.treasuryAddressDisplay),
       htmlRow('Observed balance', observedBalance),
       htmlRow('Warning threshold', warningThreshold),
-      htmlRow('Recommended action', RECOMMENDED_ACTION),
+      htmlRow('Recommended action', recommendedAction(context.treasuryKind)),
     ].join(''),
     context.dashboardBaseUrl,
   );

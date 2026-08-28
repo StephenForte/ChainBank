@@ -48,10 +48,10 @@ describe.skipIf(!integrationEnabled)('funding transaction repository list', () =
 
     const confirmed = page.items.find((item) => item.status === 'confirmed');
     expect(confirmed).toBeDefined();
-    expect(confirmed?.project.id).toBe(seed.projectId);
-    expect(confirmed?.environment.id).toBe(seed.environmentId);
-    expect(confirmed?.wallet.id).toBe(seed.managedWalletId);
-    expect(confirmed?.wallet.role).toBe('signer');
+    expect(confirmed?.project?.id).toBe(seed.projectId);
+    expect(confirmed?.environment?.id).toBe(seed.environmentId);
+    expect(confirmed?.wallet?.id).toBe(seed.managedWalletId);
+    expect(confirmed?.wallet?.role).toBe('signer');
     expect(confirmed?.operation.requestedBy).toBe('cred-confirmed');
     expect(confirmed?.chain.explorerBaseUrl).toBe('https://sepolia.etherscan.io');
   });

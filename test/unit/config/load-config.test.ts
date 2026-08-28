@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { generatePrivateKey } from 'viem/accounts';
-import { getTreasuryPrivateKey, loadConfig } from '../../../src/config/index.js';
+import {
+  getOperationalTreasuryPrivateKey,
+  getTreasuryPrivateKey,
+  loadConfig,
+} from '../../../src/config/index.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
 import { validMonitorEnv, validWebEnv } from '../../support/env.js';
@@ -267,5 +271,104 @@ describe('loadConfig', () => {
       env: validMonitorEnv({ DATABASE_POOL_MAX: '1' }),
     });
     expect(monitor.database.poolMax).toBe(1);
+  });
+
+  const OPERATIONAL_ADDRESS = '0x0000000000000000000000000000000000000001';
+
+  function twoTierVars(
+    overrides: Record<string, string | undefined> = {},
+  ): Record<string, string | undefined> {
+    return {
+      TREASURY_OPERATIONAL_ADDRESS: OPERATIONAL_ADDRESS,
+      TREASURY_OPERATIONAL_WARNING_BALANCE_ETH: '0.2',
+      TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH: '0.1',
+      TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH: '0.4',
+      TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH: '0.05',
+      TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH: '0.15',
+      TREASURY_OPERATIONAL_TARGET_BALANCE_ETH: '0.3',
+      TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH: '0.2',
+      ...overrides,
+    };
+  }
+
+  it('stays in the single-treasury hatch when the operational address is unset or empty', () => {
+    const unset = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(unset.operationalTreasury).toBeUndefined();
+
+    const empty = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({ TREASURY_OPERATIONAL_ADDRESS: '' }),
+    });
+    expect(empty.operationalTreasury).toBeUndefined();
+  });
+
+  it('requires operational policy and threshold ETH when the operational address is set', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({ TREASURY_OPERATIONAL_ADDRESS: OPERATIONAL_ADDRESS }),
+      }),
+    ).toThrow(ChainBankError);
+  });
+
+  it('rejects an operational address that matches the public treasury', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv(
+          twoTierVars({
+            TREASURY_OPERATIONAL_ADDRESS: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+          }),
+        ),
+      }),
+    ).toThrow(/must differ/);
+  });
+
+  it('loads two-tier operational config for web and requires the operational key when funding is armed', () => {
+    const operationalKey = generatePrivateKey();
+    const publicKey = generatePrivateKey();
+    expect(() =>
+      loadConfig({
+        serviceRole: 'web',
+        env: validWebEnv({
+          ...twoTierVars(),
+          FUNDING_ENABLED: 'true',
+          TREASURY_PRIVATE_KEY: publicKey,
+        }),
+      }),
+    ).toThrow(/TREASURY_OPERATIONAL_PRIVATE_KEY/);
+
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({
+        ...twoTierVars(),
+        FUNDING_ENABLED: 'true',
+        TREASURY_PRIVATE_KEY: publicKey,
+        TREASURY_OPERATIONAL_PRIVATE_KEY: operationalKey,
+      }),
+    });
+    expect(config.operationalTreasury?.address.toLowerCase()).toBe(OPERATIONAL_ADDRESS);
+    expect(getOperationalTreasuryPrivateKey(config)).toBe(operationalKey);
+    expect(Object.keys(config.funding)).not.toContain('operationalPrivateKey');
+  });
+
+  it('strips both treasury keys from the treasury-monitor even when they are injected', () => {
+    const publicKey = generatePrivateKey();
+    const operationalKey = generatePrivateKey();
+    const config = loadConfig({
+      serviceRole: 'treasury-monitor',
+      env: validMonitorEnv({
+        ...twoTierVars(),
+        FUNDING_ENABLED: 'true',
+        TREASURY_PRIVATE_KEY: publicKey,
+        TREASURY_OPERATIONAL_PRIVATE_KEY: operationalKey,
+      }),
+    });
+
+    expect(config.isFundingEnabled).toBe(false);
+    expect(getTreasuryPrivateKey(config)).toBeUndefined();
+    expect(getOperationalTreasuryPrivateKey(config)).toBeUndefined();
+    expect(JSON.stringify(config.funding)).not.toContain(publicKey);
+    expect(JSON.stringify(config.funding)).not.toContain(operationalKey);
   });
 });
