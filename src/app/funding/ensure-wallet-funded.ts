@@ -33,6 +33,7 @@ import {
   provisionalTopUpAmountWei,
   type DispatchFundingResult,
 } from './dispatch-funding.js';
+import { replenishOperationalPrelude } from './replenish-operational-prelude.js';
 import { trackTransaction } from './track-transaction.js';
 
 export type EnsureFundedStatus = 'no-op' | 'funded' | 'pending' | 'blocked' | 'failed';
@@ -53,6 +54,8 @@ export interface EnsureWalletFundedDependencies {
   readonly signer: TreasurySigner | undefined;
   /** C25. When omitted, {@link signer} is used for every treasury. */
   readonly getSignerForTreasury?: (treasury: Treasury) => TreasurySigner;
+  /** Public-treasury signer for the D14 replenish prelude. */
+  readonly externalSigner?: TreasurySigner;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -124,6 +127,23 @@ export async function ensureWalletFunded(
 
     // Fail closed before any RPC or signer construction path.
     assertFundingArmed(dependencies);
+
+    if (dependencies.externalSigner !== undefined) {
+      await replenishOperationalPrelude(
+        {
+          ...dependencies,
+          externalSigner: dependencies.externalSigner,
+        },
+        {
+          evmChainId: wallet.chain.chainId,
+          role: input.role,
+          credentialId: input.credentialId,
+          correlationId: input.correlationId,
+          sourceIp: input.sourceIp,
+          idempotencyKey: `ensure-funded:${wallet.id}:${input.idempotencyKey}`,
+        },
+      );
+    }
 
     const treasury = await resolveTreasuryForWallet(dependencies, wallet);
     const walletReading = await dependencies.balanceReader.readBalance(wallet.addressDisplay);

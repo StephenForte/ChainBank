@@ -932,6 +932,82 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     expect(stores.txsById.get(unknown.id)?.status).toBe('submission_unknown');
     expect(scanner.findByNonceCalls[0]?.lookbackBlocks).toBe(100n);
   });
+
+  it('settles replenish submission_unknown when the transfer matches the operational treasury', async () => {
+    const stores = createInMemoryFundingStores();
+    const operationalAddress = '0x3333333333333333333333333333333333333333';
+    const amountWei = ONE_ETH / 2n;
+    const unknown: FundingTransaction = {
+      id: 'tx-replenish-unknown',
+      operationId: 'op-replenish-unknown',
+      treasuryId: 'treasury-1',
+      managedWalletId: undefined,
+      destinationTreasuryId: 'treasury-operational',
+      transactionHash: undefined,
+      nonce: 5,
+      amountWei,
+      status: 'submission_unknown',
+      errorCode: 'RPC_UNAVAILABLE',
+      submittedAt: undefined,
+      confirmedAt: undefined,
+      createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    };
+    stores.txsById.set(unknown.id, unknown);
+    await stores.operations.insertPending({
+      id: unknown.operationId,
+      operationType: 'replenish_operational',
+      projectId: undefined,
+      environmentId: undefined,
+      idempotencyKey: undefined,
+      requestedBy: 'cron-cred',
+      startedAt: unknown.createdAt,
+    });
+
+    const hash = `0x${'aa'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      confirmedNonce: 6,
+      findByNonce: () => ({
+        kind: 'found',
+        transfer: {
+          transactionHash: hash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: operationalAddress,
+          valueWei: amountWei,
+          nonce: 5,
+          blockNumber: 100n,
+        },
+      }),
+      latestBlockNumber: 1_000n,
+    });
+    const deps = buildDeps(stores, [], buildTreasury(), {
+      outgoingScanner: scanner,
+      outgoingLookbackBlocks: 100n,
+    });
+    deps.treasuries.findById = vi.fn((id: string) =>
+      Promise.resolve(
+        id === 'treasury-operational'
+          ? buildTreasury({
+              id: 'treasury-operational',
+              kind: 'operational',
+              address: operationalAddress.toLowerCase(),
+              addressDisplay: operationalAddress,
+            })
+          : undefined,
+      ),
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-replenish-unknown',
+      runId: 'run-replenish-unknown',
+    });
+
+    expect(result.submissionUnknownResolved).toBe(1);
+    expect(result.submissionUnknownLeftPending).toBe(0);
+    expect(stores.txsById.get(unknown.id)?.status).toBe('confirmed');
+    expect(stores.txsById.get(unknown.id)?.transactionHash).toBe(hash);
+  });
 });
 
 describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {

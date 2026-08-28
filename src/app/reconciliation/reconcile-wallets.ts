@@ -1247,21 +1247,17 @@ async function settleSubmissionUnknownRow(
     };
   }
 
-  if (row.managedWalletId === undefined) {
+  const destinationAddress = await resolveSubmissionUnknownDestination(dependencies, row);
+  if (destinationAddress === undefined) {
     return {
       kind: 'pending',
-      reason: 'submission_unknown row has no managed wallet (inter-treasury transfer)',
+      reason: 'submission_unknown row has no resolvable destination',
     };
-  }
-
-  const wallet = await dependencies.managedWallets.findById(row.managedWalletId);
-  if (wallet === undefined) {
-    return { kind: 'pending', reason: 'managed wallet for submission_unknown row was not found' };
   }
 
   const isOurs = isMatchingSubmissionTransfer({
     transfer: found.transfer,
-    walletAddress: wallet.address,
+    walletAddress: destinationAddress,
     amountWei: row.amountWei,
   });
 
@@ -1305,6 +1301,21 @@ async function settleSubmissionUnknownRow(
   );
 
   return { kind: 'resolved' };
+}
+
+async function resolveSubmissionUnknownDestination(
+  dependencies: ReconcileWalletsDependencies,
+  row: FundingTransaction,
+): Promise<string | undefined> {
+  if (row.destinationTreasuryId !== undefined) {
+    const destination = await dependencies.treasuries.findById(row.destinationTreasuryId);
+    return destination?.address;
+  }
+  if (row.managedWalletId === undefined) {
+    return undefined;
+  }
+  const wallet = await dependencies.managedWallets.findById(row.managedWalletId);
+  return wallet?.address;
 }
 
 function isTerminalOp(status: string): boolean {

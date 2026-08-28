@@ -548,6 +548,9 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
                   container.treasurySigners,
                 ),
               }),
+          ...(container.externalTreasurySigner === undefined
+            ? {}
+            : { externalSigner: container.externalTreasurySigner }),
           clock: container.clock,
           idGenerator: container.idGenerator,
           logger: container.logger,

@@ -1,4 +1,5 @@
 import type { Role } from '../../domain/auth/roles.js';
+import { isChainBankError } from '../../domain/errors.js';
 import { resolveOperationalTreasury } from '../../domain/treasury/resolve-treasury.js';
 import type { Logger } from '../../observability/logger.js';
 import type { TreasuryRepository } from '../ports.js';
@@ -11,7 +12,9 @@ import {
  * When a Private treasury is configured, refill it from Public before wallet
  * funding (D14). Legacy single-treasury mode is a no-op.
  *
- * Failures propagate — a dry Private pile must not look like wallet readiness.
+ * A dry Private pile that cannot be served must still fail later wallet
+ * funding. An already-in-flight replenish must not abort wallet work — Private
+ * may already have spendable balance.
  */
 export async function replenishOperationalPrelude(
   dependencies: EnsureOperationalTreasuryFundedDependencies & {
@@ -33,23 +36,38 @@ export async function replenishOperationalPrelude(
     return;
   }
 
-  const result = await ensureOperationalTreasuryFunded(dependencies, {
-    operationalTreasuryId: resolution.treasury.id,
-    idempotencyKey: input.idempotencyKey,
-    role: input.role,
-    credentialId: input.credentialId,
-    correlationId: input.correlationId,
-    sourceIp: input.sourceIp,
-  });
-
-  dependencies.logger.info(
-    {
-      correlationId: input.correlationId,
+  try {
+    const result = await ensureOperationalTreasuryFunded(dependencies, {
       operationalTreasuryId: resolution.treasury.id,
-      status: result.status,
-      operationId: result.operationId,
-      reasonCode: result.reasonCode,
-    },
-    'Operational treasury replenish prelude completed',
-  );
+      idempotencyKey: input.idempotencyKey,
+      role: input.role,
+      credentialId: input.credentialId,
+      correlationId: input.correlationId,
+      sourceIp: input.sourceIp,
+    });
+
+    dependencies.logger.info(
+      {
+        correlationId: input.correlationId,
+        operationalTreasuryId: resolution.treasury.id,
+        status: result.status,
+        operationId: result.operationId,
+        reasonCode: result.reasonCode,
+      },
+      'Operational treasury replenish prelude completed',
+    );
+  } catch (error) {
+    if (isChainBankError(error) && error.code === 'PENDING_FUNDING_EXISTS') {
+      dependencies.logger.info(
+        {
+          correlationId: input.correlationId,
+          operationalTreasuryId: resolution.treasury.id,
+          errorCode: error.code,
+        },
+        'Operational treasury replenish already in flight; continuing wallet funding',
+      );
+      return;
+    }
+    throw error;
+  }
 }

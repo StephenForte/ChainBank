@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ensureOperationalTreasuryFunded } from '../../../../src/app/funding/ensure-operational-treasury-funded.js';
+import { replenishOperationalPrelude } from '../../../../src/app/funding/replenish-operational-prelude.js';
 import type {
   AlertRepository,
   AuditEventRepository,
@@ -255,5 +256,45 @@ describe('ensureOperationalTreasuryFunded', () => {
         sourceIp: '127.0.0.1',
       }),
     ).rejects.toMatchObject({ code: 'SIGNER_UNAVAILABLE' } satisfies Partial<ChainBankError>);
+  });
+});
+
+describe('replenishOperationalPrelude', () => {
+  it('swallows PENDING_FUNDING_EXISTS so wallet funding can continue', async () => {
+    const { dependencies } = buildDeps();
+    await dependencies.operations.insertPending({
+      id: 'prior-replenish-op',
+      operationType: 'replenish_operational',
+      projectId: undefined,
+      environmentId: undefined,
+      idempotencyKey: undefined,
+      requestedBy: 'other',
+      startedAt: now,
+    });
+    await dependencies.transactions.insertCreated({
+      id: 'prior-replenish-tx',
+      operationId: 'prior-replenish-op',
+      treasuryId: 'treasury-external',
+      managedWalletId: undefined,
+      destinationTreasuryId: 'treasury-operational',
+      amountWei: ONE_ETH,
+      createdAt: now,
+    });
+    await dependencies.transactions.markSubmitted('prior-replenish-tx', {
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      nonce: 1,
+      submittedAt: now,
+    });
+
+    await expect(
+      replenishOperationalPrelude(dependencies, {
+        evmChainId: 11_155_111,
+        role: 'operator',
+        credentialId: 'cred-operator',
+        correlationId: 'corr-prelude',
+        sourceIp: '127.0.0.1',
+        idempotencyKey: 'ensure-ready:wallet-1:idem-1',
+      }),
+    ).resolves.toBeUndefined();
   });
 });
