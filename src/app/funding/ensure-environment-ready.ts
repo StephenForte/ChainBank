@@ -133,22 +133,24 @@ export async function ensureEnvironmentReady(
   const wallets = await listAllEnabledWallets(dependencies.managedWallets, environment.id);
   const fundWallet = dependencies.fundWallet ?? ensureWalletFunded;
 
-  const preludeChainId = wallets[0]?.chain.chainId;
-  if (preludeChainId !== undefined && dependencies.externalSigner !== undefined) {
-    await replenishOperationalPrelude(
-      {
-        ...dependencies,
-        externalSigner: dependencies.externalSigner,
-      },
-      {
-        evmChainId: preludeChainId,
-        role: input.role,
-        credentialId: input.credentialId,
-        correlationId: input.correlationId,
-        sourceIp: input.sourceIp,
-        idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}`,
-      },
-    );
+  if (dependencies.externalSigner !== undefined) {
+    const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
+    for (const evmChainId of chainIds) {
+      await replenishOperationalPrelude(
+        {
+          ...dependencies,
+          externalSigner: dependencies.externalSigner,
+        },
+        {
+          evmChainId,
+          role: input.role,
+          credentialId: input.credentialId,
+          correlationId: input.correlationId,
+          sourceIp: input.sourceIp,
+          idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}:chain:${String(evmChainId)}`,
+        },
+      );
+    }
   }
 
   const walletResults: EnsureReadyWalletResult[] = [];

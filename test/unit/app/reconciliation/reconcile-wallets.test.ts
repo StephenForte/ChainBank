@@ -1,6 +1,19 @@
 import { Writable } from 'node:stream';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reconcileWallets } from '../../../../src/app/reconciliation/reconcile-wallets.js';
+
+const replenishPrelude = vi.hoisted(() => ({
+  replenishOperationalPrelude: vi.fn<
+    (
+      dependencies: unknown,
+      input: { readonly evmChainId: number; readonly idempotencyKey: string },
+    ) => Promise<void>
+  >(() => Promise.resolve()),
+}));
+
+vi.mock('../../../../src/app/funding/replenish-operational-prelude.js', () => ({
+  replenishOperationalPrelude: replenishPrelude.replenishOperationalPrelude,
+}));
 import type {
   AlertRepository,
   AuditEventRepository,
@@ -1222,6 +1235,119 @@ describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {
       scannedAt: now,
     });
     expect(second.outgoingScanStatus).toBe('complete');
+  });
+});
+
+describe('reconcileWallets replenish prelude and C23 findings (P6-PREP-3)', () => {
+  const BASE_SEPOLIA_CHAIN_ID = 84_532;
+
+  beforeEach(() => {
+    replenishPrelude.replenishOperationalPrelude.mockReset();
+    replenishPrelude.replenishOperationalPrelude.mockResolvedValue(undefined);
+  });
+
+  it('uses a chain-scoped prelude key for each unique wallet chain', async () => {
+    const sepolia = buildWallet('w-sepolia', WALLET_A);
+    const other = buildWallet('w-84532', WALLET_B, {
+      chain: {
+        id: 'chain-84532',
+        slug: 'fixture-84532',
+        chainId: BASE_SEPOLIA_CHAIN_ID,
+        displayName: 'Fixture 84532',
+        nativeSymbol: 'ETH',
+        explorerBaseUrl: 'https://sepolia.etherscan.io',
+      },
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = {
+      ...buildDeps(stores, [sepolia, other], buildTreasury()),
+      externalSigner: createFakeSigner({}),
+    };
+
+    await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-prelude-keys',
+      runId: 'run-two-chains',
+    });
+
+    const keys = replenishPrelude.replenishOperationalPrelude.mock.calls.map(([, input]) => ({
+      evmChainId: input.evmChainId,
+      idempotencyKey: input.idempotencyKey,
+    }));
+    expect(keys).toEqual([
+      { evmChainId: 11_155_111, idempotencyKey: 'reconcile:run-two-chains:chain:11155111' },
+      { evmChainId: BASE_SEPOLIA_CHAIN_ID, idempotencyKey: 'reconcile:run-two-chains:chain:84532' },
+    ]);
+  });
+
+  it('does not treat two-tier (one external + one operational) as ambiguous', async () => {
+    const wallet = buildWallet('w-below', WALLET_A);
+    const external = buildTreasury({ id: 'treasury-external' });
+    const operational = buildTreasury({
+      id: 'treasury-operational',
+      address: '0x3333333333333333333333333333333333333333'.toLowerCase(),
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+      kind: 'operational',
+      policy: {
+        minimumBalanceWei: ONE_ETH,
+        targetBalanceWei: 2n * ONE_ETH,
+        maximumTopUpWei: 5n * ONE_ETH,
+      },
+    });
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: operational.addressDisplay });
+    const deps = buildDeps(stores, [wallet], operational, {
+      signer,
+      balanceReader: createFakeBalanceReader({
+        balances: {
+          [TREASURY_ADDRESS]: 20n * ONE_ETH,
+          [operational.addressDisplay]: 20n * ONE_ETH,
+          [WALLET_A]: ONE_ETH / 10n,
+        },
+      }),
+    });
+    deps.treasuries.listEnabled = () => Promise.resolve([external, operational]);
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-two-tier',
+      runId: 'run-two-tier',
+    });
+
+    expect(
+      result.findings.filter(
+        (finding) => finding.kind === 'wallet_assessment_failed' && finding.reason.includes('Ambiguous'),
+      ),
+    ).toEqual([]);
+    expect(result.counters.funded).toBe(1);
+    expect(signer.sendCalls).toBe(1);
+  });
+
+  it('uses the C23 per-kind message when two enabled treasuries share a kind', async () => {
+    const wallet = buildWallet('w-1', WALLET_A);
+    const first = buildTreasury({ id: 'treasury-ext-1' });
+    const second = buildTreasury({
+      id: 'treasury-ext-2',
+      address: '0x4444444444444444444444444444444444444444'.toLowerCase(),
+      addressDisplay: '0x4444444444444444444444444444444444444444',
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(stores, [wallet], first);
+    deps.treasuries.listEnabled = () => Promise.resolve([first, second]);
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-ambiguous-kind',
+      runId: 'run-ambiguous-kind',
+    });
+
+    const assessment = result.findings.find((finding) => finding.kind === 'wallet_assessment_failed');
+    expect(assessment?.reason).toContain('Ambiguous external treasury configuration for chain 11155111');
+    expect(assessment?.reason).toContain('2 enabled rows');
+    expect(result.counters.failed).toBe(1);
   });
 });
 

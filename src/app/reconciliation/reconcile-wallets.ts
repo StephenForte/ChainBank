@@ -271,7 +271,7 @@ export async function reconcileWallets(
             credentialId: input.credentialId,
             correlationId: input.correlationId,
             sourceIp: undefined,
-            idempotencyKey: `reconcile:${runId}`,
+            idempotencyKey: `reconcile:${runId}:chain:${String(evmChainId)}`,
           },
         );
       }
@@ -281,10 +281,7 @@ export async function reconcileWallets(
       const treasury = resolveTreasuryForWallet(treasuries, wallet);
       if (treasury === undefined) {
         counters = addSweepOutcome(counters, 'failed');
-        const reason =
-          treasuries.filter((row) => row.chain.chainId === wallet.chain.chainId).length > 1
-            ? `Ambiguous treasury configuration for chain ${String(wallet.chain.chainId)}`
-            : `No enabled treasury for chain ${String(wallet.chain.chainId)}`;
+        const reason = treasuryResolutionFailureReason(treasuries, wallet);
         findings.push({
           kind: 'wallet_assessment_failed',
           severity: 'warning',
@@ -719,6 +716,15 @@ function resolveTreasuryForWallet(
 ): Treasury | undefined {
   const resolution = resolveFundingTreasury(treasuries, wallet.chain.chainId);
   return resolution.kind === 'ok' ? resolution.treasury : undefined;
+}
+
+/** C23 per-kind (or hatch) message — never a raw enabled-row count. */
+function treasuryResolutionFailureReason(treasuries: readonly Treasury[], wallet: ManagedWallet): string {
+  const resolution = resolveFundingTreasury(treasuries, wallet.chain.chainId);
+  if (resolution.kind === 'error') {
+    return resolution.error.message;
+  }
+  return `No enabled treasury is registered for chain ${String(wallet.chain.chainId)}`;
 }
 
 interface SweepWalletAttribution {
