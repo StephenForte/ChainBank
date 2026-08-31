@@ -121,8 +121,9 @@ export const treasuries = pgTable(
 
     /**
      * D11 / C23. Existing rows backfill to `external` (migration 0009).
-     * Application enforces one enabled row per (chain, kind); disabled
-     * historical rows remain for C12 disable-then-rotate.
+     * Partial unique `treasuries_one_enabled_kind_per_chain` enforces one
+     * enabled row per (chain, kind); disabled historical rows remain for
+     * C12 disable-then-rotate. A full unique on (chain_id, kind) is forbidden.
      */
     kind: treasuryKindEnum('kind').notNull().default('external'),
 
@@ -130,7 +131,16 @@ export const treasuries = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex('treasuries_chain_address_key').on(table.chainId, table.address)],
+  (table) => [
+    uniqueIndex('treasuries_chain_address_key').on(table.chainId, table.address),
+    /**
+     * C23: at most one enabled row per (chain, kind). Partial — disabled
+     * rows of the same kind stay legal so C12 rotation can disable-then-insert.
+     */
+    uniqueIndex('treasuries_one_enabled_kind_per_chain')
+      .on(table.chainId, table.kind)
+      .where(sql`${table.enabled} = true`),
+  ],
 );
 
 /**

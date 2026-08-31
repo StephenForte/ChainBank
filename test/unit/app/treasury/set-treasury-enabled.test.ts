@@ -42,7 +42,7 @@ function buildRepository(overrides: Partial<TreasuryRepository> = {}): TreasuryR
   return {
     upsert: vi.fn(),
     findById: vi.fn(() => Promise.resolve(treasury)),
-    listEnabled: vi.fn(),
+    listEnabled: vi.fn(() => Promise.resolve(treasury.enabled ? [treasury] : [])),
     setEnabled: vi.fn((_id: string, enabled: boolean) =>
       Promise.resolve({ ...treasury, enabled, lastCheckedAt: now }),
     ),
@@ -108,6 +108,7 @@ describe('setTreasuryEnabled authorization', () => {
     const disabled = { ...treasury, enabled: false };
     const treasuries = buildRepository({
       findById: vi.fn(() => Promise.resolve(disabled)),
+      listEnabled: vi.fn(() => Promise.resolve([])),
       setEnabled: vi.fn((_id: string, enabled: boolean) => Promise.resolve({ ...disabled, enabled })),
     });
     const auditEvents = buildAuditEvents();
@@ -167,6 +168,7 @@ describe('setTreasuryEnabled audit and errors', () => {
     const disabled = { ...treasury, enabled: false };
     const treasuries = buildRepository({
       findById: vi.fn(() => Promise.resolve(disabled)),
+      listEnabled: vi.fn(() => Promise.resolve([])),
       setEnabled: vi.fn(() => Promise.resolve({ ...disabled, enabled: true })),
     });
     const auditEvents = buildAuditEvents();
@@ -237,6 +239,142 @@ describe('setTreasuryEnabled audit and errors', () => {
     ).resolves.toMatchObject({ enabled: false });
 
     expect(treasuries.setEnabled).toHaveBeenCalledWith(treasury.id, false);
+  });
+
+  it('refuses enabling a second external of the same chain before the write', async () => {
+    const retired = {
+      ...treasury,
+      id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      address: '0x2222222222222222222222222222222222222222',
+      addressDisplay: '0x2222222222222222222222222222222222222222',
+      enabled: false,
+    };
+    const live = treasury;
+    const treasuries = buildRepository({
+      findById: vi.fn(() => Promise.resolve(retired)),
+      listEnabled: vi.fn(() => Promise.resolve([live])),
+    });
+    const auditEvents = buildAuditEvents();
+
+    await expect(
+      setTreasuryEnabled(
+        { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
+        {
+          role: 'operator',
+          treasuryId: retired.id,
+          enabled: true,
+          operationId: 'req-second-external',
+          actorId: 'cred-1',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'INVALID_CONFIGURATION',
+      publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+    });
+
+    expect(treasuries.setEnabled).not.toHaveBeenCalled();
+    expect(auditEvents.record).not.toHaveBeenCalled();
+    expect(live.enabled).toBe(true);
+  });
+
+  it('refuses enabling a second operational of the same chain before the write', async () => {
+    const liveOperational = { ...treasury, kind: 'operational' as const, enabled: true };
+    const retiredOperational = {
+      ...treasury,
+      id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+      address: '0x3333333333333333333333333333333333333333',
+      addressDisplay: '0x3333333333333333333333333333333333333333',
+      kind: 'operational' as const,
+      enabled: false,
+    };
+    const treasuries = buildRepository({
+      findById: vi.fn(() => Promise.resolve(retiredOperational)),
+      listEnabled: vi.fn(() => Promise.resolve([liveOperational])),
+    });
+
+    await expect(
+      setTreasuryEnabled(
+        {
+          operatorMutations: createInlineOperatorMutations({
+            treasuries,
+            auditEvents: buildAuditEvents(),
+          }),
+        },
+        {
+          role: 'operator',
+          treasuryId: retiredOperational.id,
+          enabled: true,
+          operationId: 'req-second-operational',
+          actorId: 'cred-1',
+          sourceIp: undefined,
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_CONFIGURATION' });
+
+    expect(treasuries.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it('allows enabling an operational while an external is already enabled on the same chain', async () => {
+    const disabledOperational = {
+      ...treasury,
+      id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      address: '0x4444444444444444444444444444444444444444',
+      addressDisplay: '0x4444444444444444444444444444444444444444',
+      kind: 'operational' as const,
+      enabled: false,
+    };
+    const treasuries = buildRepository({
+      findById: vi.fn(() => Promise.resolve(disabledOperational)),
+      listEnabled: vi.fn(() => Promise.resolve([treasury])),
+      setEnabled: vi.fn((_id: string, enabled: boolean) =>
+        Promise.resolve({ ...disabledOperational, enabled }),
+      ),
+    });
+
+    await expect(
+      setTreasuryEnabled(
+        {
+          operatorMutations: createInlineOperatorMutations({
+            treasuries,
+            auditEvents: buildAuditEvents(),
+          }),
+        },
+        {
+          role: 'operator',
+          treasuryId: disabledOperational.id,
+          enabled: true,
+          operationId: 'req-two-tier',
+          actorId: 'cred-1',
+          sourceIp: undefined,
+        },
+      ),
+    ).resolves.toMatchObject({ enabled: true, kind: 'operational' });
+
+    expect(treasuries.setEnabled).toHaveBeenCalledWith(disabledOperational.id, true);
+  });
+
+  it('treats re-enabling the same already-enabled row as a no-op success', async () => {
+    const treasuries = buildRepository({
+      listEnabled: vi.fn(() => Promise.resolve([treasury])),
+    });
+    const auditEvents = buildAuditEvents();
+
+    const updated = await setTreasuryEnabled(
+      { operatorMutations: createInlineOperatorMutations({ treasuries, auditEvents }) },
+      {
+        role: 'operator',
+        treasuryId: treasury.id,
+        enabled: true,
+        operationId: 'req-noop',
+        actorId: 'cred-1',
+        sourceIp: undefined,
+      },
+    );
+
+    expect(updated.enabled).toBe(true);
+    expect(treasuries.listEnabled).not.toHaveBeenCalled();
+    expect(treasuries.setEnabled).toHaveBeenCalledWith(treasury.id, true);
   });
 
   it('throws ChainBankError rather than a generic Error on unknown id', async () => {

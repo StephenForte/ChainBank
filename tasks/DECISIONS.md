@@ -1381,9 +1381,15 @@ Local design choices (Phase 9, 2026-08-27):
 - **Policy storage:** 1:1 `treasury_funding_policies` on the operational
   treasury (`minimum_balance_wei`, `target_balance_wei`, `maximum_top_up_wei`).
   External rows have no policy row — humans fill them.
-- **No unique on `(chain_id, kind)`:** disabled historical rows must remain
-  (C12 disable-then-rotate). Application enforces one _enabled_ row per kind.
+- **Full unique on `(chain_id, kind)` is still forbidden:** it would block
+  C12 disable-then-rotate because the retired row still has the same kind.
+  **Partial unique `WHERE enabled = true` is mandatory** (migration `0010`,
+  `treasuries_one_enabled_kind_per_chain`). The enable API fails closed with
+  `INVALID_CONFIGURATION` — the same error funding would have thrown —
+  before writing a second enabled row of that kind on the same EVM chain.
+  Disabled historical rows of the same kind remain legal.
 - **Migration `0009`.** Existing treasury rows backfill `kind = 'external'`.
+  **Migration `0010`** adds the partial unique index.
 
 ### C24 — Inter-treasury replenish (owner: Phase 9)
 
@@ -1517,3 +1523,4 @@ Local design choices (Phase 9, 2026-08-27):
 - 2026-08-27 — **Phase 9 two-tier treasury.** D11 kinds (`external` / `operational`), D12 same-process dual keys, D13 existing `TREASURY_ADDRESS` stays Public, D14 replenish-first prelude. C23 resolution (per-kind ambiguity; legacy hatch), C24 `replenish_operational` + nullable destination on `funding_transactions` (migration `0009`), C25 dual signer with external hard-allowlist. C12 enable/disable API unchanged; its "one enabled treasury per chain" resolution rule is superseded by C23.
 - 2026-08-28 — **D15 / D16 / D17 (Phase 6 readiness).** Operator: skip Phase 5 (ERC-20) until a later need; Phase 6 is next and its adapter stays native-only (D15). C23 hatch remains and is process-global — no per-chain hatch/two-tier mix (D16, planner recommendation accepted). Phase 9 two-tier is live on Render as of operator attestation (D17); hosted exit criteria treated as met without a re-derived on-chain check in this session.
 - 2026-08-12 — **CB-04: Blueprint sync reverted an operator funding flip; funding gates moved to `sync: false`.** `render.yaml` declared `FUNDING_ENABLED` and `FUNDING_KILL_SWITCH` as literal `value: 'false'` on the signing-capable services, so every Blueprint sync reapplied them over the dashboard value — and Render re-syncs the whole Blueprint on any change to the file, on every service in it. Commit `1559dfe` (PR #99, "Declare FUNDING_HEALTH_TOKEN on the web Render service") therefore re-disabled `chainbank-wallet-reconciler`, which had `FUNDING_ENABLED=true` set only in the dashboard: last good run 2026-08-11 18:00 UTC (`exitKind: success`), `blueprint_sync` deploy `dep-d9todupchf5c73cp5f40` at 20:33, then three consecutive `policy-disabled` runs (00:00 / 06:00 / 12:00) until the operator re-enabled it by hand at 14:11. **Nothing alerted** — C15 classifies `FUNDING_DISABLED` as policy rather than failure (deliberately, so a week-long kill switch does not page twenty-eight times), so Render reported "run finished successfully" for ~18 h of no funding. `chainbank-web` was unaffected: it has logged `fundingEnabled: false` since Aug 7 by intent. Both gates are now `sync: false` on web + reconciler (keys still declared, so an incident edit is still one value; both default `false` in `src/config/schema.ts`, so unset fails closed), enforced by `test/unit/config/render-blueprint-thresholds.test.ts` and mutation-checked. `chainbank-treasury-monitor` keeps a literal `false` on purpose — it holds no key and reasserting the value each sync is desirable there. The dangerous direction is the inverse of what was observed: a literal would equally have cleared a kill switch set mid-incident, silently re-arming funding. Also closed a real gap in `disable-all-automated-funding.md`, which halted only `chainbank-web` and would have left the six-hourly reconciler signing with the treasury key.
+- 2026-08-31 — **P6-PREP-2 amended C23 in place:** a full unique on `(chain_id, kind)` remains forbidden (it would block C12 rotation); partial unique `treasuries_one_enabled_kind_per_chain` on `(chain_id, kind) WHERE enabled = true` is mandatory (migration `0010`). `setTreasuryEnabled` now refuses a second enabled row of the same kind on the same EVM chain with `INVALID_CONFIGURATION` — the same error funding would have thrown — before the write. Disabling stays unrestricted.
