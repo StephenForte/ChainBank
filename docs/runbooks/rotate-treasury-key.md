@@ -29,29 +29,24 @@ warning/critical/recovery/reserve numbers — use
 
 ## Critical behavior (read before changing env)
 
-1. **Bootstrap upsert conflict target is `(chain_id, address)`.** Changing
+1. **Happy path is disable-then-insert (C12).** Disable the retired **external**
+   row via the API **before** changing `TREASURY_ADDRESS` / redeploying. Boot
+   then upserts the new address as the sole enabled external row for that chain.
+   Do not rely on a temporary two-enabled-external window.
+2. **Bootstrap upsert conflict target is `(chain_id, address)`.** Changing
    `TREASURY_ADDRESS` inserts a **new** `treasuries` row. The old row keeps its
    history, observed balances, and alert entity id. Thresholds on the _matching_
    address row re-upsert from env on every boot
    (`registerConfiguredTreasury` + `onConflictDoUpdate`).
-2. **Ambiguity guard (C23).** While more than one enabled **external** treasury
+3. **Ambiguity guard (C23).** While more than one enabled **external** treasury
    exists for the same chain, funding refuses with `INVALID_CONFIGURATION` before
    any signer call. Two-tier deployments may still have one enabled external and
    one enabled operational row on the same chain — ambiguity is **per kind**, not
-   per chain. That turns an address-only config change into a loud refusal instead
-   of a silent spend from the old row.
-3. **`assertSignerMatchesTreasury`** additionally refuses to sign unless the
-   signer address (derived from `TREASURY_PRIVATE_KEY`) matches the _resolved_
-   external treasury row. After the retired row is disabled, funding resolves the
-   remaining external row and the signer must match that address.
-4. **Disable the retired row via the API** — never SQL in the happy path:
-
-```bash
-curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"enabled":false}' \
-  "$BASE/v1/treasuries/<retired-treasury-uuid>"
-```
+   per chain. `setTreasuryEnabled` also refuses enabling a second external row
+   while another is enabled (P6-PREP-2).
+4. **`assertSignerMatchesTreasury`** refuses to sign unless the signer address
+   (derived from `TREASURY_PRIVATE_KEY`) matches the resolved external treasury
+   row.
 
 ## Steps
 
@@ -98,38 +93,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
 export RETIRED_TREASURY_ID='…'
 ```
 
-5. In Render → **`chainbank-web`** → **Environment**:
-
-   - Set `TREASURY_ADDRESS` to the **new** checksummed or lowercase address.
-   - Set `TREASURY_PRIVATE_KEY` to the new `0x`-prefixed key (64 hex digits).
-   - Leave threshold env vars unchanged unless you intend a threshold change
-     ([`change-thresholds-safely.md`](./change-thresholds-safely.md)).
-   - Leave `TREASURY_OPERATIONAL_*` unchanged.
-
-6. In Render → **`chainbank-wallet-reconciler`** → **Environment**:
-
-   - Set `TREASURY_ADDRESS` to the **same** new address.
-   - Set `TREASURY_PRIVATE_KEY` to the **same** new key.
-   - Leave `TREASURY_OPERATIONAL_*` unchanged.
-
-7. In Render → **`chainbank-treasury-monitor`** → **Environment**:
-
-   - Set `TREASURY_ADDRESS` to the **same** new address.
-   - Confirm **`TREASURY_PRIVATE_KEY` is absent**.
-
-8. Redeploy **web**, **wallet-reconciler**, and **treasury-monitor** (Manual
-   Deploy). Web pre-deploy runs `npm run db:migrate:built`; boot runs
-   `registerConfiguredTreasury`, which inserts the new address row (or updates
-   thresholds if that address already existed).
-
-9. **Expect funding to refuse** until the retired external row is disabled. With
-   two enabled **external** rows for the chain, ensure-funded returns
-   `INVALID_CONFIGURATION` with the public message that treasury configuration is
-   ambiguous — that is the intended intermediate state, not a bug. One enabled
-   external plus one enabled operational row is normal in two-tier mode.
-
-10. **Disable the retired external treasury row** (soft-disable only; do not
-    delete):
+5. **Disable the retired external treasury row** (soft-disable only; do not
+   delete) **before** changing env or redeploying:
 
 ```bash
 curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
@@ -139,7 +104,32 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" \
 # Expect data.enabled == false and an audit row treasury.disabled.
 ```
 
-11. Confirm only the new Public address is listed among enabled external rows:
+6. In Render → **`chainbank-web`** → **Environment**:
+
+   - Set `TREASURY_ADDRESS` to the **new** checksummed or lowercase address.
+   - Set `TREASURY_PRIVATE_KEY` to the new `0x`-prefixed key (64 hex digits).
+   - Leave threshold env vars unchanged unless you intend a threshold change
+     ([`change-thresholds-safely.md`](./change-thresholds-safely.md)).
+   - Leave `TREASURY_OPERATIONAL_*` unchanged.
+
+7. In Render → **`chainbank-wallet-reconciler`** → **Environment**:
+
+   - Set `TREASURY_ADDRESS` to the **same** new address.
+   - Set `TREASURY_PRIVATE_KEY` to the **same** new key.
+   - Leave `TREASURY_OPERATIONAL_*` unchanged.
+
+8. In Render → **`chainbank-treasury-monitor`** → **Environment**:
+
+   - Set `TREASURY_ADDRESS` to the **same** new address.
+   - Confirm **`TREASURY_PRIVATE_KEY` is absent**.
+
+9. Redeploy **web**, **wallet-reconciler**, and **treasury-monitor** (Manual
+   Deploy). Web pre-deploy runs `npm run db:migrate:built`; boot runs
+   `registerConfiguredTreasury`, which inserts the new external address row as
+   the sole enabled external row for that chain (or updates thresholds if that
+   address already existed).
+
+10. Confirm only the new Public address is listed among enabled external rows:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
@@ -147,7 +137,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
 # An enabled operational row may still appear — that is expected in two-tier mode.
 ```
 
-12. Only after verification, clear the kill switch / re-enable funding per your
+11. Only after verification, clear the kill switch / re-enable funding per your
     change window (`FUNDING_KILL_SWITCH=false`, and `FUNDING_ENABLED=true` only
     when runbooks and policy allow). Redeploy **web** and **wallet-reconciler**
     again so each process picks up the env change.
@@ -158,9 +148,6 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
   external address is absent (disabled rows are not listed — `listEnabled`).
 - Monitor logs: `Treasury observation recorded` for the new `treasuryId` after a
   Trigger Run.
-- With two enabled **external** rows (before step 10), ensure-funded must return
-  `INVALID_CONFIGURATION` with the ambiguous-configuration public message — never
-  a successful submit from the old treasury.
 - After re-enable: a real ensure-funded against a below-minimum wallet either
   funds or returns an expected gate (`FUNDING_BLOCKED_RESERVE`, etc.), not
   `INVALID_CONFIGURATION`.
@@ -171,8 +158,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/treasuries" | jq
   (signer/treasury mismatch). Set `TREASURY_ADDRESS` to the address of the key
   you deployed, redeploy web + wallet-reconciler + monitor, then disable any stale
   enabled external row via `PATCH /v1/treasuries/:id`.
-- **Both env vars updated, old external row still enabled:** ambiguity guard
-  refuses funding. Complete step 10.
+- **Env changed before the old external row was disabled:** funding refuses with
+  `INVALID_CONFIGURATION` (ambiguous external configuration). Disable the retired
+  row (step 5), redeploy if needed, then continue from step 10.
 - **Need to revert to the old wallet:** set env back to the old address + old key
   (from your secret store), redeploy web + wallet-reconciler + monitor, then
   `PATCH` the old id with `{"enabled":true}` and the abandoned new id with
