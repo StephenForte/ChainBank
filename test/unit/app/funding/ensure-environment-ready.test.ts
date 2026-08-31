@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   aggregateOverallStatus,
   ensureEnvironmentReady,
@@ -15,12 +15,30 @@ import type {
   ManagedWalletRepository,
   Project,
   ProjectRepository,
+  Treasury,
 } from '../../../../src/app/ports.js';
 import type { Role } from '../../../../src/domain/auth/roles.js';
 import { ChainBankError } from '../../../../src/domain/errors.js';
 import { createLogger } from '../../../../src/observability/logger.js';
 import { createFixedClock } from '../../../support/clock.js';
-import { createFakeReceiptTracker, createFakeSigner } from '../../../support/funding-fakes.js';
+import {
+  createFakeReceiptTracker,
+  createFakeSigner,
+  createInMemoryFundingStores,
+} from '../../../support/funding-fakes.js';
+
+const replenishPrelude = vi.hoisted(() => ({
+  replenishOperationalPrelude: vi.fn<
+    (
+      dependencies: unknown,
+      input: { readonly evmChainId: number; readonly idempotencyKey: string },
+    ) => Promise<void>
+  >(() => Promise.resolve()),
+}));
+
+vi.mock('../../../../src/app/funding/replenish-operational-prelude.js', () => ({
+  replenishOperationalPrelude: replenishPrelude.replenishOperationalPrelude,
+}));
 
 const ONE_ETH = 10n ** 18n;
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
@@ -129,6 +147,8 @@ function buildDeps(options?: {
   readonly project?: Project | undefined;
   readonly wallets?: readonly ManagedWallet[];
   readonly fundWallet?: EnsureEnvironmentReadyDependencies['fundWallet'];
+  readonly externalSigner?: ReturnType<typeof createFakeSigner>;
+  readonly isFundingEnabled?: boolean;
 }): {
   readonly dependencies: EnsureEnvironmentReadyDependencies;
   readonly input: Parameters<typeof ensureEnvironmentReady>[1];
@@ -210,7 +230,8 @@ function buildDeps(options?: {
     clock: createFixedClock(now),
     idGenerator: { next: () => 'id-1' },
     logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
-    isFundingEnabled: true,
+    ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
+    isFundingEnabled: options?.isFundingEnabled ?? true,
     isFundingKillSwitchActive: false,
     confirmations: 1,
     confirmationTimeoutMs: 60_000,
@@ -484,6 +505,233 @@ describe('ensureEnvironmentReady', () => {
         });
         expect(fundWallet).not.toHaveBeenCalled();
       }
+    });
+  });
+
+  describe('replenish prelude (P6-PREP-3)', () => {
+    const BASE_SEPOLIA_CHAIN_ID = 84_532;
+    const EXTERNAL_ADDRESS = '0x1111111111111111111111111111111111111111';
+    const OPERATIONAL_ADDRESS = '0x3333333333333333333333333333333333333333';
+
+    beforeEach(() => {
+      replenishPrelude.replenishOperationalPrelude.mockReset();
+      replenishPrelude.replenishOperationalPrelude.mockResolvedValue(undefined);
+    });
+
+    function walletOnChain(chainId: number, overrides: Partial<ManagedWallet> = {}): ManagedWallet {
+      const wallet = buildWallet(overrides);
+      return {
+        ...wallet,
+        chain: {
+          ...wallet.chain,
+          id: `chain-${String(chainId)}`,
+          chainId,
+          slug: chainId === 11_155_111 ? 'sepolia' : 'fixture-84532',
+          displayName: chainId === 11_155_111 ? 'Sepolia' : 'Fixture 84532',
+        },
+      };
+    }
+
+    function preludeCalls(): readonly { evmChainId: number; idempotencyKey: string }[] {
+      return replenishPrelude.replenishOperationalPrelude.mock.calls.map(([, input]) => ({
+        evmChainId: input.evmChainId,
+        idempotencyKey: input.idempotencyKey,
+      }));
+    }
+
+    it('invokes prelude once per unique chain with a chain-scoped key', async () => {
+      const sepolia = walletOnChain(11_155_111, { id: WALLET_A });
+      const other = walletOnChain(BASE_SEPOLIA_CHAIN_ID, {
+        id: WALLET_B,
+        address: '0x3333333333333333333333333333333333333333',
+        addressDisplay: '0x3333333333333333333333333333333333333333',
+      });
+      const { dependencies, input } = buildDeps({
+        wallets: [sepolia, other],
+        externalSigner: createFakeSigner({}),
+      });
+
+      await ensureEnvironmentReady(dependencies, input);
+
+      expect(preludeCalls()).toEqual([
+        {
+          evmChainId: 11_155_111,
+          idempotencyKey: `ensure-ready:${ENV_ID}:env-ready-1:chain:11155111`,
+        },
+        {
+          evmChainId: BASE_SEPOLIA_CHAIN_ID,
+          idempotencyKey: `ensure-ready:${ENV_ID}:env-ready-1:chain:84532`,
+        },
+      ]);
+    });
+
+    it('invokes prelude once when two wallets share a chain', async () => {
+      const { dependencies, input } = buildDeps({
+        wallets: [
+          walletOnChain(11_155_111, { id: WALLET_A }),
+          walletOnChain(11_155_111, {
+            id: WALLET_B,
+            address: '0x3333333333333333333333333333333333333333',
+            addressDisplay: '0x3333333333333333333333333333333333333333',
+          }),
+        ],
+        externalSigner: createFakeSigner({}),
+      });
+
+      await ensureEnvironmentReady(dependencies, input);
+
+      expect(preludeCalls()).toEqual([
+        {
+          evmChainId: 11_155_111,
+          idempotencyKey: `ensure-ready:${ENV_ID}:env-ready-1:chain:11155111`,
+        },
+      ]);
+    });
+
+    it('does not run the prelude when the environment has no wallets', async () => {
+      const { dependencies, input } = buildDeps({
+        wallets: [],
+        externalSigner: createFakeSigner({}),
+      });
+
+      await ensureEnvironmentReady(dependencies, input);
+
+      expect(replenishPrelude.replenishOperationalPrelude).not.toHaveBeenCalled();
+    });
+
+    it('aborts the whole sweep when FUNDING_DISABLED is thrown from the prelude', async () => {
+      replenishPrelude.replenishOperationalPrelude.mockRejectedValue(
+        new ChainBankError('FUNDING_DISABLED', 'funding off', { publicMessage: 'Funding is disabled.' }),
+      );
+      const { dependencies, input, fundWallet } = buildDeps({
+        wallets: [buildWallet(), buildWallet({ id: WALLET_B })],
+        externalSigner: createFakeSigner({}),
+      });
+
+      await expect(ensureEnvironmentReady(dependencies, input)).rejects.toMatchObject({
+        code: 'FUNDING_DISABLED',
+      });
+      expect(fundWallet).not.toHaveBeenCalled();
+    });
+
+    it('replays the same ensure-ready key on the same chain instead of a second replenish', async () => {
+      const actual: {
+        readonly replenishOperationalPrelude: (
+          dependencies: unknown,
+          input: { readonly evmChainId: number; readonly idempotencyKey: string },
+        ) => Promise<void>;
+      } = await vi.importActual('../../../../src/app/funding/replenish-operational-prelude.js');
+      replenishPrelude.replenishOperationalPrelude.mockImplementation(actual.replenishOperationalPrelude);
+
+      const external: Treasury = {
+        id: 'treasury-external',
+        chain: {
+          id: 'chain-1',
+          slug: 'sepolia',
+          chainId: 11_155_111,
+          displayName: 'Sepolia',
+          nativeSymbol: 'ETH',
+          explorerBaseUrl: 'https://sepolia.etherscan.io',
+        },
+        address: EXTERNAL_ADDRESS.toLowerCase(),
+        addressDisplay: EXTERNAL_ADDRESS,
+        kind: 'external',
+        policy: undefined,
+        thresholds: {
+          warningBalanceWei: ONE_ETH,
+          criticalBalanceWei: ONE_ETH / 4n,
+          recoveryBalanceWei: 2n * ONE_ETH,
+          minimumReserveWei: ONE_ETH / 10n,
+        },
+        status: 'healthy',
+        lastObservedBalanceWei: 20n * ONE_ETH,
+        lastObservedAt: now,
+        lastCheckedAt: now,
+        lastCheckErrorCode: undefined,
+        lastOutgoingScanBlock: undefined,
+        lastOutgoingScanAt: undefined,
+        lastOutgoingScanNonce: undefined,
+        enabled: true,
+      };
+      const operational: Treasury = {
+        ...external,
+        id: 'treasury-operational',
+        address: OPERATIONAL_ADDRESS.toLowerCase(),
+        addressDisplay: OPERATIONAL_ADDRESS,
+        kind: 'operational',
+        policy: {
+          minimumBalanceWei: ONE_ETH,
+          targetBalanceWei: 2n * ONE_ETH,
+          maximumTopUpWei: 5n * ONE_ETH,
+        },
+      };
+      const stores = createInMemoryFundingStores();
+      const destinations: string[] = [];
+      const externalSigner = createFakeSigner({
+        address: EXTERNAL_ADDRESS,
+        send: (sendInput) => {
+          destinations.push(sendInput.to);
+          return Promise.resolve({ transactionHash: `0x${'ab'.repeat(32)}` });
+        },
+      });
+      const balances: Record<string, bigint> = {
+        [EXTERNAL_ADDRESS.toLowerCase()]: 20n * ONE_ETH,
+        [OPERATIONAL_ADDRESS.toLowerCase()]: ONE_ETH / 10n,
+      };
+      const { dependencies, input } = buildDeps({
+        wallets: [buildWallet()],
+        externalSigner,
+      });
+      const replayDeps: EnsureEnvironmentReadyDependencies = {
+        ...dependencies,
+        treasuries: {
+          ...dependencies.treasuries,
+          listEnabled: vi.fn(() => Promise.resolve([external, operational])),
+          findById: vi.fn((id: string) =>
+            Promise.resolve([external, operational].find((row) => row.id === id)),
+          ),
+        },
+        operations: stores.operations,
+        transactions: stores.transactions,
+        lock: stores.lock,
+        balanceReader: {
+          readBalance(address: string) {
+            const balanceWei = balances[address.toLowerCase()];
+            if (balanceWei === undefined) {
+              return Promise.resolve({
+                kind: 'unavailable' as const,
+                errorCode: 'RPC_UNAVAILABLE' as const,
+                reason: 'missing fixture balance',
+                observedAt: now,
+              });
+            }
+            return Promise.resolve({
+              kind: 'observed' as const,
+              balanceWei,
+              blockNumber: 1n,
+              observedAt: now,
+            });
+          },
+          verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11_155_111 })),
+        },
+        idGenerator: (() => {
+          let n = 0;
+          return { next: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` };
+        })(),
+      };
+
+      await ensureEnvironmentReady(replayDeps, input);
+      await ensureEnvironmentReady(replayDeps, input);
+
+      expect(destinations).toEqual([OPERATIONAL_ADDRESS]);
+      expect(externalSigner.sendCalls).toBe(1);
+      const replenishOps = [...stores.opsById.values()].filter(
+        (op) => op.operationType === 'replenish_operational',
+      );
+      expect(replenishOps).toHaveLength(1);
+      expect(replenishOps[0]?.idempotencyKey).toBe(
+        `replenish:treasury-operational:ensure-ready:${ENV_ID}:env-ready-1:chain:11155111`,
+      );
     });
   });
 });
