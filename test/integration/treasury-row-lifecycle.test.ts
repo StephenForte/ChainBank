@@ -6,7 +6,6 @@ import { generatePrivateKey } from 'viem/accounts';
 import { buildApp } from '../../src/api/app.js';
 import type { AppInstance } from '../../src/api/types.js';
 import { registerConfiguredTreasury } from '../../src/app/bootstrap/register-configured-treasury.js';
-import { ensureWalletFunded } from '../../src/app/funding/ensure-wallet-funded.js';
 import type { BalanceReader, TreasurySigner } from '../../src/app/ports.js';
 import { loadConfig } from '../../src/config/index.js';
 import type { Container } from '../../src/container.js';
@@ -175,12 +174,23 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
     await handle.close();
   });
 
-  it('walks the real rotation path: second row → refusal → disable retired → fund', async () => {
+  it('walks the C12 rotation path: disable retired → insert successor → fund', async () => {
     const treasuryRepo = createTreasuryRepository(handle.db);
     const chainRepo = createChainRepository(handle.db);
 
-    // Bootstrap upsert of a second address against a DB that already has one
-    // (seeded Phase 1 fixture). This is what changing TREASURY_ADDRESS does on boot.
+    // C23 / 0010: a second enabled row of the same kind cannot exist. Rotation
+    // is disable-then-insert, not insert-then-disable.
+    const disableResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/treasuries/${seed.treasuryId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { enabled: false },
+    });
+    expect(disableResponse.statusCode).toBe(200);
+    expect(disableResponse.json()).toMatchObject({
+      data: { id: seed.treasuryId, enabled: false },
+    });
+
     const newRow = await registerConfiguredTreasury(
       { chains: chainRepo, treasuries: treasuryRepo },
       {
@@ -204,67 +214,6 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
       },
     );
 
-    const enabled = await treasuryRepo.listEnabled();
-    expect(enabled).toHaveLength(2);
-    expect(enabled.map((row) => row.address).sort()).toEqual(
-      [OLD_TREASURY_ADDRESS.toLowerCase(), NEW_TREASURY_ADDRESS.toLowerCase()].sort(),
-    );
-
-    // With two enabled rows, ensure-funded must refuse before any signer call.
-    await expect(
-      ensureWalletFunded(
-        {
-          managedWallets: container.repositories.managedWallets,
-          treasuries: container.repositories.treasuries,
-          balanceObservations: container.repositories.balanceObservations,
-          balanceReader: container.balanceReader,
-          credentialScopes: container.repositories.credentialScopes,
-          auditEvents: container.repositories.auditEvents,
-          alerts: container.repositories.alerts,
-          emailSender: undefined,
-          operations: container.repositories.fundingOperations,
-          transactions: container.repositories.fundingTransactions,
-          lock: container.fundingDispatchLock,
-          receiptTracker: container.transactionReceiptTracker,
-          signer,
-          clock: container.clock,
-          idGenerator: container.idGenerator,
-          logger: container.logger,
-          isFundingEnabled: true,
-          isFundingKillSwitchActive: false,
-          confirmations: 1,
-          confirmationTimeoutMs: 1_000,
-          operatorRecipients: ['operator@example.com'],
-          dashboardBaseUrl: 'http://localhost:3000',
-          environment: 'test',
-        },
-        {
-          walletId: seed.managedWalletId,
-          idempotencyKey: 'rotation-refuse',
-          role: 'operator',
-          credentialId: 'cred-rotation',
-          correlationId: 'corr-refuse',
-          sourceIp: '127.0.0.1',
-        },
-      ),
-    ).rejects.toMatchObject({
-      code: 'INVALID_CONFIGURATION',
-      publicMessage: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
-    });
-    expect(signer.sendCalls).toBe(0);
-
-    // Disable the retired (oldest) row via the operator endpoint.
-    const disableResponse = await app.inject({
-      method: 'PATCH',
-      url: `/v1/treasuries/${seed.treasuryId}`,
-      headers: { authorization: `Bearer ${operatorToken}` },
-      payload: { enabled: false },
-    });
-    expect(disableResponse.statusCode).toBe(200);
-    expect(disableResponse.json()).toMatchObject({
-      data: { id: seed.treasuryId, enabled: false },
-    });
-
     const remaining = await treasuryRepo.listEnabled();
     expect(remaining).toHaveLength(1);
     expect(remaining[0]?.id).toBe(newRow.id);
@@ -277,7 +226,6 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0]?.entityId).toBe(seed.treasuryId);
 
-    // Funding resolves the remaining row and succeeds with a signer that matches it.
     const fundResponse = await app.inject({
       method: 'POST',
       url: `/v1/wallets/${seed.managedWalletId}/ensure-funded`,
@@ -289,6 +237,71 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
       data: { status: 'funded' },
     });
     expect(signer.sendCalls).toBe(1);
+  });
+
+  it('refuses enabling a second external on the same chain and leaves the first enabled', async () => {
+    const [retired] = await handle.db
+      .insert(treasuries)
+      .values({
+        chainId: seed.chainId,
+        address: NEW_TREASURY_ADDRESS.toLowerCase(),
+        addressDisplay: getAddress(NEW_TREASURY_ADDRESS),
+        warningBalanceWei: ONE_ETH.toString(),
+        criticalBalanceWei: (ONE_ETH / 4n).toString(),
+        recoveryBalanceWei: (2n * ONE_ETH).toString(),
+        minimumReserveWei: (ONE_ETH / 10n).toString(),
+        kind: 'external',
+        enabled: false,
+      })
+      .returning({ id: treasuries.id });
+
+    if (retired === undefined) {
+      throw new Error('Expected retired treasury row');
+    }
+
+    const enableResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/treasuries/${retired.id}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { enabled: true },
+    });
+
+    expect(enableResponse.statusCode).toBe(400);
+    expect(enableResponse.json()).toMatchObject({
+      error: {
+        code: 'INVALID_CONFIGURATION',
+        message: 'Funding is unavailable because treasury configuration is ambiguous for this chain.',
+      },
+    });
+    expect(signer.sendCalls).toBe(0);
+
+    const seedRow = await handle.db.query.treasuries.findFirst({
+      where: eq(treasuries.id, seed.treasuryId),
+    });
+    const retiredRow = await handle.db.query.treasuries.findFirst({
+      where: eq(treasuries.id, retired.id),
+    });
+    expect(seedRow?.enabled).toBe(true);
+    expect(retiredRow?.enabled).toBe(false);
+  });
+
+  it('re-enabling the same already-enabled row is a no-op success', async () => {
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/treasuries/${seed.treasuryId}`,
+      headers: { authorization: `Bearer ${operatorToken}` },
+      payload: { enabled: true },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { id: seed.treasuryId, enabled: true },
+    });
+
+    const row = await handle.db.query.treasuries.findFirst({
+      where: eq(treasuries.id, seed.treasuryId),
+    });
+    expect(row?.enabled).toBe(true);
   });
 
   it('rejects non-operator PATCH /v1/treasuries/:id', async () => {

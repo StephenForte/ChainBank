@@ -8,6 +8,7 @@ import {
   fundingTransactions,
   managedWallets,
   projects,
+  treasuries,
 } from '../../src/infrastructure/db/schema.js';
 import { integrationEnabled } from '../support/integration-setup.js';
 import {
@@ -167,6 +168,82 @@ describe.skipIf(!integrationEnabled)('Phase 1 schema constraints', () => {
           firstTriggeredAt: now,
           lastEvaluatedAt: now,
           metadataJson: {},
+        }),
+      ).rejects.toSatisfy((error: unknown) => isPgError(error, '23505'));
+    });
+
+    it('rejects a second enabled treasury of the same kind on one chain (C23 / 0010)', async () => {
+      await expect(
+        handle.db.insert(treasuries).values({
+          chainId: seed.chainId,
+          address: '0x5555555555555555555555555555555555555555',
+          addressDisplay: '0x5555555555555555555555555555555555555555',
+          warningBalanceWei: '1000000000000000000',
+          criticalBalanceWei: '250000000000000000',
+          recoveryBalanceWei: '2000000000000000000',
+          minimumReserveWei: '100000000000000000',
+          kind: 'external',
+          enabled: true,
+        }),
+      ).rejects.toSatisfy((error: unknown) => isPgError(error, '23505'));
+    });
+
+    it('allows a disabled treasury of the same kind on one chain (C12 rotation)', async () => {
+      await expect(
+        handle.db.insert(treasuries).values({
+          chainId: seed.chainId,
+          address: '0x6666666666666666666666666666666666666666',
+          addressDisplay: '0x6666666666666666666666666666666666666666',
+          warningBalanceWei: '1000000000000000000',
+          criticalBalanceWei: '250000000000000000',
+          recoveryBalanceWei: '2000000000000000000',
+          minimumReserveWei: '100000000000000000',
+          kind: 'external',
+          enabled: false,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('allows one enabled external and one enabled operational on the same chain', async () => {
+      await expect(
+        handle.db.insert(treasuries).values({
+          chainId: seed.chainId,
+          address: '0x7777777777777777777777777777777777777777',
+          addressDisplay: '0x7777777777777777777777777777777777777777',
+          warningBalanceWei: '1000000000000000000',
+          criticalBalanceWei: '250000000000000000',
+          recoveryBalanceWei: '2000000000000000000',
+          minimumReserveWei: '100000000000000000',
+          kind: 'operational',
+          enabled: true,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a second enabled operational on the same chain (C23 / 0010)', async () => {
+      await handle.db.insert(treasuries).values({
+        chainId: seed.chainId,
+        address: '0x8888888888888888888888888888888888888888',
+        addressDisplay: '0x8888888888888888888888888888888888888888',
+        warningBalanceWei: '1000000000000000000',
+        criticalBalanceWei: '250000000000000000',
+        recoveryBalanceWei: '2000000000000000000',
+        minimumReserveWei: '100000000000000000',
+        kind: 'operational',
+        enabled: true,
+      });
+
+      await expect(
+        handle.db.insert(treasuries).values({
+          chainId: seed.chainId,
+          address: '0x9999999999999999999999999999999999999999',
+          addressDisplay: '0x9999999999999999999999999999999999999999',
+          warningBalanceWei: '1000000000000000000',
+          criticalBalanceWei: '250000000000000000',
+          recoveryBalanceWei: '2000000000000000000',
+          minimumReserveWei: '100000000000000000',
+          kind: 'operational',
+          enabled: true,
         }),
       ).rejects.toSatisfy((error: unknown) => isPgError(error, '23505'));
     });
