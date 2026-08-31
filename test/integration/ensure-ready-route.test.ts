@@ -87,8 +87,8 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
     await truncatePhase1Tables(handle.pool);
     seed = await seedPhase1Fixtures(handle.db);
 
-    // Exactly one enabled treasury per chain (TX.5 guard). seedPhase1Fixtures
-    // already creates one; do not add another.
+    // seedPhase1Fixtures already creates the enabled treasury for this chain;
+    // do not add another of the same kind.
     const [secondWallet] = await handle.db
       .insert(managedWallets)
       .values({

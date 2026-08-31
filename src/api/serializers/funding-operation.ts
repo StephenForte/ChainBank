@@ -38,7 +38,7 @@ export interface FundingOperationResource {
 
 export function serializeFundingOperation(
   result: GetOperationStatusResult,
-  explorerBaseUrl: string,
+  transactionChainExplorerBaseUrl: string | undefined,
 ): FundingOperationResource {
   const { operation, transaction, status, reason } = result;
   return {
@@ -52,13 +52,16 @@ export function serializeFundingOperation(
     errorSummary: operation.errorSummary ?? null,
     startedAt: operation.startedAt.toISOString(),
     completedAt: operation.completedAt?.toISOString() ?? null,
-    transaction: transaction === undefined ? null : serializeFundingTransaction(transaction, explorerBaseUrl),
+    transaction:
+      transaction === undefined
+        ? null
+        : serializeFundingTransaction(transaction, transactionChainExplorerBaseUrl),
   };
 }
 
 function serializeFundingTransaction(
   transaction: FundingTransaction,
-  explorerBaseUrl: string,
+  transactionChainExplorerBaseUrl: string | undefined,
 ): FundingOperationTransactionResource {
   const hash = transaction.transactionHash ?? null;
   return {
@@ -66,7 +69,10 @@ function serializeFundingTransaction(
     status: transaction.status,
     amountWei: transaction.amountWei.toString(),
     hash,
-    explorerUrl: hash === null ? null : `${stripTrailingSlash(explorerBaseUrl)}/tx/${hash}`,
+    explorerUrl:
+      hash === null || transactionChainExplorerBaseUrl === undefined
+        ? null
+        : `${stripTrailingSlash(transactionChainExplorerBaseUrl)}/tx/${hash}`,
     nonce: transaction.nonce ?? null,
     errorCode: transaction.errorCode ?? null,
     createdAt: transaction.createdAt.toISOString(),

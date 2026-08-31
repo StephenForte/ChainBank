@@ -129,8 +129,14 @@ export function registerFundingOperationRoutes(app: AppInstance, container: Cont
         },
       );
 
+      let transactionChainExplorerBaseUrl: string | undefined;
+      if (result.transaction !== undefined) {
+        const treasury = await container.repositories.treasuries.findById(result.transaction.treasuryId);
+        transactionChainExplorerBaseUrl = treasury?.chain.explorerBaseUrl;
+      }
+
       return {
-        data: serializeFundingOperation(result, container.config.chain.explorerBaseUrl),
+        data: serializeFundingOperation(result, transactionChainExplorerBaseUrl),
       };
     },
   );
