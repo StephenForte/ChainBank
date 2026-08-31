@@ -1,5 +1,12 @@
 import type { FundingTransactionResource } from '../api';
-import { formatTimestamp, shortAddress, statusClass, type LoadState } from '../dashboard-shared';
+import {
+  formatTimestamp,
+  fundingTransactionKindLabel,
+  isTreasuryReplenish,
+  shortAddress,
+  statusClass,
+  type LoadState,
+} from '../dashboard-shared';
 
 export type FundingHistoryPanelProps = {
   readonly loadFundingHistory: (activeToken: string) => Promise<void>;
@@ -8,6 +15,8 @@ export type FundingHistoryPanelProps = {
   readonly setHistoryProjectFilter: (value: string) => void;
   readonly historyStatusFilter: string;
   readonly setHistoryStatusFilter: (value: string) => void;
+  readonly historyKindFilter: string;
+  readonly setHistoryKindFilter: (value: string) => void;
   readonly fundingHistoryState: LoadState;
   readonly fundingHistoryError: string | undefined;
   readonly fundingHistoryTotal: number;
@@ -21,11 +30,23 @@ export function FundingHistoryPanel({
   setHistoryProjectFilter,
   historyStatusFilter,
   setHistoryStatusFilter,
+  historyKindFilter,
+  setHistoryKindFilter,
   fundingHistoryState,
   fundingHistoryError,
   fundingHistoryTotal,
   fundingHistory,
 }: FundingHistoryPanelProps) {
+  const visibleHistory = fundingHistory.filter((row) => {
+    if (historyKindFilter === 'replenish') {
+      return isTreasuryReplenish(row);
+    }
+    if (historyKindFilter === 'wallet') {
+      return !isTreasuryReplenish(row);
+    }
+    return true;
+  });
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -66,6 +87,17 @@ export function FundingHistoryPanel({
               <option value="dropped">dropped</option>
               <option value="created">created</option>
             </select>
+            <label htmlFor="history-kind">Type</label>
+            <select
+              id="history-kind"
+              name="history-kind"
+              value={historyKindFilter}
+              onChange={(event) => setHistoryKindFilter(event.target.value)}
+            >
+              <option value="">All types</option>
+              <option value="replenish">Public → Private</option>
+              <option value="wallet">Wallet top-up</option>
+            </select>
           </div>
           {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
           {fundingHistoryState === 'error' ? <p className="error-inline">{fundingHistoryError}</p> : null}
@@ -75,64 +107,70 @@ export function FundingHistoryPanel({
           {fundingHistoryState === 'ready' ? (
             <>
               <p className="muted">
-                Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions (newest
+                Showing {String(visibleHistory.length)} of {String(fundingHistoryTotal)} transactions (newest
                 first).
               </p>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Project / env</th>
-                      <th>Wallet</th>
-                      <th>Amount</th>
-                      <th>Status</th>
-                      <th>Transaction</th>
-                      <th>Created</th>
-                      <th>Confirmed</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fundingHistory.map((row) => (
-                      <tr key={row.id}>
-                        <td>
-                          <strong>{row.project?.slug ?? 'treasury'}</strong>
-                          <span className="muted">
-                            {' '}
-                            / {row.environment?.slug ?? row.operation.operationType}
-                          </span>
-                        </td>
-                        <td className="mono">
-                          {row.wallet === null
-                            ? row.destinationTreasury === undefined || row.destinationTreasury === null
-                              ? '—'
-                              : `Private ${shortAddress(row.destinationTreasury.address)}`
-                            : `${row.wallet.role} `}
-                          {row.wallet === null ? null : (
-                            <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
-                          )}
-                        </td>
-                        <td className="mono">
-                          {row.amountEther} {row.chain.nativeSymbol}
-                        </td>
-                        <td>
-                          <span className={statusClass(row.status)}>{row.status}</span>
-                        </td>
-                        <td className="mono">
-                          {row.explorerUrl === null ? (
-                            '—'
-                          ) : (
-                            <a href={row.explorerUrl} target="_blank" rel="noreferrer">
-                              {shortAddress(row.transactionHash ?? '')}
-                            </a>
-                          )}
-                        </td>
-                        <td>{formatTimestamp(row.createdAt)}</td>
-                        <td>{formatTimestamp(row.confirmedAt)}</td>
+              {visibleHistory.length === 0 ? (
+                <p className="muted">No transactions match the selected type filter.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Project / env</th>
+                        <th>Destination</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Transaction</th>
+                        <th>Created</th>
+                        <th>Confirmed</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {visibleHistory.map((row) => (
+                        <tr key={row.id}>
+                          <td>{fundingTransactionKindLabel(row)}</td>
+                          <td>
+                            <strong>{row.project?.slug ?? 'treasury'}</strong>
+                            <span className="muted">
+                              {' '}
+                              / {row.environment?.slug ?? row.operation.operationType}
+                            </span>
+                          </td>
+                          <td className="mono">
+                            {row.wallet === null
+                              ? row.destinationTreasury === undefined || row.destinationTreasury === null
+                                ? '—'
+                                : `Private ${shortAddress(row.destinationTreasury.address)}`
+                              : `${row.wallet.role} `}
+                            {row.wallet === null ? null : (
+                              <span title={row.wallet.address}>{shortAddress(row.wallet.address)}</span>
+                            )}
+                          </td>
+                          <td className="mono">
+                            {row.amountEther} {row.chain.nativeSymbol}
+                          </td>
+                          <td>
+                            <span className={statusClass(row.status)}>{row.status}</span>
+                          </td>
+                          <td className="mono">
+                            {row.explorerUrl === null ? (
+                              '—'
+                            ) : (
+                              <a href={row.explorerUrl} target="_blank" rel="noreferrer">
+                                {shortAddress(row.transactionHash ?? '')}
+                              </a>
+                            )}
+                          </td>
+                          <td>{formatTimestamp(row.createdAt)}</td>
+                          <td>{formatTimestamp(row.confirmedAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           ) : null}
         </>

@@ -1,5 +1,6 @@
 import type { EnvironmentResource } from '../api';
-import { enabledBadge, formatTimestamp, type LoadState } from '../dashboard-shared';
+import { CollapsibleSection } from '../collapsible-section';
+import { enabledBadge, formatTimestamp, partitionByEnabled, type LoadState } from '../dashboard-shared';
 
 export type EnvironmentsPanelProps = {
   readonly loadProjectEnvironments: (activeToken: string, projectId: string) => Promise<void>;
@@ -18,6 +19,37 @@ export type EnvironmentsPanelProps = {
   readonly onToggleEnvironment: (environment: EnvironmentResource) => Promise<void>;
 };
 
+function EnvironmentRow({
+  environment,
+  token,
+  setEnvLookupId,
+  loadEnvironmentDetail,
+}: {
+  readonly environment: EnvironmentResource;
+  readonly token: string;
+  readonly setEnvLookupId: (value: string) => void;
+  readonly loadEnvironmentDetail: (activeToken: string, environmentId: string) => Promise<void>;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        className="linkish"
+        onClick={() => {
+          setEnvLookupId(environment.id);
+          void loadEnvironmentDetail(token, environment.id);
+        }}
+      >
+        <code>{environment.slug}</code>
+      </button>{' '}
+      <span className={enabledBadge(environment.enabled)}>
+        {environment.enabled ? 'enabled' : 'disabled'}
+      </span>
+      <span className="muted"> — {environment.name}</span>
+    </li>
+  );
+}
+
 export function EnvironmentsPanel({
   loadProjectEnvironments,
   loadEnvironmentDetail,
@@ -34,6 +66,8 @@ export function EnvironmentsPanel({
   environmentBusy,
   onToggleEnvironment,
 }: EnvironmentsPanelProps) {
+  const { enabled, disabled } = partitionByEnabled(projectEnvironments);
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -53,37 +87,42 @@ export function EnvironmentsPanel({
       </div>
       {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
       {token !== '' && selectedProjectId === '' ? (
-        <p className="muted">Select a project above to list its environments.</p>
+        <p className="muted">Select a project to list its environments.</p>
       ) : null}
       {token !== '' && selectedProjectId !== '' ? (
         <>
-          <p className="hint">Load any environment by UUID below for full detail and enable/disable.</p>
           {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
           {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
           {envListState === 'empty' ? (
             <p className="muted">No environments registered for this project yet.</p>
           ) : null}
           {envListState === 'ready' ? (
-            <ul className="plain env-list">
-              {projectEnvironments.map((environment) => (
-                <li key={environment.id}>
-                  <button
-                    type="button"
-                    className="linkish"
-                    onClick={() => {
-                      setEnvLookupId(environment.id);
-                      void loadEnvironmentDetail(token, environment.id);
-                    }}
-                  >
-                    <code>{environment.slug}</code>
-                  </button>{' '}
-                  <span className={enabledBadge(environment.enabled)}>
-                    {environment.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                  <span className="muted"> — {environment.name}</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="plain env-list">
+                {enabled.map((environment) => (
+                  <EnvironmentRow
+                    key={environment.id}
+                    environment={environment}
+                    token={token}
+                    setEnvLookupId={setEnvLookupId}
+                    loadEnvironmentDetail={loadEnvironmentDetail}
+                  />
+                ))}
+              </ul>
+              <CollapsibleSection title="Disabled environments" count={disabled.length}>
+                <ul className="plain env-list">
+                  {disabled.map((environment) => (
+                    <EnvironmentRow
+                      key={environment.id}
+                      environment={environment}
+                      token={token}
+                      setEnvLookupId={setEnvLookupId}
+                      loadEnvironmentDetail={loadEnvironmentDetail}
+                    />
+                  ))}
+                </ul>
+              </CollapsibleSection>
+            </>
           ) : null}
 
           <form
@@ -109,14 +148,14 @@ export function EnvironmentsPanel({
           {environmentState === 'loading' ? <p className="muted">Loading environment detail…</p> : null}
           {environmentState === 'error' ? <p className="error-inline">{environmentError}</p> : null}
           {environmentState === 'ready' && environmentDetail !== undefined ? (
-            <article className="treasury">
-              <div className="treasury-head">
-                <span className={enabledBadge(environmentDetail.enabled)}>
-                  {environmentDetail.enabled ? 'enabled' : 'disabled'}
-                </span>
+            <article className="entity-card">
+              <div className="entity-card-title">
                 <h3>
                   {environmentDetail.slug} <span className="muted">· {environmentDetail.name}</span>
                 </h3>
+                <span className={enabledBadge(environmentDetail.enabled)}>
+                  {environmentDetail.enabled ? 'enabled' : 'disabled'}
+                </span>
               </div>
               <dl className="facts">
                 <div>

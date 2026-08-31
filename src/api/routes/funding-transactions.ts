@@ -160,6 +160,7 @@ export function registerFundingTransactionRoutes(app: AppInstance, container: Co
             environmentId: { type: 'string', format: 'uuid' },
             managedWalletId: { type: 'string', format: 'uuid' },
             status: { type: 'string', enum: [...FUNDING_TRANSACTION_STATUSES] },
+            operationType: { type: 'string', enum: ['ensure_funded', 'replenish_operational'] },
             createdFrom: { type: 'string', format: 'date-time' },
             createdTo: { type: 'string', format: 'date-time' },
             ...paginationQuerySchema,
@@ -188,6 +189,7 @@ export function registerFundingTransactionRoutes(app: AppInstance, container: Co
         environmentId?: string;
         managedWalletId?: string;
         status?: FundingTransactionStatus;
+        operationType?: string;
         createdFrom?: string;
         createdTo?: string;
         limit?: string;
@@ -239,6 +241,7 @@ function buildListFilter(query: {
   readonly environmentId?: string;
   readonly managedWalletId?: string;
   readonly status?: FundingTransactionStatus;
+  readonly operationType?: string;
   readonly createdFrom?: string;
   readonly createdTo?: string;
 }): FundingTransactionListFilter {
@@ -250,6 +253,7 @@ function buildListFilter(query: {
     ...(query.environmentId === undefined ? {} : { environmentId: query.environmentId }),
     ...(query.managedWalletId === undefined ? {} : { managedWalletId: query.managedWalletId }),
     ...(query.status === undefined ? {} : { status: query.status }),
+    ...(query.operationType === undefined ? {} : { operationType: query.operationType }),
     ...(createdFrom === undefined ? {} : { createdFrom }),
     ...(createdTo === undefined ? {} : { createdTo }),
   };

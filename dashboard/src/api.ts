@@ -218,6 +218,7 @@ export async function listFundingTransactions(
   query: {
     readonly projectId?: string;
     readonly status?: string;
+    readonly operationType?: string;
     readonly limit?: number;
     readonly offset?: number;
   } = {},
@@ -228,6 +229,9 @@ export async function listFundingTransactions(
   }
   if (query.status !== undefined) {
     params.set('status', query.status);
+  }
+  if (query.operationType !== undefined) {
+    params.set('operationType', query.operationType);
   }
   if (query.limit !== undefined) {
     params.set('limit', String(query.limit));
