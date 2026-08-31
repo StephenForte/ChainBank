@@ -1,3 +1,4 @@
+import { CollapsibleSection } from '../collapsible-section';
 import type { ReadinessResponse } from '../api';
 import { statusClass, type LoadState } from '../dashboard-shared';
 
@@ -30,27 +31,37 @@ export function ServiceReadinessPanel({
             Overall <span className={statusClass(readiness.status)}>{readiness.status}</span>
             <span className="muted"> · checked {new Date(readiness.checkedAt).toLocaleString()}</span>
           </p>
-          <ul className="plain">
+          <ul className="readiness-chips">
             {readiness.components.map((component) => (
               <li key={component.name}>
-                <span className={statusClass(component.status)}>{component.status}</span> {component.name}
-                {component.detail !== null ? <span className="muted"> — {component.detail}</span> : null}
+                <span className={statusClass(component.status)}>{component.status}</span>
+                <span>{component.name}</span>
               </li>
             ))}
           </ul>
-          <h3>Heartbeats</h3>
-          {readiness.heartbeats.length === 0 ? (
-            <p className="muted">No heartbeats recorded yet.</p>
-          ) : (
+          <CollapsibleSection title="Heartbeats and component detail">
             <ul className="plain">
-              {readiness.heartbeats.map((heartbeat) => (
-                <li key={heartbeat.serviceRole}>
-                  <code>{heartbeat.serviceRole}</code>
-                  <span className="muted"> · {new Date(heartbeat.lastSeenAt).toLocaleString()}</span>
+              {readiness.components.map((component) => (
+                <li key={`detail-${component.name}`}>
+                  <span className={statusClass(component.status)}>{component.status}</span> {component.name}
+                  {component.detail !== null ? <span className="muted"> — {component.detail}</span> : null}
                 </li>
               ))}
             </ul>
-          )}
+            <h3>Heartbeats</h3>
+            {readiness.heartbeats.length === 0 ? (
+              <p className="muted">No heartbeats recorded yet.</p>
+            ) : (
+              <ul className="plain">
+                {readiness.heartbeats.map((heartbeat) => (
+                  <li key={heartbeat.serviceRole}>
+                    <code>{heartbeat.serviceRole}</code>
+                    <span className="muted"> · {new Date(heartbeat.lastSeenAt).toLocaleString()}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CollapsibleSection>
         </>
       ) : null}
     </section>

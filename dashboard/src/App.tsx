@@ -31,6 +31,7 @@ import {
 import {
   formatError,
   formatWeiAsEther,
+  fundingHistoryOperationType,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
   loadStoredToken,
@@ -77,6 +78,12 @@ export function App() {
   const [fundingHistoryError, setFundingHistoryError] = useState<string | undefined>();
   const [historyProjectFilter, setHistoryProjectFilter] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState('');
+  const [historyKindFilter, setHistoryKindFilter] = useState('');
+  const [treasuryFundingHistory, setTreasuryFundingHistory] = useState<readonly FundingTransactionResource[]>(
+    [],
+  );
+  const [treasuryFundingHistoryState, setTreasuryFundingHistoryState] = useState<LoadState>('idle');
+  const [treasuryFundingHistoryError, setTreasuryFundingHistoryError] = useState<string | undefined>();
 
   const [reconciliationRuns, setReconciliationRuns] = useState<readonly ReconciliationRunResource[]>([]);
   const [reconciliationRunsTotal, setReconciliationRunsTotal] = useState(0);
@@ -195,9 +202,11 @@ export function App() {
     setFundingHistoryError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
+      const operationType = fundingHistoryOperationType(historyKindFilter);
       const next = await listFundingTransactions(activeToken.trim(), {
         ...(historyProjectFilter.trim() === '' ? {} : { projectId: historyProjectFilter.trim() }),
         ...(historyStatusFilter === '' ? {} : { status: historyStatusFilter }),
+        ...(operationType === undefined ? {} : { operationType }),
         limit: 50,
       });
       setFundingHistory(next.data);
@@ -208,6 +217,29 @@ export function App() {
       setFundingHistoryTotal(0);
       setFundingHistoryError(formatError(caught));
       setFundingHistoryState('error');
+    }
+  }
+
+  async function loadTreasuryFundingHistory(activeToken: string): Promise<void> {
+    if (activeToken.trim() === '') {
+      setTreasuryFundingHistory([]);
+      setTreasuryFundingHistoryState('idle');
+      setTreasuryFundingHistoryError(undefined);
+      return;
+    }
+    setTreasuryFundingHistoryState('loading');
+    setTreasuryFundingHistoryError(undefined);
+    try {
+      const next = await listFundingTransactions(activeToken.trim(), {
+        operationType: 'replenish_operational',
+        limit: 50,
+      });
+      setTreasuryFundingHistory(next.data);
+      setTreasuryFundingHistoryState(next.data.length === 0 ? 'empty' : 'ready');
+    } catch (caught) {
+      setTreasuryFundingHistory([]);
+      setTreasuryFundingHistoryError(formatError(caught));
+      setTreasuryFundingHistoryState('error');
     }
   }
 
@@ -606,6 +638,7 @@ export function App() {
     // Each panel loads and fails independently — do not Promise.all across panels.
     void loadReadiness();
     void loadTreasuries(activeToken);
+    void loadTreasuryFundingHistory(activeToken);
     void loadReconciliationRuns(activeToken);
     void loadFindingAlerts(activeToken);
     void loadFundingHistory(activeToken);
@@ -626,6 +659,7 @@ export function App() {
 
   useEffect(() => {
     void loadTreasuries(token);
+    void loadTreasuryFundingHistory(token);
     void loadProjectsPanel(token);
     void loadReconciliationRuns(token);
     void loadFindingAlerts(token);
@@ -633,7 +667,7 @@ export function App() {
 
   useEffect(() => {
     void loadFundingHistory(token);
-  }, [token, historyProjectFilter, historyStatusFilter]);
+  }, [token, historyProjectFilter, historyStatusFilter, historyKindFilter]);
 
   useEffect(() => {
     void loadWalletsPanel(token);
@@ -864,223 +898,230 @@ export function App() {
 
   return (
     <div className="page">
-      <header className="top-band">
-        <div className="top-band-inner">
-          <p className="eyebrow">Operator console</p>
-          <h1 className="page-title">ChainBank</h1>
-          <p className="lede">
-            Observe the Sepolia treasury, manage projects, environments, wallets, and funding policies, and
-            review funding history. Never paste a private key or seed phrase here.
-          </p>
+      <header className="top-bar">
+        <div className="top-bar-inner">
+          <div className="brand">
+            <p className="eyebrow">Operator console</p>
+            <h1 className="page-title">ChainBank</h1>
+          </div>
+          <PanelErrorBoundary panelName="Session" severity="elevated">
+            <PanelBody
+              render={() => (
+                <SessionPanel
+                  tokenInput={tokenInput}
+                  setTokenInput={setTokenInput}
+                  sessionBusy={sessionBusy}
+                  onSaveToken={onSaveToken}
+                  refreshAll={refreshAll}
+                  token={token}
+                  onTestEmail={onTestEmail}
+                  sessionError={sessionError}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
         </div>
       </header>
 
       <main className="page-body">
-        <PanelErrorBoundary panelName="Session" severity="elevated">
-          <PanelBody
-            render={() => (
-              <SessionPanel
-                tokenInput={tokenInput}
-                setTokenInput={setTokenInput}
-                sessionBusy={sessionBusy}
-                onSaveToken={onSaveToken}
-                refreshAll={refreshAll}
-                token={token}
-                onTestEmail={onTestEmail}
-                sessionError={sessionError}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+        <div className="workspace">
+          <PanelErrorBoundary panelName="Service readiness" severity="elevated">
+            <PanelBody
+              render={() => (
+                <ServiceReadinessPanel
+                  loadReadiness={loadReadiness}
+                  readinessState={readinessState}
+                  readinessError={readinessError}
+                  readiness={readiness}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Service readiness" severity="elevated">
-          <PanelBody
-            render={() => (
-              <ServiceReadinessPanel
-                loadReadiness={loadReadiness}
-                readinessState={readinessState}
-                readinessError={readinessError}
-                readiness={readiness}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Treasuries" severity="alarm">
+            <PanelBody
+              render={() => (
+                <TreasuriesPanel
+                  loadTreasuries={loadTreasuries}
+                  loadTreasuryFundingHistory={loadTreasuryFundingHistory}
+                  token={token}
+                  treasuriesState={treasuriesState}
+                  treasuriesError={treasuriesError}
+                  treasuries={treasuries}
+                  treasuryBusyId={treasuryBusyId}
+                  onCheck={onCheck}
+                  treasuryFundingHistoryState={treasuryFundingHistoryState}
+                  treasuryFundingHistoryError={treasuryFundingHistoryError}
+                  treasuryFundingHistory={treasuryFundingHistory}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Treasuries" severity="alarm">
-          <PanelBody
-            render={() => (
-              <TreasuriesPanel
-                loadTreasuries={loadTreasuries}
-                token={token}
-                treasuriesState={treasuriesState}
-                treasuriesError={treasuriesError}
-                treasuries={treasuries}
-                treasuryBusyId={treasuryBusyId}
-                onCheck={onCheck}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Reconciliation" severity="alarm">
+            <PanelBody
+              render={() => (
+                <ReconciliationPanel
+                  loadReconciliationRuns={loadReconciliationRuns}
+                  loadFindingAlerts={loadFindingAlerts}
+                  token={token}
+                  findingAlertsState={findingAlertsState}
+                  findingAlertsError={findingAlertsError}
+                  openFindingAlerts={openFindingAlerts}
+                  treasuries={treasuries}
+                  ackDraftByAlertId={ackDraftByAlertId}
+                  ackErrorByAlertId={ackErrorByAlertId}
+                  ackBusyId={ackBusyId}
+                  setAckDraftByAlertId={setAckDraftByAlertId}
+                  onAcknowledgeFinding={onAcknowledgeFinding}
+                  acknowledgedFindingAlerts={acknowledgedFindingAlerts}
+                  acknowledgedFindingsExpanded={acknowledgedFindingsExpanded}
+                  onToggleAcknowledgedFindings={onToggleAcknowledgedFindings}
+                  reconciliationState={reconciliationState}
+                  reconciliationError={reconciliationError}
+                  reconciliationRunsTotal={reconciliationRunsTotal}
+                  reconciliationRuns={reconciliationRuns}
+                  openFindingAlertsComplete={openFindingAlertsComplete}
+                  expandedCriticalEntityIds={expandedCriticalEntityIds}
+                  setExpandedCriticalEntityIds={setExpandedCriticalEntityIds}
+                  ackDraftByEntityId={ackDraftByEntityId}
+                  setAckDraftByEntityId={setAckDraftByEntityId}
+                  ackErrorByEntityId={ackErrorByEntityId}
+                  ackBusyEntityId={ackBusyEntityId}
+                  onAcknowledgeFindingByEntity={onAcknowledgeFindingByEntity}
+                  reconciliationDetailExpanded={reconciliationDetailExpanded}
+                  onToggleReconciliationDetail={onToggleReconciliationDetail}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Reconciliation" severity="alarm">
-          <PanelBody
-            render={() => (
-              <ReconciliationPanel
-                loadReconciliationRuns={loadReconciliationRuns}
-                loadFindingAlerts={loadFindingAlerts}
-                token={token}
-                findingAlertsState={findingAlertsState}
-                findingAlertsError={findingAlertsError}
-                openFindingAlerts={openFindingAlerts}
-                treasuries={treasuries}
-                ackDraftByAlertId={ackDraftByAlertId}
-                ackErrorByAlertId={ackErrorByAlertId}
-                ackBusyId={ackBusyId}
-                setAckDraftByAlertId={setAckDraftByAlertId}
-                onAcknowledgeFinding={onAcknowledgeFinding}
-                acknowledgedFindingAlerts={acknowledgedFindingAlerts}
-                acknowledgedFindingsExpanded={acknowledgedFindingsExpanded}
-                onToggleAcknowledgedFindings={onToggleAcknowledgedFindings}
-                reconciliationState={reconciliationState}
-                reconciliationError={reconciliationError}
-                reconciliationRunsTotal={reconciliationRunsTotal}
-                reconciliationRuns={reconciliationRuns}
-                openFindingAlertsComplete={openFindingAlertsComplete}
-                expandedCriticalEntityIds={expandedCriticalEntityIds}
-                setExpandedCriticalEntityIds={setExpandedCriticalEntityIds}
-                ackDraftByEntityId={ackDraftByEntityId}
-                setAckDraftByEntityId={setAckDraftByEntityId}
-                ackErrorByEntityId={ackErrorByEntityId}
-                ackBusyEntityId={ackBusyEntityId}
-                onAcknowledgeFindingByEntity={onAcknowledgeFindingByEntity}
-                reconciliationDetailExpanded={reconciliationDetailExpanded}
-                onToggleReconciliationDetail={onToggleReconciliationDetail}
+          <div className="workspace-split">
+            <PanelErrorBoundary panelName="Projects" severity="quiet">
+              <PanelBody
+                render={() => (
+                  <ProjectsPanel
+                    loadProjectsPanel={loadProjectsPanel}
+                    token={token}
+                    projectsState={projectsState}
+                    projectsError={projectsError}
+                    projectsTotal={projectsTotal}
+                    projects={projects}
+                    selectedProjectId={selectedProjectId}
+                    setSelectedProjectId={setSelectedProjectId}
+                    projectBusyId={projectBusyId}
+                    onToggleProject={onToggleProject}
+                  />
+                )}
               />
-            )}
-          />
-        </PanelErrorBoundary>
+            </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Projects" severity="quiet">
-          <PanelBody
-            render={() => (
-              <ProjectsPanel
-                loadProjectsPanel={loadProjectsPanel}
-                token={token}
-                projectsState={projectsState}
-                projectsError={projectsError}
-                projectsTotal={projectsTotal}
-                projects={projects}
-                selectedProjectId={selectedProjectId}
-                setSelectedProjectId={setSelectedProjectId}
-                projectBusyId={projectBusyId}
-                onToggleProject={onToggleProject}
+            <PanelErrorBoundary panelName="Environments" severity="quiet">
+              <PanelBody
+                render={() => (
+                  <EnvironmentsPanel
+                    loadProjectEnvironments={loadProjectEnvironments}
+                    loadEnvironmentDetail={loadEnvironmentDetail}
+                    token={token}
+                    selectedProjectId={selectedProjectId}
+                    envLookupId={envLookupId}
+                    setEnvLookupId={setEnvLookupId}
+                    envListState={envListState}
+                    envListError={envListError}
+                    projectEnvironments={projectEnvironments}
+                    environmentState={environmentState}
+                    environmentError={environmentError}
+                    environmentDetail={environmentDetail}
+                    environmentBusy={environmentBusy}
+                    onToggleEnvironment={onToggleEnvironment}
+                  />
+                )}
               />
-            )}
-          />
-        </PanelErrorBoundary>
+            </PanelErrorBoundary>
+          </div>
 
-        <PanelErrorBoundary panelName="Environments" severity="quiet">
-          <PanelBody
-            render={() => (
-              <EnvironmentsPanel
-                loadProjectEnvironments={loadProjectEnvironments}
-                loadEnvironmentDetail={loadEnvironmentDetail}
-                token={token}
-                selectedProjectId={selectedProjectId}
-                envLookupId={envLookupId}
-                setEnvLookupId={setEnvLookupId}
-                envListState={envListState}
-                envListError={envListError}
-                projectEnvironments={projectEnvironments}
-                environmentState={environmentState}
-                environmentError={environmentError}
-                environmentDetail={environmentDetail}
-                environmentBusy={environmentBusy}
-                onToggleEnvironment={onToggleEnvironment}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Managed wallets" severity="elevated">
+            <PanelBody
+              render={() => (
+                <ManagedWalletsPanel
+                  checkListedWalletBalances={checkListedWalletBalances}
+                  loadWalletsPanel={loadWalletsPanel}
+                  token={token}
+                  walletsState={walletsState}
+                  balancesBusy={balancesBusy}
+                  walletProjectFilter={walletProjectFilter}
+                  setWalletProjectFilter={setWalletProjectFilter}
+                  walletEnvironmentFilter={walletEnvironmentFilter}
+                  setWalletEnvironmentFilter={setWalletEnvironmentFilter}
+                  walletEnabledFilter={walletEnabledFilter}
+                  setWalletEnabledFilter={setWalletEnabledFilter}
+                  selectedProjectId={selectedProjectId}
+                  walletsError={walletsError}
+                  walletsTotal={walletsTotal}
+                  wallets={wallets}
+                  walletBalances={walletBalances}
+                  fetchOneWalletBalance={fetchOneWalletBalance}
+                  walletBusyId={walletBusyId}
+                  onToggleWallet={onToggleWallet}
+                  onToggleWalletReconciliation={onToggleWalletReconciliation}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Managed wallets" severity="elevated">
-          <PanelBody
-            render={() => (
-              <ManagedWalletsPanel
-                checkListedWalletBalances={checkListedWalletBalances}
-                loadWalletsPanel={loadWalletsPanel}
-                token={token}
-                walletsState={walletsState}
-                balancesBusy={balancesBusy}
-                walletProjectFilter={walletProjectFilter}
-                setWalletProjectFilter={setWalletProjectFilter}
-                walletEnvironmentFilter={walletEnvironmentFilter}
-                setWalletEnvironmentFilter={setWalletEnvironmentFilter}
-                walletEnabledFilter={walletEnabledFilter}
-                setWalletEnabledFilter={setWalletEnabledFilter}
-                selectedProjectId={selectedProjectId}
-                walletsError={walletsError}
-                walletsTotal={walletsTotal}
-                wallets={wallets}
-                walletBalances={walletBalances}
-                fetchOneWalletBalance={fetchOneWalletBalance}
-                walletBusyId={walletBusyId}
-                onToggleWallet={onToggleWallet}
-                onToggleWalletReconciliation={onToggleWalletReconciliation}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Funding policy" severity="quiet">
+            <PanelBody
+              render={() => (
+                <FundingPolicyPanel
+                  loadPolicyPanel={loadPolicyPanel}
+                  token={token}
+                  selectedProjectId={selectedProjectId}
+                  policyState={policyState}
+                  policyError={policyError}
+                  policyWalletsTotal={policyWalletsTotal}
+                  policyWallets={policyWallets}
+                  editingWalletId={editingWalletId}
+                  beginEditPolicy={beginEditPolicy}
+                  minimumEtherInput={minimumEtherInput}
+                  setMinimumEtherInput={setMinimumEtherInput}
+                  targetEtherInput={targetEtherInput}
+                  setTargetEtherInput={setTargetEtherInput}
+                  maximumEtherInput={maximumEtherInput}
+                  setMaximumEtherInput={setMaximumEtherInput}
+                  policyPreview={policyPreview}
+                  policyPreviewError={policyPreviewError}
+                  policyBusyId={policyBusyId}
+                  onSavePolicy={onSavePolicy}
+                  setEditingWalletId={setEditingWalletId}
+                  setPolicyPreviewError={setPolicyPreviewError}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Funding policy" severity="quiet">
-          <PanelBody
-            render={() => (
-              <FundingPolicyPanel
-                loadPolicyPanel={loadPolicyPanel}
-                token={token}
-                selectedProjectId={selectedProjectId}
-                policyState={policyState}
-                policyError={policyError}
-                policyWalletsTotal={policyWalletsTotal}
-                policyWallets={policyWallets}
-                editingWalletId={editingWalletId}
-                beginEditPolicy={beginEditPolicy}
-                minimumEtherInput={minimumEtherInput}
-                setMinimumEtherInput={setMinimumEtherInput}
-                targetEtherInput={targetEtherInput}
-                setTargetEtherInput={setTargetEtherInput}
-                maximumEtherInput={maximumEtherInput}
-                setMaximumEtherInput={setMaximumEtherInput}
-                policyPreview={policyPreview}
-                policyPreviewError={policyPreviewError}
-                policyBusyId={policyBusyId}
-                onSavePolicy={onSavePolicy}
-                setEditingWalletId={setEditingWalletId}
-                setPolicyPreviewError={setPolicyPreviewError}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
+          <PanelErrorBoundary panelName="Funding history" severity="quiet">
+            <PanelBody
+              render={() => (
+                <FundingHistoryPanel
+                  loadFundingHistory={loadFundingHistory}
+                  token={token}
+                  historyProjectFilter={historyProjectFilter}
+                  setHistoryProjectFilter={setHistoryProjectFilter}
+                  historyStatusFilter={historyStatusFilter}
+                  setHistoryStatusFilter={setHistoryStatusFilter}
+                  historyKindFilter={historyKindFilter}
+                  setHistoryKindFilter={setHistoryKindFilter}
+                  fundingHistoryState={fundingHistoryState}
+                  fundingHistoryError={fundingHistoryError}
+                  fundingHistoryTotal={fundingHistoryTotal}
+                  fundingHistory={fundingHistory}
+                />
+              )}
+            />
+          </PanelErrorBoundary>
 
-        <PanelErrorBoundary panelName="Funding history" severity="quiet">
-          <PanelBody
-            render={() => (
-              <FundingHistoryPanel
-                loadFundingHistory={loadFundingHistory}
-                token={token}
-                historyProjectFilter={historyProjectFilter}
-                setHistoryProjectFilter={setHistoryProjectFilter}
-                historyStatusFilter={historyStatusFilter}
-                setHistoryStatusFilter={setHistoryStatusFilter}
-                fundingHistoryState={fundingHistoryState}
-                fundingHistoryError={fundingHistoryError}
-                fundingHistoryTotal={fundingHistoryTotal}
-                fundingHistory={fundingHistory}
-              />
-            )}
-          />
-        </PanelErrorBoundary>
-
-        {message !== undefined ? <p className="toast ok">{message}</p> : null}
+          {message !== undefined ? <p className="toast ok">{message}</p> : null}
+        </div>
       </main>
     </div>
   );

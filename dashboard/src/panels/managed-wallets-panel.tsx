@@ -1,4 +1,5 @@
 import type { ManagedWalletResource } from '../api';
+import { CollapsibleSection } from '../collapsible-section';
 import * as dash from '../dashboard-shared';
 import type { LoadState, WalletBalanceView } from '../dashboard-shared';
 
@@ -47,6 +48,92 @@ export function ManagedWalletsPanel({
   onToggleWallet,
   onToggleWalletReconciliation,
 }: ManagedWalletsPanelProps) {
+  const { enabled, disabled } = dash.partitionByEnabled(wallets);
+  const showDisabledInline = walletEnabledFilter === 'false';
+  const visibleWallets = showDisabledInline ? wallets : enabled;
+
+  function renderWalletRow(wallet: ManagedWalletResource) {
+    const balanceView = walletBalances[wallet.id];
+    return (
+      <tr key={wallet.id}>
+        <td>
+          <strong>{wallet.project.slug}</strong>
+          <span className="muted"> / {wallet.environment.slug}</span>
+        </td>
+        <td>{wallet.role}</td>
+        <td className="mono">
+          <a href={wallet.explorerUrl} target="_blank" rel="noreferrer" title={wallet.address}>
+            {dash.shortAddress(wallet.address)}
+          </a>
+        </td>
+        <td>
+          {balanceView === undefined ? (
+            <button
+              type="button"
+              className="secondary"
+              disabled={balancesBusy}
+              onClick={() => void fetchOneWalletBalance(token, wallet.id)}
+            >
+              Check
+            </button>
+          ) : null}
+          {balanceView?.status === 'loading' ? <span className="muted">Checking…</span> : null}
+          {balanceView?.status === 'observed' ? (
+            <>
+              <span className="mono">{balanceView.ether} ETH</span>{' '}
+              {(() => {
+                const chip = dash.balancePolicyChip(balanceView.wei, wallet.policy?.minimumBalanceWei);
+                return <span className={chip.className}>{chip.label}</span>;
+              })()}
+              <div className="muted tiny" title={`Observed at ${balanceView.observedAt}`}>
+                as of {dash.formatClockTime(balanceView.observedAt)}
+              </div>
+            </>
+          ) : null}
+          {balanceView?.status === 'unavailable' ? (
+            <>
+              <span className="badge badge-unknown">unavailable</span>
+              <div className="muted tiny" title={balanceView.errorCode}>
+                as of {dash.formatClockTime(balanceView.observedAt)}
+              </div>
+            </>
+          ) : null}
+          {balanceView?.status === 'error' ? (
+            <span className="error-inline" title={balanceView.message}>
+              error
+            </span>
+          ) : null}
+        </td>
+        <td className="muted">
+          startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
+          <br />
+          reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
+        </td>
+        <td>
+          <span className={dash.enabledBadge(wallet.enabled)}>{wallet.enabled ? 'enabled' : 'disabled'}</span>
+        </td>
+        <td>
+          <button
+            type="button"
+            className={wallet.enabled ? 'secondary' : undefined}
+            disabled={walletBusyId === wallet.id}
+            onClick={() => void onToggleWallet(wallet)}
+          >
+            {wallet.enabled ? 'Disable' : 'Enable'}
+          </button>{' '}
+          <button
+            type="button"
+            className={wallet.reconciliationEnabled ? 'secondary' : undefined}
+            disabled={walletBusyId === wallet.id}
+            onClick={() => void onToggleWalletReconciliation(wallet)}
+          >
+            {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -120,7 +207,11 @@ export function ManagedWalletsPanel({
           {walletsState === 'ready' ? (
             <>
               <p className="muted">
-                Showing {String(wallets.length)} of {String(walletsTotal)} wallets.
+                Showing {String(visibleWallets.length)} enabled of {String(walletsTotal)} wallets
+                {disabled.length > 0 && !showDisabledInline
+                  ? ` · ${String(disabled.length)} disabled hidden`
+                  : ''}
+                .
                 {wallets.length <= dash.BALANCE_AUTO_LOAD_MAX
                   ? ' Balances load automatically for this list (one live RPC read each); Check balances refreshes.'
                   : ` Balances are not auto-loaded above ${String(dash.BALANCE_AUTO_LOAD_MAX)} listed wallets (one live RPC read each). Use Check balances.`}
@@ -138,103 +229,29 @@ export function ManagedWalletsPanel({
                       <th />
                     </tr>
                   </thead>
-                  <tbody>
-                    {wallets.map((wallet) => {
-                      const balanceView = walletBalances[wallet.id];
-                      return (
-                        <tr key={wallet.id}>
-                          <td>
-                            <strong>{wallet.project.slug}</strong>
-                            <span className="muted"> / {wallet.environment.slug}</span>
-                          </td>
-                          <td>{wallet.role}</td>
-                          <td className="mono">
-                            <a
-                              href={wallet.explorerUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={wallet.address}
-                            >
-                              {dash.shortAddress(wallet.address)}
-                            </a>
-                          </td>
-                          <td>
-                            {balanceView === undefined ? (
-                              <button
-                                type="button"
-                                className="secondary"
-                                disabled={balancesBusy}
-                                onClick={() => void fetchOneWalletBalance(token, wallet.id)}
-                              >
-                                Check
-                              </button>
-                            ) : null}
-                            {balanceView?.status === 'loading' ? (
-                              <span className="muted">Checking…</span>
-                            ) : null}
-                            {balanceView?.status === 'observed' ? (
-                              <>
-                                <span className="mono">{balanceView.ether} ETH</span>{' '}
-                                {(() => {
-                                  const chip = dash.balancePolicyChip(
-                                    balanceView.wei,
-                                    wallet.policy?.minimumBalanceWei,
-                                  );
-                                  return <span className={chip.className}>{chip.label}</span>;
-                                })()}
-                                <div className="muted tiny" title={`Observed at ${balanceView.observedAt}`}>
-                                  as of {dash.formatClockTime(balanceView.observedAt)}
-                                </div>
-                              </>
-                            ) : null}
-                            {balanceView?.status === 'unavailable' ? (
-                              <>
-                                <span className="badge badge-unknown">unavailable</span>
-                                <div className="muted tiny" title={balanceView.errorCode}>
-                                  as of {dash.formatClockTime(balanceView.observedAt)}
-                                </div>
-                              </>
-                            ) : null}
-                            {balanceView?.status === 'error' ? (
-                              <span className="error-inline" title={balanceView.message}>
-                                error
-                              </span>
-                            ) : null}
-                          </td>
-                          <td className="muted">
-                            startup {wallet.criticalAtStartup ? 'critical' : 'optional'}
-                            <br />
-                            reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
-                          </td>
-                          <td>
-                            <span className={dash.enabledBadge(wallet.enabled)}>
-                              {wallet.enabled ? 'enabled' : 'disabled'}
-                            </span>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className={wallet.enabled ? 'secondary' : undefined}
-                              disabled={walletBusyId === wallet.id}
-                              onClick={() => void onToggleWallet(wallet)}
-                            >
-                              {wallet.enabled ? 'Disable' : 'Enable'}
-                            </button>{' '}
-                            <button
-                              type="button"
-                              className={wallet.reconciliationEnabled ? 'secondary' : undefined}
-                              disabled={walletBusyId === wallet.id}
-                              onClick={() => void onToggleWalletReconciliation(wallet)}
-                            >
-                              {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
+                  <tbody>{visibleWallets.map(renderWalletRow)}</tbody>
                 </table>
               </div>
+              {!showDisabledInline ? (
+                <CollapsibleSection title="Disabled wallets" count={disabled.length}>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Project / env</th>
+                          <th>Role</th>
+                          <th>Address</th>
+                          <th>Balance</th>
+                          <th>Flags</th>
+                          <th>Enabled</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>{disabled.map(renderWalletRow)}</tbody>
+                    </table>
+                  </div>
+                </CollapsibleSection>
+              ) : null}
             </>
           ) : null}
         </>

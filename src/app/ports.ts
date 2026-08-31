@@ -638,6 +638,7 @@ export interface FundingTransactionListFilter {
   readonly environmentId?: string;
   readonly managedWalletId?: string;
   readonly status?: FundingTransactionStatus;
+  readonly operationType?: string;
   readonly createdFrom?: Date;
   readonly createdTo?: Date;
 }

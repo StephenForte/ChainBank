@@ -1,5 +1,6 @@
 import type { ProjectResource } from '../api';
-import { enabledBadge, type LoadState } from '../dashboard-shared';
+import { CollapsibleSection } from '../collapsible-section';
+import { enabledBadge, partitionByEnabled, type LoadState } from '../dashboard-shared';
 
 export type ProjectsPanelProps = {
   readonly loadProjectsPanel: (activeToken: string) => Promise<void>;
@@ -14,6 +15,49 @@ export type ProjectsPanelProps = {
   readonly onToggleProject: (project: ProjectResource) => Promise<void>;
 };
 
+function ProjectCard({
+  project,
+  isSelected,
+  busyId,
+  onSelect,
+  onToggle,
+}: {
+  readonly project: ProjectResource;
+  readonly isSelected: boolean;
+  readonly busyId: string | undefined;
+  readonly onSelect: (projectId: string) => void;
+  readonly onToggle: (project: ProjectResource) => Promise<void>;
+}) {
+  return (
+    <article className={isSelected ? 'entity-card is-selected' : 'entity-card'}>
+      <div className="entity-card-title">
+        <h3>{project.name}</h3>
+        <span className={enabledBadge(project.enabled)}>{project.enabled ? 'enabled' : 'disabled'}</span>
+      </div>
+      <p className="mono muted">{project.slug}</p>
+      <div className="row">
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            onSelect(project.id);
+          }}
+        >
+          {isSelected ? 'Selected' : 'Select'}
+        </button>
+        <button
+          type="button"
+          className={project.enabled ? 'secondary' : undefined}
+          disabled={busyId === project.id}
+          onClick={() => void onToggle(project)}
+        >
+          {project.enabled ? 'Disable' : 'Enable'}
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function ProjectsPanel({
   loadProjectsPanel,
   token,
@@ -26,6 +70,8 @@ export function ProjectsPanel({
   projectBusyId,
   onToggleProject,
 }: ProjectsPanelProps) {
+  const { enabled, disabled } = partitionByEnabled(projects);
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -43,59 +89,36 @@ export function ProjectsPanel({
       {projectsState === 'ready' ? (
         <>
           <p className="muted">
-            Showing {String(projects.length)} of {String(projectsTotal)} projects. Select one to scope
+            {String(enabled.length)} enabled · {String(disabled.length)} disabled. Select one to scope
             environments and funding policy.
           </p>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Slug</th>
-                  <th>Name</th>
-                  <th>Enabled</th>
-                  <th>Select</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((project) => (
-                  <tr
-                    key={project.id}
-                    className={selectedProjectId === project.id ? 'row-selected' : undefined}
-                  >
-                    <td className="mono">{project.slug}</td>
-                    <td>{project.name}</td>
-                    <td>
-                      <span className={enabledBadge(project.enabled)}>
-                        {project.enabled ? 'enabled' : 'disabled'}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => {
-                          setSelectedProjectId(project.id);
-                        }}
-                      >
-                        {selectedProjectId === project.id ? 'Selected' : 'Select'}
-                      </button>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className={project.enabled ? 'secondary' : undefined}
-                        disabled={projectBusyId === project.id}
-                        onClick={() => void onToggleProject(project)}
-                      >
-                        {project.enabled ? 'Disable' : 'Enable'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {enabled.length === 0 ? <p className="muted">No enabled projects.</p> : null}
+          <div className="entity-grid">
+            {enabled.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                isSelected={selectedProjectId === project.id}
+                busyId={projectBusyId}
+                onSelect={setSelectedProjectId}
+                onToggle={onToggleProject}
+              />
+            ))}
           </div>
+          <CollapsibleSection title="Disabled projects" count={disabled.length}>
+            <div className="entity-grid">
+              {disabled.map((project) => (
+                <ProjectCard
+                  key={project.id}
+                  project={project}
+                  isSelected={selectedProjectId === project.id}
+                  busyId={projectBusyId}
+                  onSelect={setSelectedProjectId}
+                  onToggle={onToggleProject}
+                />
+              ))}
+            </div>
+          </CollapsibleSection>
         </>
       ) : null}
     </section>

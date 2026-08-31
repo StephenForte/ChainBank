@@ -417,6 +417,9 @@ function buildListWhere(
   if (filter.status !== undefined) {
     clauses.push(eq(fundingTransactions.status, filter.status));
   }
+  if (filter.operationType !== undefined) {
+    clauses.push(eq(fundingOperations.operationType, filter.operationType));
+  }
   if (filter.createdFrom !== undefined) {
     clauses.push(gte(fundingTransactions.createdAt, filter.createdFrom));
   }

@@ -1,6 +1,7 @@
 import {
   ApiClientError,
   type AlertResource,
+  type FundingTransactionResource,
   type ReconciliationRunResource,
   type TreasuryResource,
 } from './api';
@@ -129,6 +130,48 @@ export function statusClass(status: string): string {
 
 export function enabledBadge(enabled: boolean): string {
   return statusClass(enabled ? 'enabled' : 'disabled');
+}
+
+export function partitionByEnabled<T extends { readonly enabled: boolean }>(
+  items: readonly T[],
+): { readonly enabled: readonly T[]; readonly disabled: readonly T[] } {
+  return {
+    enabled: items.filter((item) => item.enabled),
+    disabled: items.filter((item) => !item.enabled),
+  };
+}
+
+/** Public → Private replenish (C24). Human deposits into Public are not recorded here. */
+export function isTreasuryReplenish(row: FundingTransactionResource): boolean {
+  return row.operation.operationType === 'replenish_operational';
+}
+
+export function fundingTransactionKindLabel(row: FundingTransactionResource): string {
+  return isTreasuryReplenish(row) ? 'Public → Private' : 'Wallet top-up';
+}
+
+/** Maps the history Type control to GET /v1/funding-transactions?operationType=. */
+export function fundingHistoryOperationType(kindFilter: string): string | undefined {
+  if (kindFilter === 'replenish') {
+    return 'replenish_operational';
+  }
+  if (kindFilter === 'wallet') {
+    return 'ensure_funded';
+  }
+  return undefined;
+}
+
+export function treasuryCardToneClass(status: string): string {
+  switch (status) {
+    case 'healthy':
+      return 'treasury-card treasury-card-ok';
+    case 'warning':
+      return 'treasury-card treasury-card-warn';
+    case 'critical':
+      return 'treasury-card treasury-card-bad';
+    default:
+      return 'treasury-card treasury-card-unknown';
+  }
 }
 
 export function shortAddress(address: string): string {

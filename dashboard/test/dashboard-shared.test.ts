@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AlertResource, ReconciliationRunResource, TreasuryResource } from '../src/api';
+import type {
+  AlertResource,
+  FundingTransactionResource,
+  ReconciliationRunResource,
+  TreasuryResource,
+} from '../src/api';
 import {
   ACK_FINDINGS_STORAGE_KEY,
   areFindingAlertsResolved,
@@ -18,17 +23,22 @@ import {
   formatFindingWei,
   formatTimestamp,
   formatWeiAsEther,
+  fundingHistoryOperationType,
+  fundingTransactionKindLabel,
   isCriticalFindingAcknowledged,
+  isTreasuryReplenish,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
   loadStoredToken,
   parseEtherInputToWei,
+  partitionByEnabled,
   RECON_DETAIL_STORAGE_KEY,
   storeAcknowledgedFindingsExpanded,
   storeReconciliationDetailExpanded,
   storeToken,
   toFindingViews,
   TOKEN_STORAGE_KEY,
+  treasuryCardToneClass,
   type FindingView,
 } from '../src/dashboard-shared';
 
@@ -458,5 +468,44 @@ describe('toLocale formatters under TZ=UTC', () => {
 
   it('formatCompactRunTime returns the exact compact UTC string', () => {
     expect(formatCompactRunTime(iso)).toBe('8/6, 6:00 PM');
+  });
+});
+
+describe('dashboard list helpers', () => {
+  it('partitionByEnabled keeps enabled items visible and isolates disabled ones', () => {
+    const partitioned = partitionByEnabled([
+      { id: 'a', enabled: true },
+      { id: 'b', enabled: false },
+      { id: 'c', enabled: true },
+    ]);
+    expect(partitioned.enabled.map((item) => item.id)).toEqual(['a', 'c']);
+    expect(partitioned.disabled.map((item) => item.id)).toEqual(['b']);
+  });
+
+  it('classifies Public → Private replenish separately from wallet top-ups', () => {
+    const replenish = {
+      operation: { operationType: 'replenish_operational' },
+    } as FundingTransactionResource;
+    const walletTopUp = {
+      operation: { operationType: 'ensure_funded' },
+    } as FundingTransactionResource;
+
+    expect(isTreasuryReplenish(replenish)).toBe(true);
+    expect(isTreasuryReplenish(walletTopUp)).toBe(false);
+    expect(fundingTransactionKindLabel(replenish)).toBe('Public → Private');
+    expect(fundingTransactionKindLabel(walletTopUp)).toBe('Wallet top-up');
+  });
+
+  it('maps the history Type control to the API operationType query', () => {
+    expect(fundingHistoryOperationType('')).toBeUndefined();
+    expect(fundingHistoryOperationType('replenish')).toBe('replenish_operational');
+    expect(fundingHistoryOperationType('wallet')).toBe('ensure_funded');
+  });
+
+  it('treasury card tone uses form-distinct classes for each status', () => {
+    expect(treasuryCardToneClass('healthy')).toContain('treasury-card-ok');
+    expect(treasuryCardToneClass('warning')).toContain('treasury-card-warn');
+    expect(treasuryCardToneClass('critical')).toContain('treasury-card-bad');
+    expect(treasuryCardToneClass('unknown')).toContain('treasury-card-unknown');
   });
 });

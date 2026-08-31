@@ -1,5 +1,11 @@
 import type { FundingTransactionResource } from '../api';
-import { formatTimestamp, shortAddress, statusClass, type LoadState } from '../dashboard-shared';
+import {
+  formatTimestamp,
+  fundingTransactionKindLabel,
+  shortAddress,
+  statusClass,
+  type LoadState,
+} from '../dashboard-shared';
 
 export type FundingHistoryPanelProps = {
   readonly loadFundingHistory: (activeToken: string) => Promise<void>;
@@ -8,6 +14,8 @@ export type FundingHistoryPanelProps = {
   readonly setHistoryProjectFilter: (value: string) => void;
   readonly historyStatusFilter: string;
   readonly setHistoryStatusFilter: (value: string) => void;
+  readonly historyKindFilter: string;
+  readonly setHistoryKindFilter: (value: string) => void;
   readonly fundingHistoryState: LoadState;
   readonly fundingHistoryError: string | undefined;
   readonly fundingHistoryTotal: number;
@@ -21,6 +29,8 @@ export function FundingHistoryPanel({
   setHistoryProjectFilter,
   historyStatusFilter,
   setHistoryStatusFilter,
+  historyKindFilter,
+  setHistoryKindFilter,
   fundingHistoryState,
   fundingHistoryError,
   fundingHistoryTotal,
@@ -66,6 +76,17 @@ export function FundingHistoryPanel({
               <option value="dropped">dropped</option>
               <option value="created">created</option>
             </select>
+            <label htmlFor="history-kind">Type</label>
+            <select
+              id="history-kind"
+              name="history-kind"
+              value={historyKindFilter}
+              onChange={(event) => setHistoryKindFilter(event.target.value)}
+            >
+              <option value="">All types</option>
+              <option value="replenish">Public → Private</option>
+              <option value="wallet">Wallet top-up</option>
+            </select>
           </div>
           {fundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
           {fundingHistoryState === 'error' ? <p className="error-inline">{fundingHistoryError}</p> : null}
@@ -82,8 +103,9 @@ export function FundingHistoryPanel({
                 <table className="data-table">
                   <thead>
                     <tr>
+                      <th>Type</th>
                       <th>Project / env</th>
-                      <th>Wallet</th>
+                      <th>Destination</th>
                       <th>Amount</th>
                       <th>Status</th>
                       <th>Transaction</th>
@@ -94,6 +116,7 @@ export function FundingHistoryPanel({
                   <tbody>
                     {fundingHistory.map((row) => (
                       <tr key={row.id}>
+                        <td>{fundingTransactionKindLabel(row)}</td>
                         <td>
                           <strong>{row.project?.slug ?? 'treasury'}</strong>
                           <span className="muted">
