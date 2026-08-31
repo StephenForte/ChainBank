@@ -150,6 +150,17 @@ export function fundingTransactionKindLabel(row: FundingTransactionResource): st
   return isTreasuryReplenish(row) ? 'Public → Private' : 'Wallet top-up';
 }
 
+/** Maps the history Type control to GET /v1/funding-transactions?operationType=. */
+export function fundingHistoryOperationType(kindFilter: string): string | undefined {
+  if (kindFilter === 'replenish') {
+    return 'replenish_operational';
+  }
+  if (kindFilter === 'wallet') {
+    return 'ensure_funded';
+  }
+  return undefined;
+}
+
 export function treasuryCardToneClass(status: string): string {
   switch (status) {
     case 'healthy':

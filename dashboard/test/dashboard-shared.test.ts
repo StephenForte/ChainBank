@@ -23,6 +23,7 @@ import {
   formatFindingWei,
   formatTimestamp,
   formatWeiAsEther,
+  fundingHistoryOperationType,
   fundingTransactionKindLabel,
   isCriticalFindingAcknowledged,
   isTreasuryReplenish,
@@ -493,6 +494,12 @@ describe('dashboard list helpers', () => {
     expect(isTreasuryReplenish(walletTopUp)).toBe(false);
     expect(fundingTransactionKindLabel(replenish)).toBe('Public → Private');
     expect(fundingTransactionKindLabel(walletTopUp)).toBe('Wallet top-up');
+  });
+
+  it('maps the history Type control to the API operationType query', () => {
+    expect(fundingHistoryOperationType('')).toBeUndefined();
+    expect(fundingHistoryOperationType('replenish')).toBe('replenish_operational');
+    expect(fundingHistoryOperationType('wallet')).toBe('ensure_funded');
   });
 
   it('treasury card tone uses form-distinct classes for each status', () => {

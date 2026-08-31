@@ -31,6 +31,7 @@ import {
 import {
   formatError,
   formatWeiAsEther,
+  fundingHistoryOperationType,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
   loadStoredToken,
@@ -201,9 +202,11 @@ export function App() {
     setFundingHistoryError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
+      const operationType = fundingHistoryOperationType(historyKindFilter);
       const next = await listFundingTransactions(activeToken.trim(), {
         ...(historyProjectFilter.trim() === '' ? {} : { projectId: historyProjectFilter.trim() }),
         ...(historyStatusFilter === '' ? {} : { status: historyStatusFilter }),
+        ...(operationType === undefined ? {} : { operationType }),
         limit: 50,
       });
       setFundingHistory(next.data);
@@ -664,7 +667,7 @@ export function App() {
 
   useEffect(() => {
     void loadFundingHistory(token);
-  }, [token, historyProjectFilter, historyStatusFilter]);
+  }, [token, historyProjectFilter, historyStatusFilter, historyKindFilter]);
 
   useEffect(() => {
     void loadWalletsPanel(token);
