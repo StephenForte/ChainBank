@@ -15,7 +15,6 @@ const PROJECT_A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const PROJECT_B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const CREDENTIAL_ID = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
 const OPERATION_ID = '11111111-1111-4111-8111-111111111111';
-const EXPLORER = 'https://sepolia.etherscan.io';
 const SENDER = `0x${'11'.repeat(20)}`;
 
 /**
@@ -79,7 +78,7 @@ async function buildRouteApp(options: {
           correlationId: request.id,
         },
       );
-      return { data: serializeFundingOperation(result, EXPLORER) };
+      return { data: serializeFundingOperation(result, undefined) };
     },
   );
 
