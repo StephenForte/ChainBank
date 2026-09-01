@@ -10,12 +10,13 @@ in `tasks/worker-plan.md`.
 
 Identifiers reserved by this plan (do not grep-and-increment):
 
-| Kind      | Assigned                                                         | Next free after this wave |
-| --------- | ---------------------------------------------------------------- | ------------------------- |
-| Migration | **0010** — P6-PREP-2 partial unique index                        | **0011**                  |
-| Contract  | Amend C23 and C24 in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched)       |
+| Kind      | Assigned                                                           | Next free after this wave |
+| --------- | ------------------------------------------------------------------ | ------------------------- |
+| Migration | **0010** landed (P6-PREP-2)                                        | **0011**                  |
+| Contract  | C23 and C24 amended in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched)       |
 
 Baseline at plan write: `origin/main` **`2db27b7`** (merge of PR #105).
+Wave closed: `origin/main` **`0c98dc1`** (merge of PR #111, 2026-09-01).
 
 ---
 
@@ -50,13 +51,47 @@ What landed:
 
 Planner review (independent, 2026-08-28): approved. Merge-base was current `main` `9c6b6dc`. CI green on HEAD `6594e29`. Identifier invariant probed: grep for `next free 0009` / `next free C23` / `not yet declared exited` returned no matches; `drizzle/meta/_journal.json` on `main` ends at `0009_two_tier_treasury`; DECISIONS headings stop at C25.
 
-**Leftover, non-blocking, owned by P6-PREP-4:** `README.md` Phase roadmap row `5+` still says “out of scope for this effort” while the paragraph above it records D15/D16. Identifier allocation does not depend on that row.
+**Leftover (closed by P6-PREP-4):** `README.md` Phase roadmap row `5+` no longer says “out of scope for this effort”.
 
 ---
 
-## Remaining work
+## Wave 2 — P6-PREP-2 and P6-PREP-3 (done)
 
-### Why this wave exists
+| Field  | P6-PREP-2                                                                                           | P6-PREP-3                                                                                           |
+| ------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Branch | `fix/p6-prep-2-enabled-kind-unique`                                                                 | `fix/p6-prep-3-chain-scoped-replenish`                                                              |
+| PR     | [#108](https://github.com/StephenForte/ChainBank/pull/108) merged 2026-08-31T23:23:00Z as `635720e` | [#110](https://github.com/StephenForte/ChainBank/pull/110) merged 2026-09-01T00:00:00Z as `6983d37` |
+| Status | complete                                                                                            | complete (hosted pending-old-key query skipped; operator declined to block)                         |
+
+What landed:
+
+- **PREP-2:** migration `0010` partial unique `treasuries_one_enabled_kind_per_chain` on `(chain_id, kind) WHERE enabled = true`. `setTreasuryEnabled` refuses a second same-kind enable with `INVALID_CONFIGURATION`. C23 amended in place. Rotation remains disable-then-insert.
+- **PREP-3:** replenish prelude keys include `evmChainId` (`ensure-ready:…:chain:${id}`, `reconcile:${runId}:chain:${id}`). C24 amended in place. Reconciler finding copy uses C23 per-kind language, not a raw treasury count.
+
+Planner reviews: both approved against then-current `main`. C26 unused.
+
+## Wave 3 — P6-PREP-4 and P6-PREP-5 (done)
+
+| Field  | P6-PREP-4                                                                                           | P6-PREP-5                                                                                           |
+| ------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Branch | `docs/p6-prep-4-runbooks-explorer`                                                                  | `fix/p6-prep-5-chain-block-time`                                                                    |
+| PR     | [#109](https://github.com/StephenForte/ChainBank/pull/109) merged 2026-08-31T23:51:47Z as `3427b64` | [#111](https://github.com/StephenForte/ChainBank/pull/111) merged 2026-09-01T00:14:02Z as `0c98dc1` |
+| Status | complete-with-caveats (approved after rewrite to disable-then-insert)                               | complete                                                                                            |
+
+What landed:
+
+- **PREP-4:** Public rotation runbook is Public-only and names **web + wallet-reconciler** (D12). Operation explorer URLs follow the row’s chain. README `5+` no longer says “out of scope for this effort”. Residual (non-blocking): rollback prose is still slightly pre-`0010` (boot fails the unique index; revert must disable the new row before re-enabling the old).
+- **PREP-5:** `SupportedChain.blockTimeMs`; Sepolia is `12_000` and still the only row. Nonce hunt uses `findSupportedChainById(treasury.chain.chainId)`. Unknown chain ID leaves `submission_unknown` pending (no 12_000 guess). `RECONCILE_BLOCK_TIME_MS` remains a named Sepolia default for one release.
+
+Planner reviews: both approved. `SUPPORTED_CHAINS.length === 1`. No `baseSepolia` / `84532` in `src/config` or `src/infrastructure/evm`.
+
+The P6-PREP wave is finished. Do **not** start T6.1 from this document. Run the Final QA checklist, then dispatch T6.1 from a Phase 6 plan.
+
+---
+
+## Historical briefs (Wave 2–3)
+
+### Why this wave existed
 
 The schema already has `chains` and C23 per-chain treasury resolution. The **process** still
 assumes one RPC and one `config.chain`. Phase 6’s first real task (T6.1) is the
@@ -387,45 +422,45 @@ RETURN FORMAT: standard handoff block.
 
 ## Final QA checklist (before T6.1)
 
-Run after P6-PREP-2 through P6-PREP-5 have merged.
+Wave 2–3 merged. Tick the remaining operator/hosted items, then dispatch T6.1 from a Phase 6 plan.
 
 **Gates (already closed)**
 
 - [x] D15 skip Phase 5
 - [x] D16 process-global hatch
 - [x] D17 Phase 9 live on Render (operator attestation)
-- [x] Wave 1 identifiers: next migration **0010**, next contract **C26**
+- [x] Wave 1 identifiers assigned; **0010** consumed by PREP-2; next migration **0011**; next contract **C26**
 
-**After Wave 2–3**
+**After Wave 2–3 (verified on merged PRs / `origin/main` `0c98dc1`)**
 
-- [ ] `PATCH` enabling a second operational on Sepolia returns `INVALID_CONFIGURATION`
-- [ ] SQL insert of a second enabled operational on the same `chain_id` fails the 0010 unique index
-- [ ] SQL insert of a **disabled** second operational succeeds
-- [ ] Single-chain `ensure-ready` still one prelude, same transfer count as today
-- [ ] Unit test: two chain ids → two replenish keys; same chain → one key
-- [ ] Public key rotation runbook lists **web + wallet-reconciler**
-- [ ] `SUPPORTED_CHAINS.length === 1`
-- [ ] `src/infrastructure/evm/chains.ts` still maps only Sepolia
-- [ ] `BalanceReader.readBalance` still `(address)` — T6.1 changes that
-- [ ] No new npm dependencies
-- [ ] No mainnet chain id in `src/config`
-- [ ] README `5+` no longer says “out of scope for this effort”
-- [ ] format, lint, typecheck, unit, integration, build green on the last cleanup PR
-- [ ] Migration 0010 applied forward from 0009 on a populated DB
+- [x] `PATCH` enabling a second operational on Sepolia returns `INVALID_CONFIGURATION` (PREP-2 unit + integration)
+- [x] SQL insert of a second enabled operational on the same `chain_id` fails the 0010 unique index (PREP-2 integration)
+- [x] SQL insert of a **disabled** second operational succeeds (PREP-2 integration)
+- [x] Single-chain `ensure-ready` still one prelude, same transfer count as today (PREP-3 unit)
+- [x] Unit test: two chain ids → two replenish keys; same chain → one key (PREP-3)
+- [x] Public key rotation runbook lists **web + wallet-reconciler** (PREP-4)
+- [x] `SUPPORTED_CHAINS.length === 1` (PREP-5)
+- [x] `src/infrastructure/evm/chains.ts` still maps only Sepolia (PREP-5 grep)
+- [x] `BalanceReader.readBalance` still `(address)` — T6.1 changes that (`src/app/ports.ts` on `0c98dc1`)
+- [x] No new npm dependencies (cleanup PRs)
+- [x] No mainnet chain id in `src/config`
+- [x] README `5+` no longer says “out of scope for this effort” (PREP-4)
+- [x] format, lint, typecheck, unit, dashboard, integration, build green on the last cleanup PR (#111)
+- [ ] Migration 0010 applied forward from 0009 on **hosted** Render Postgres (CI applied 0010; hosted apply not independently confirmed)
 
 **Honest residual (T6.1 still required)**
 
 - [ ] Phase 6 still needs a config redesign (`CHAIN_RPC_URL` singular) and a chain-keyed adapter registry
 - [ ] Treasury-monitor still fails the cron if any treasury RPC read fails
 - [ ] Legacy hatch still exists (D16)
+- [ ] `ChainConfig` / `ChainDescriptor` still omit `blockTimeMs` (hunt looks up `SUPPORTED_CHAINS`)
 
 ---
 
 ## How to dispatch
 
-Wave 2 (PREP-2 and PREP-3) can start now. Paste one brief per session. One task, one
-branch, one checkout — see the worker-plan contract. Do not run both in the same
-working tree.
+This wave is closed. Do not paste the historical briefs above as new work.
 
-After each PR lands, the planner reviews with `review-handoff` (independent probes,
-not the worker’s answer key) and updates the status section of this file.
+Next: finish the one open Final QA item (hosted `0010` apply, if not already
+deployed), then start **T6.1** from a Phase 6 plan. C26 is reserved for T6.1.
+One task, one branch, one checkout — see the worker-plan contract.
