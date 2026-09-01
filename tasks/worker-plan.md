@@ -2,23 +2,23 @@
 
 Planner-owned. Scope: finish the application per `tasks/ChainBank_PRD_v4.md`.
 Phase 0 is complete (read-only monitoring, auth, test email, cron, Render blueprint).
-Phase 5 is deferred (D15). Phase 6 is next after this cleanup wave. Phases 7–8 remain later.
+Phase 5 is deferred (D15). P6-PREP cleanup is merged. Phase 6 is next (T6.1 first). Phases 7–8 remain later.
 
 Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting, and must
 follow the **[commit and merge contract](#commit-and-merge-contract)** below — it
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-08-28 — **Phase 4 exited**; Phase 9 merged; Phase 6 prep cleanup in progress)
+## Status (updated 2026-09-01 — **Phase 4 exited**; Phase 9 merged; P6-PREP complete)
 
-`main` latest migration **`0009`** (next free **`0010`**), contracts through **C25** (next free
+`main` latest migration **`0010`** (next free **`0011`**), contracts through **C25** (next free
 **C26**).
 
 **Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
 decisions D11–D14) and **live on Render (D17)**. **Phase 4 remains exited** with live evidence
 below (2026-08-06). **Phase 5 deferred (D15)** until a concrete ERC-20 need. **C23 hatch is
-process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** P6-PREP-1 landed (PR #105). Remaining cleanup lives in
-[`tasks/p6-prep-plan.md`](./p6-prep-plan.md); do not start T6.1 until that wave finishes.
+process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** P6-PREP-1 through P6-PREP-5 landed (PRs #105, #108, #110, #109, #111; C23/C24 amended; migration `0010`). T6.1 (chain-adapter registry) is next; run the Final QA checklist in
+[`tasks/p6-prep-plan.md`](./p6-prep-plan.md) before dispatching it. **C26** is reserved for T6.1.
 
 Every planned Phase 1–4 task is merged, plus the full post-exit operability wave TX.11–TX.25.
 Phase 9 landed after that wave.
