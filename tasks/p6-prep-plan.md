@@ -10,10 +10,10 @@ in `tasks/worker-plan.md`.
 
 Identifiers reserved by this plan (do not grep-and-increment):
 
-| Kind      | Assigned                                                         | Next free after this wave |
-| --------- | ---------------------------------------------------------------- | ------------------------- |
-| Migration | **0010** landed (P6-PREP-2)                                      | **0011**                  |
-| Contract  | C23 and C24 amended in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched)     |
+| Kind      | Assigned                                                           | Next free after this wave |
+| --------- | ------------------------------------------------------------------ | ------------------------- |
+| Migration | **0010** landed (P6-PREP-2)                                        | **0011**                  |
+| Contract  | C23 and C24 amended in place. **C26** is reserved for Phase 6 T6.1 | **C26** (untouched)       |
 
 Baseline at plan write: `origin/main` **`2db27b7`** (merge of PR #105).
 Wave closed: `origin/main` **`0c98dc1`** (merge of PR #111, 2026-09-01).
@@ -57,11 +57,11 @@ Planner review (independent, 2026-08-28): approved. Merge-base was current `main
 
 ## Wave 2 — P6-PREP-2 and P6-PREP-3 (done)
 
-| Field  | P6-PREP-2                                                                                         | P6-PREP-3                                                                                      |
-| ------ | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Branch | `fix/p6-prep-2-enabled-kind-unique`                                                               | `fix/p6-prep-3-chain-scoped-replenish`                                                         |
+| Field  | P6-PREP-2                                                                                           | P6-PREP-3                                                                                           |
+| ------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Branch | `fix/p6-prep-2-enabled-kind-unique`                                                                 | `fix/p6-prep-3-chain-scoped-replenish`                                                              |
 | PR     | [#108](https://github.com/StephenForte/ChainBank/pull/108) merged 2026-08-31T23:23:00Z as `635720e` | [#110](https://github.com/StephenForte/ChainBank/pull/110) merged 2026-09-01T00:00:00Z as `6983d37` |
-| Status | complete                                                                                          | complete (hosted pending-old-key query skipped; operator declined to block)                    |
+| Status | complete                                                                                            | complete (hosted pending-old-key query skipped; operator declined to block)                         |
 
 What landed:
 
@@ -72,11 +72,11 @@ Planner reviews: both approved against then-current `main`. C26 unused.
 
 ## Wave 3 — P6-PREP-4 and P6-PREP-5 (done)
 
-| Field  | P6-PREP-4                                                                                         | P6-PREP-5                                                                                      |
-| ------ | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Branch | `docs/p6-prep-4-runbooks-explorer`                                                                | `fix/p6-prep-5-chain-block-time`                                                               |
+| Field  | P6-PREP-4                                                                                           | P6-PREP-5                                                                                           |
+| ------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Branch | `docs/p6-prep-4-runbooks-explorer`                                                                  | `fix/p6-prep-5-chain-block-time`                                                                    |
 | PR     | [#109](https://github.com/StephenForte/ChainBank/pull/109) merged 2026-08-31T23:51:47Z as `3427b64` | [#111](https://github.com/StephenForte/ChainBank/pull/111) merged 2026-09-01T00:14:02Z as `0c98dc1` |
-| Status | complete-with-caveats (approved after rewrite to disable-then-insert)                             | complete                                                                                       |
+| Status | complete-with-caveats (approved after rewrite to disable-then-insert)                               | complete                                                                                            |
 
 What landed:
 
