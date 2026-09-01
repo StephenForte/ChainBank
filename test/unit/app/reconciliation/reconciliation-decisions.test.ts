@@ -14,6 +14,7 @@ import {
   shouldSkipOutgoingBodyScan,
 } from '../../../../src/app/reconciliation/reconciliation-decisions.js';
 import type { ManagedWallet, TreasuryOutgoingTransfer } from '../../../../src/app/ports.js';
+import { findSupportedChainById, SUPPORTED_CHAINS } from '../../../../src/config/supported-chains.js';
 
 const ONE_ETH = 10n ** 18n;
 const now = new Date('2026-08-01T12:00:00.000Z');
@@ -303,5 +304,39 @@ describe('reconciliation decisions', () => {
       const ancient = new Date(now.getTime() - 1_000_000 * RECONCILE_BLOCK_TIME_MS);
       expect(nonceSearchLookbackBlocks({ createdAt: ancient, now, maxBlocks: 20_000n })).toBe(20_000n);
     });
+
+    it('uses the supplied chain blockTimeMs instead of the Sepolia default', () => {
+      const now = new Date('2026-08-02T00:00:00.000Z');
+      const fasterBlockTimeMs = 2_000;
+      const createdAt = new Date(now.getTime() - 100 * fasterBlockTimeMs);
+      expect(
+        nonceSearchLookbackBlocks({
+          createdAt,
+          now,
+          maxBlocks: 20_000n,
+          blockTimeMs: fasterBlockTimeMs,
+        }),
+      ).toBe(100n + NONCE_SEARCH_BLOCK_MARGIN);
+      expect(
+        nonceSearchLookbackBlocks({
+          createdAt,
+          now,
+          maxBlocks: 20_000n,
+          blockTimeMs: RECONCILE_BLOCK_TIME_MS,
+        }),
+      ).toBe(
+        BigInt(Math.ceil((100 * fasterBlockTimeMs) / RECONCILE_BLOCK_TIME_MS)) + NONCE_SEARCH_BLOCK_MARGIN,
+      );
+    });
+  });
+});
+
+describe('SupportedChain blockTimeMs', () => {
+  it('records Sepolia block time on the single supported chain descriptor', () => {
+    const sepolia = findSupportedChainById(11_155_111);
+    expect(SUPPORTED_CHAINS).toHaveLength(1);
+    expect(sepolia?.slug).toBe('ethereum-sepolia');
+    expect(sepolia?.blockTimeMs).toBe(12_000);
+    expect(RECONCILE_BLOCK_TIME_MS).toBe(sepolia?.blockTimeMs);
   });
 });

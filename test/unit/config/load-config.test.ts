@@ -5,6 +5,7 @@ import {
   getTreasuryPrivateKey,
   loadConfig,
 } from '../../../src/config/index.js';
+import { findSupportedChainById, SUPPORTED_CHAINS } from '../../../src/config/supported-chains.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
 import { validMonitorEnv, validWebEnv } from '../../support/env.js';
@@ -15,6 +16,8 @@ describe('loadConfig', () => {
 
     expect(config.app.serviceRole).toBe('web');
     expect(config.chain.chainId).toBe(11155111);
+    expect(findSupportedChainById(config.chain.chainId)?.blockTimeMs).toBe(12_000);
+    expect(SUPPORTED_CHAINS).toHaveLength(1);
     expect(config.treasury.warningBalanceWei).toBe(parseEtherToWei('1', 'w'));
     expect(config.email?.provider).toBe('log-only');
     expect(config.apiSecurity).toBeDefined();

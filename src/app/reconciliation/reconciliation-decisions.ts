@@ -1,3 +1,4 @@
+import { findSupportedChainById } from '../../config/supported-chains.js';
 import type { ManagedWallet, TreasuryOutgoingTransfer } from '../ports.js';
 
 /**
@@ -139,8 +140,20 @@ export function reconciliationIdempotencyKey(runId: string, walletId: string): s
   return `reconcile:${runId}:${walletId}`;
 }
 
-/** Sepolia-ish block time used only to bound nonce hunts from row age (TX.9). */
-export const RECONCILE_BLOCK_TIME_MS = 12_000;
+/**
+ * Sepolia default block time (`ethereum-sepolia.blockTimeMs`).
+ * Prefer the active chain descriptor's `blockTimeMs` at the hunt site; this
+ * named re-export remains for one release so existing tests keep compiling.
+ */
+export const RECONCILE_BLOCK_TIME_MS = sepoliaDefaultBlockTimeMs();
+
+function sepoliaDefaultBlockTimeMs(): number {
+  const sepolia = findSupportedChainById(11_155_111);
+  if (sepolia === undefined) {
+    throw new Error('ethereum-sepolia is missing from SUPPORTED_CHAINS');
+  }
+  return sepolia.blockTimeMs;
+}
 
 /** Extra blocks beyond age estimate so a slightly slow block does not miss a match. */
 export const NONCE_SEARCH_BLOCK_MARGIN = 256n;
