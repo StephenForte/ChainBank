@@ -11,6 +11,8 @@ export interface SupportedChain {
   readonly displayName: string;
   readonly nativeSymbol: string;
   readonly defaultExplorerBaseUrl: string;
+  /** Nominal block interval used to bound age-based nonce hunts. */
+  readonly blockTimeMs: number;
 }
 
 export const SUPPORTED_CHAINS: readonly SupportedChain[] = [
@@ -20,6 +22,7 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = [
     displayName: 'Ethereum Sepolia',
     nativeSymbol: 'ETH',
     defaultExplorerBaseUrl: 'https://sepolia.etherscan.io',
+    blockTimeMs: 12_000,
   },
 ];
 

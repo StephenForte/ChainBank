@@ -1,3 +1,4 @@
+import { findSupportedChainById } from '../../config/supported-chains.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import {
   ChainBankError,
@@ -1227,10 +1228,18 @@ async function settleSubmissionUnknownRow(
 
   // TX.9: nonce hunt is age-bounded from the row's createdAt, not the
   // incremental crash-orphan watermark (which may post-date the broadcast).
+  const chain = findSupportedChainById(treasury.chain.chainId);
+  if (chain === undefined) {
+    return {
+      kind: 'pending',
+      reason: `no supported chain descriptor for chain ID ${String(treasury.chain.chainId)}`,
+    };
+  }
   const lookbackBlocks = nonceSearchLookbackBlocks({
     createdAt: row.createdAt,
     now: dependencies.clock.now(),
     maxBlocks: input.maxLookbackBlocks,
+    blockTimeMs: chain.blockTimeMs,
   });
 
   const found = await dependencies.outgoingScanner.findOutgoingByNonce({
