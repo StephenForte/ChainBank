@@ -11,8 +11,9 @@ migration `0009`, contracts C23–C25) merged in PRs #103 and #104. The reconcil
 use case (C14), the 6-hourly reconciler cron, failure alerting (C15), the incremental
 outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency coverage (C16),
 and crash-duplicate prevention (TX.10, C7 amendment) are all merged and deployed.
-Phase 9 is live on Render (D17). Phase 5 (ERC-20) is deferred (D15). Phase 6
-(multi-chain) has not started; the C23 hatch stays process-global (D16).
+Phase 9 is live on Render (D17). Phase 5 (ERC-20) is deferred (D15). P6-PREP
+cleanup merged (PRs #105, #108–#111; migration `0010`). Phase 6 (multi-chain)
+has not started; T6.1 is next. The C23 hatch stays process-global (D16).
 
 This build observes the Sepolia treasury, alerts operators by email on
 warning/critical/recovery transitions, manages projects, environments, wallets and
@@ -294,4 +295,4 @@ Short version:
 | 2     | Projects / environments / `ensure-ready`                                   | ✅ complete — scoped auth, operation status, dashboard views, `ensure-ready` (C11), list-environments (C13)                                                                                                                                                                                                                                                             |
 | 3     | Daily treasury alerts (warning / critical / recovery)                      | ✅ complete — alert lifecycle, emails, PRD §19 runbooks, hosted verification passed (2026-08-01)                                                                                                                                                                                                                                                                        |
 | 4     | Scheduled wallet reconciliation                                            | ✅ exited — use case (T4.1, C14, migration `0004`), 6-hourly reconciler cron (T4.2), failure alerting (T4.3, C15), incremental forward-contiguous outgoing scan (TX.9, migration `0005`), cron-vs-API concurrency tests (T4.4, C16), and crash-duplicate prevention (TX.10, C7) all merged; live unattended restorations verified on-chain (see `tasks/worker-plan.md`) |
-| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | Phase 5 (ERC-20) deferred (D15). Phase 6 (multi-chain) next after P6-PREP — not started (D16 process-global hatch). Phases 7–8 later. Phase 9 two-tier live on Render (D17).                                                                                                                                                                                            |
+| 5+    | ERC-20, multi-chain, CLI / Actions, production evaluation                  | Phase 5 (ERC-20) deferred (D15). P6-PREP complete. Phase 6 (multi-chain) not started — T6.1 is next (D16 process-global hatch). Phases 7–8 later. Phase 9 two-tier live on Render (D17).                                                                                                                                                                                 |
