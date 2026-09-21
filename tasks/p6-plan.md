@@ -40,8 +40,7 @@ Byte-for-byte the same finding CI reports. Two packages:
 - **`fastify <= 5.12.0`** — moderate: schema-validation bypass via root primitive coercion
   mismatch (GHSA-w2qp-rph6-63g4) and `X-Forwarded-*` spoofing under `trustProxy` hop-count
   (GHSA-3m5p-2c4r-xxw2). `package.json` pins `^5.10.0` and 5.12.5 is published, so the
-  range already admits the fix — a lockfile refresh should be sufficient and **no manifest
-  edit should be needed**.
+  existing range already admits the fix and the `fastify` caret does **not** need changing.
 
 PR #112's audit and Trivy ran green on 2026-09-01 and the advisories landed in the 21 days
 since. Nothing regressed; the world moved.
@@ -52,9 +51,35 @@ T6.1 worker will try to fix a failure they did not cause — and the plausible n
 `npm audit fix --force`, which is a major-version bump of the HTTP framework inside a
 money-path refactor. Land TX.26 first and the T6.1 gate means what it says.
 
-`npm audit fix --dry-run` **crashes** in this repo (`Cannot read properties of null (reading
-'edgesOut')`, npm arborist), so the fix path is **unmeasured** — the worker must use a
-targeted update and re-run the audit rather than trusting a dry run.
+**The fix is measured.** An earlier draft of this section claimed a lockfile refresh would be
+enough and no manifest edit would be needed. That was wrong, and testing it took two minutes:
+`npm update` cannot move `fast-uri`, because `ajv` and `fast-json-stringify` pin ranges that
+top out at the vulnerable versions. Reproduced on a scratch copy of `package.json` and
+`package-lock.json` (the repo itself untouched) — with `fastify` bumped but no `overrides`,
+all four HIGH remain.
+
+What actually clears both gates is an `overrides` block in `package.json`:
+
+    "overrides": {
+      "fast-uri": "^3.1.6",
+      "ajv": { "fast-uri": "^4.1.3" },
+      "fast-json-stringify": { "fast-uri": "^4.1.3" }
+    }
+
+then `npm update fastify && npm install`. Result on the scratch copy:
+`npm audit --omit=dev --audit-level=high` → **`found 0 vulnerabilities`, exit 0**, resolving
+`fastify` 5.12.5, top-level `fast-uri` 3.1.8, and the `ajv` / `fast-json-stringify` copies
+4.2.1. The minimal change is the `overrides` block alone — leave `"fastify": "^5.10.0"` as it
+is, since the lockfile moves to 5.12.5 on its own.
+
+That proves **resolution**, not **behaviour**. It was run with `--package-lock-only`, so
+nothing was executed. Two changes still need the suite to clear them: `fastify`'s fix is a
+schema-validation coercion change (GHSA-w2qp-rph6-63g4), and `fast-uri` under `ajv` moves
+4.1.2 → 4.2.1. The integration suite is the gate, not the audit.
+
+Note for anyone re-deriving this: `npm audit fix --dry-run` **crashes** in this repo
+(`Cannot read properties of null (reading 'edgesOut')`, npm arborist). Do not treat a dry
+run as evidence here; use a scratch copy as above.
 
 ---
 
