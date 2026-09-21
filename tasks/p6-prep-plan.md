@@ -461,6 +461,8 @@ Wave 2–3 merged. Tick the remaining operator/hosted items, then dispatch T6.1 
 
 This wave is closed. Do not paste the historical briefs above as new work.
 
-Next: finish the one open Final QA item (hosted `0010` apply, if not already
-deployed), then start **T6.1** from a Phase 6 plan. C26 is reserved for T6.1.
-One task, one branch, one checkout — see the worker-plan contract.
+Phase 6 opened on 2026-09-21 under **D18** (Base Sepolia, 84532). Its plan, reserved
+identifiers (**C26–C30**) and briefs live in [`tasks/p6-plan.md`](./p6-plan.md) — dispatch
+from there. The one open Final QA item, hosted apply of `0010`, does not block T6.1
+(which has no migration) but must close before T6.3 writes a second chain's rows to the
+hosted database. One task, one branch, one checkout — see the worker-plan contract.
