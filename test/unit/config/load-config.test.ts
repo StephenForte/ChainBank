@@ -374,4 +374,55 @@ describe('loadConfig', () => {
     expect(JSON.stringify(config.funding)).not.toContain(publicKey);
     expect(JSON.stringify(config.funding)).not.toContain(operationalKey);
   });
+
+  it('defaults TRUSTED_PROXY_CIDRS to private and loopback ranges', () => {
+    const config = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(config.apiSecurity?.trustedProxyCidrs).toEqual([
+      '10.0.0.0/8',
+      '172.16.0.0/12',
+      '192.168.0.0/16',
+      '127.0.0.0/8',
+      'fc00::/7',
+    ]);
+  });
+
+  it('parses an explicit trusted-proxy allowlist as canonical CIDRs', () => {
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({
+        TRUSTED_PROXY_CIDRS: '  203.0.113.5, 192.0.2.0/24 , fc00::1 ',
+      }),
+    });
+    expect(config.apiSecurity?.trustedProxyCidrs).toEqual(['203.0.113.5/32', '192.0.2.0/24', 'fc00::1/128']);
+  });
+
+  it.each([
+    ['', 'empty string'],
+    ['   ', 'whitespace'],
+    [',', 'comma only'],
+    ['10.0.0.0/8, nope', 'malformed address'],
+    ['10.0.0.0/33', 'prefix past 32'],
+    ['10.0.0.0/0', 'prefix 0'],
+    ['fc00::/0', 'IPv6 prefix 0'],
+    ['10.0.0.0/', 'missing prefix'],
+  ])('rejects TRUSTED_PROXY_CIDRS %s (%s) with INVALID_CONFIGURATION', (value) => {
+    expectInvalidConfiguration(validWebEnv({ TRUSTED_PROXY_CIDRS: value }));
+  });
+
+  it('rejects a malformed trusted-proxy list for roles that do not serve HTTP', () => {
+    expectInvalidConfiguration(validMonitorEnv({ TRUSTED_PROXY_CIDRS: 'not-a-cidr' }), 'treasury-monitor');
+  });
 });
+
+function expectInvalidConfiguration(
+  env: ReturnType<typeof validWebEnv>,
+  serviceRole: 'web' | 'treasury-monitor' = 'web',
+): void {
+  try {
+    loadConfig({ serviceRole, env });
+    expect.fail('expected INVALID_CONFIGURATION');
+  } catch (error) {
+    expect(error).toBeInstanceOf(ChainBankError);
+    expect((error as ChainBankError).code).toBe('INVALID_CONFIGURATION');
+  }
+}

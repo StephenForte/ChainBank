@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_TRUSTED_PROXY_CIDRS } from './trusted-proxy.js';
 
 const decimalEther = z.preprocess(
   (value) => {
@@ -93,11 +94,13 @@ export const environmentSchema = z.object({
   RATE_LIMIT_MAX: positiveInteger.default(120),
   RATE_LIMIT_WINDOW_SECONDS: positiveInteger.default(60),
   /**
-   * Number of trusted reverse-proxy hops in front of the service. Render adds
-   * exactly one. Must never be expressed as "trust everything": that would let
-   * a client forge its own source address through X-Forwarded-For.
+   * Comma-separated addresses or CIDRs of peers allowed to set X-Forwarded-*.
+   * Matched against the socket address. A hop count is not accepted: it
+   * ignores that address. Empty is rejected rather than treated as trust-all.
+   * The default is private and loopback space, not a claim about any
+   * platform's published proxy ranges.
    */
-  TRUSTED_PROXY_HOPS: positiveInteger.default(1),
+  TRUSTED_PROXY_CIDRS: z.string().trim().min(1).default(DEFAULT_TRUSTED_PROXY_CIDRS),
 
   /**
    * Arms funding workflows for signing-capable roles. Requires a structurally

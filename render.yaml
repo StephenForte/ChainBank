@@ -57,12 +57,13 @@ services:
       # service must carry it (web + wallet-reconciler). Takes effect on restart.
       - key: FUNDING_KILL_SWITCH
         sync: false
-      # Render terminates TLS one hop in front of the service. Never raise this
-      # without a matching proxy chain: each extra trusted hop lets a client
-      # forge request.ip through X-Forwarded-For, which would defeat per-IP rate
-      # limiting and corrupt audit provenance.
-      - key: TRUSTED_PROXY_HOPS
-        value: '1'
+      # Peers allowed to supply X-Forwarded-*. Those headers are honoured only
+      # when the socket address is in this set. A hop count ignores the peer
+      # address (CVE-2026-16732). These ranges are private and loopback space —
+      # an assumption, not a published proxy list. Confirm the socket peer
+      # observed on this service before relying on the derived client address.
+      - key: TRUSTED_PROXY_CIDRS
+        value: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,fc00::/7'
       - key: HOST
         value: 0.0.0.0
       - key: CHAIN_ID
