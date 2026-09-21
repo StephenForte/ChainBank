@@ -2,23 +2,34 @@
 
 Planner-owned. Scope: finish the application per `tasks/ChainBank_PRD_v4.md`.
 Phase 0 is complete (read-only monitoring, auth, test email, cron, Render blueprint).
-Phase 5 is deferred (D15). P6-PREP cleanup is merged. Phase 6 is next (T6.1 first). Phases 7–8 remain later.
+Phase 5 is deferred (D15). P6-PREP cleanup is merged. **Phase 6 (multi-chain, Base Sepolia) is open —
+plan and briefs live in [`tasks/p6-plan.md`](./p6-plan.md).** Phases 7–8 remain later.
 
 Every worker must read `AGENTS.md` and `tasks/DECISIONS.md` before starting, and must
 follow the **[commit and merge contract](#commit-and-merge-contract)** below — it
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-09-01 — **Phase 4 exited**; Phase 9 merged; P6-PREP complete)
+## Status (updated 2026-09-21 — **Phase 4 exited**; Phase 9 merged; P6-PREP complete; **Phase 6 open**)
 
-`main` latest migration **`0010`** (next free **`0011`**), contracts through **C25** (next free
-**C26**).
+`main` at **`3a3fbcd`** (PR #112). Latest migration **`0010`** (next free **`0011`**, and Phase 6
+is not expected to consume it). Contracts through **C25**; **C26–C30 are reserved by
+[`tasks/p6-plan.md`](./p6-plan.md)** for T6.1–T6.5, so the next free contract is **C31**. Decisions
+through **D18**. Verified 2026-09-21: `npm run test:unit` → 62 files / **572 tests**, 0 skipped; PR
+#112 green on all eleven checks. Integration tests run inside the CI job named **`migration
+validation`** — there is no separately named integration job, so its absence from a check list is
+not a missing gate.
 
 **Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
 decisions D11–D14) and **live on Render (D17)**. **Phase 4 remains exited** with live evidence
 below (2026-08-06). **Phase 5 deferred (D15)** until a concrete ERC-20 need. **C23 hatch is
-process-global (D16)** — no per-chain hatch/two-tier mix. **Phase 6 has not started.** P6-PREP-1 through P6-PREP-5 landed (PRs #105, #108, #110, #109, #111; C23/C24 amended; migration `0010`). T6.1 (chain-adapter registry) is next; run the Final QA checklist in
-[`tasks/p6-prep-plan.md`](./p6-prep-plan.md) before dispatching it. **C26** is reserved for T6.1.
+process-global (D16)** — no per-chain hatch/two-tier mix. P6-PREP-1 through P6-PREP-5 landed (PRs
+#105, #108, #110, #109, #111; C23/C24 amended; migration `0010`). **Phase 6 is now open** under
+**D18**: Base Sepolia (84532) is the second chain, and the wave runs T6.1 registry (C26) → T6.2
+multi-chain config (C27) → T6.3 Base Sepolia (C28) → T6.4 per-chain failure isolation (C29) ∥ T6.5
+chain surfacing (C30). Dispatch from [`tasks/p6-plan.md`](./p6-plan.md), never from
+`tasks/p6-prep-plan.md`. One Final QA item from P6-PREP is still open — hosted apply of migration
+`0010` — which does not block T6.1 (no migration) but must close before T6.3.
 
 Every planned Phase 1–4 task is merged, plus the full post-exit operability wave TX.11–TX.25.
 Phase 9 landed after that wave.
