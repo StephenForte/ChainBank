@@ -6,6 +6,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyRequest } from 'fastify';
+import { createTrustProxy } from '../config/trusted-proxy.js';
 import type { Container } from '../container.js';
 import { ChainBankError } from '../domain/errors.js';
 import { hashApiToken } from '../shared/api-token.js';
@@ -47,11 +48,10 @@ export async function buildApp(container: Container): Promise<AppInstance> {
     requestIdHeader: false,
     genReqId: () => container.idGenerator.next(),
     bodyLimit: BODY_LIMIT_BYTES,
-    // Trust exactly the configured number of proxy hops, never `true`. With
-    // `true`, Fastify takes the left-most X-Forwarded-For entry, which any
-    // client can set — letting a caller forge `request.ip` and so escape
-    // IP-keyed rate limits and poison audit provenance.
-    trustProxy: config.app.isHosted ? security.trustedProxyHops : false,
+    // Honour X-Forwarded-* only when the socket peer is in the configured set.
+    // A hop count ignores that address, so any direct caller can forge
+    // request.ip (CVE-2026-16732). Local processes trust no peer.
+    trustProxy: config.app.isHosted ? createTrustProxy(security.trustedProxyCidrs) : false,
     ajv: {
       customOptions: {
         removeAdditional: false,

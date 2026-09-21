@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_TRUSTED_PROXY_CIDRS } from '../../../src/config/trusted-proxy.js';
 import { assertValidTreasuryThresholds } from '../../../src/domain/treasury/treasury-status.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
 
@@ -156,6 +157,16 @@ describe('render.yaml treasury thresholds', () => {
     const block = services.get('chainbank-treasury-monitor') ?? '';
     expect(block).toMatch(/- key:\s*FUNDING_ENABLED\s*\n\s*value:\s*'false'/);
     expect(block).not.toMatch(/- key:\s*FUNDING_KILL_SWITCH\b/);
+  });
+
+  it('declares TRUSTED_PROXY_CIDRS on the web service', () => {
+    const block = services.get('chainbank-web') ?? '';
+    const declared = /- key:\s*TRUSTED_PROXY_CIDRS\s*\n\s*value:\s*'([^']+)'/.exec(block)?.[1];
+    expect(declared).toBe(DEFAULT_TRUSTED_PROXY_CIDRS);
+    // Joined so this assertion still fails if the Blueprint declares the
+    // retired hop-count variable, without keeping that name as a live key.
+    const retiredHopCountKey = ['TRUSTED', 'PROXY', 'HOPS'].join('_');
+    expect(blueprint).not.toContain(retiredHopCountKey);
   });
 
   it('schedules the wallet reconciler every six hours', () => {
