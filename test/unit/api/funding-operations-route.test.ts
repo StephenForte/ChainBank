@@ -9,7 +9,12 @@ import { serializeFundingOperation } from '../../../src/api/serializers/funding-
 import type { AppInstance } from '../../../src/api/types.js';
 import { createLogger } from '../../../src/observability/logger.js';
 import { createFixedClock } from '../../support/clock.js';
-import { createFakeReceiptTracker, createInMemoryFundingStores } from '../../support/funding-fakes.js';
+import {
+  createFakeBalanceReader,
+  createFakeReceiptTracker,
+  createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
+} from '../../support/funding-fakes.js';
 
 const PROJECT_A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const PROJECT_B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
@@ -60,7 +65,11 @@ async function buildRouteApp(options: {
         {
           operations: options.stores.operations,
           transactions: options.stores.transactions,
-          receiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
+          chainAdapters: createTestChainAdapterRegistry({
+            balanceReader: createFakeBalanceReader({}),
+            receiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
+          }),
+          treasuryChainId: () => Promise.resolve(11_155_111),
           credentialScopes: {
             listByCredentialId: vi.fn(() => Promise.resolve(options.scopes ?? [])),
             insert: vi.fn(),

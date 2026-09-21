@@ -16,6 +16,7 @@ import {
   createFakeReceiptTracker,
   createFakeSigner,
   createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
 } from '../../../support/funding-fakes.js';
 
 const ONE_ETH = 10n ** 18n;
@@ -123,26 +124,31 @@ function buildDeps(options?: {
         record: vi.fn(() => Promise.resolve()),
         findLatest: vi.fn(),
       } satisfies BalanceObservationRepository,
-      balanceReader: {
-        readBalance(address: string) {
-          const balanceWei = balances[address.toLowerCase()];
-          if (balanceWei === undefined) {
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: {
+          chainId: 11_155_111,
+          readBalance(request) {
+            const balanceWei = balances[request.address.toLowerCase()];
+            if (balanceWei === undefined) {
+              return Promise.resolve({
+                kind: 'unavailable' as const,
+                errorCode: 'RPC_UNAVAILABLE' as const,
+                reason: 'missing fixture balance',
+                observedAt: now,
+              });
+            }
             return Promise.resolve({
-              kind: 'unavailable' as const,
-              errorCode: 'RPC_UNAVAILABLE' as const,
-              reason: 'missing fixture balance',
+              kind: 'observed' as const,
+              balanceWei,
+              blockNumber: 1n,
               observedAt: now,
             });
-          }
-          return Promise.resolve({
-            kind: 'observed' as const,
-            balanceWei,
-            blockNumber: 1n,
-            observedAt: now,
-          });
+          },
+          verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11_155_111 })),
         },
-        verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11_155_111 })),
-      },
+        receiptTracker: createFakeReceiptTracker({ kind: 'confirmed', confirmedAt: now }),
+        ...(signerWithCapture === undefined ? {} : { externalSigner: signerWithCapture }),
+      }),
       auditEvents: { record: vi.fn(() => Promise.resolve()) } satisfies AuditEventRepository,
       alerts: {
         findOpenByEntity: vi.fn(),
@@ -168,8 +174,6 @@ function buildDeps(options?: {
         update: vi.fn(),
       } satisfies ManagedWalletRepository,
       lock: stores.lock,
-      receiptTracker: createFakeReceiptTracker({ kind: 'confirmed', confirmedAt: now }),
-      externalSigner: signerWithCapture,
       clock: createFixedClock(now),
       idGenerator: (() => {
         let n = 0;

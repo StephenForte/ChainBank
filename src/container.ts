@@ -3,7 +3,7 @@ import type {
   ApiCredentialRepository,
   AuditEventRepository,
   BalanceObservationRepository,
-  BalanceReader,
+  ChainAdapterRegistry,
   ChainRepository,
   CredentialScopeRepository,
   EmailSender,
@@ -19,11 +19,8 @@ import type {
   ReconciliationFundingQuery,
   ReconciliationRunRepository,
   ServiceHeartbeatRepository,
-  TransactionReceiptTracker,
-  TreasuryOutgoingScanner,
   TreasuryRepository,
   TreasurySigner,
-  TreasurySignerRegistry,
 } from './app/ports.js';
 import {
   getOperationalTreasuryPrivateKey,
@@ -55,10 +52,10 @@ import { createTreasuryRepository } from './infrastructure/db/repositories/treas
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
 import { createResendEmailSender } from './infrastructure/email/resend-email-sender.js';
 import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
+import { createChainAdapterRegistry } from './infrastructure/evm/chain-adapter-registry.js';
 import { createTransactionReceiptTracker } from './infrastructure/evm/transaction-tracker.js';
 import { createTreasuryOutgoingScanner } from './infrastructure/evm/treasury-outgoing-scanner.js';
 import { createTreasurySigner } from './infrastructure/evm/treasury-signer.js';
-import { ChainBankError } from './domain/errors.js';
 import { createLogger, type Logger } from './observability/logger.js';
 import { systemClock, uuidGenerator } from './shared/system-ports.js';
 
@@ -68,6 +65,13 @@ import { systemClock, uuidGenerator } from './shared/system-ports.js';
  * Every concrete adapter is constructed here and nowhere else, so the set of
  * capabilities a process holds is visible in one place. The treasury signer is
  * constructed only for signing-capable roles that hold a validated private key.
+ *
+ * Chain adapters are exposed only through {@link ChainAdapterRegistry}. There
+ * is no process-global reader or signer: every lookup names a chain id, and an
+ * unregistered id throws. Today the registry is filled from the singular
+ * `config.chain` (T6.2 makes that list plural). A field that returned "the"
+ * reader without a chain id would still be the wrong-chain send on the day a
+ * second chain is registered, so none is kept.
  */
 export interface Container {
   readonly config: ChainBankConfig;
@@ -94,22 +98,15 @@ export interface Container {
     readonly reconciliationFunding: ReconciliationFundingQuery;
     readonly fundingHealth: FundingHealthQuery;
   };
-  readonly balanceReader: BalanceReader;
-  /** Present only for signing-capable roles with a validated treasury key. */
-  readonly treasurySigner: TreasurySigner | undefined;
-  /** Public-treasury signer (C25). Same as treasurySigner in the legacy hatch. */
-  readonly externalTreasurySigner: TreasurySigner | undefined;
-  /** Private-treasury signer when two-tier is configured. */
-  readonly operationalTreasurySigner: TreasurySigner | undefined;
-  readonly treasurySigners: TreasurySignerRegistry | undefined;
+  /**
+   * Chain-keyed adapters (C26). Populated from `config.chain` only — one chain
+   * until T6.2. Signing entries are absent for read-only roles.
+   */
+  readonly chainAdapters: ChainAdapterRegistry;
   /** Per-treasury/chain advisory lock for funding dispatch (D7). */
   readonly fundingDispatchLock: FundingDispatchLock;
   /** Atomic operator mutation + audit unit of work (C21). */
   readonly operatorMutations: OperatorMutationTransaction;
-  /** Public-client receipt waiter; never holds signing credentials. */
-  readonly transactionReceiptTracker: TransactionReceiptTracker;
-  /** Public-client scanner for reconciler outgoing settlement / crash-orphan detection. */
-  readonly treasuryOutgoingScanner: TreasuryOutgoingScanner;
   /** Present for web, treasury-monitor, and cron-reconciler when email config is loaded. */
   readonly emailSender: EmailSender | undefined;
   close(): Promise<void>;
@@ -162,16 +159,9 @@ export function buildContainer(options: BuildContainerOptions): Container {
       reconciliationFunding: createReconciliationFundingQuery(database.db),
       fundingHealth: createFundingHealthQuery(database.db),
     },
-    balanceReader: createBalanceReader({ chain: config.chain, clock, logger }),
-    ...buildSigners(config, logger),
+    chainAdapters: buildChainAdapters(config, clock, logger),
     fundingDispatchLock: createFundingDispatchLock(database.db),
     operatorMutations: createOperatorMutationTransaction(database.db),
-    transactionReceiptTracker: createTransactionReceiptTracker({
-      chain: config.chain,
-      clock,
-      logger,
-    }),
-    treasuryOutgoingScanner: createTreasuryOutgoingScanner({ chain: config.chain, logger }),
     emailSender: buildEmailSender(config, logger),
     close: async () => {
       await database.close();
@@ -179,28 +169,53 @@ export function buildContainer(options: BuildContainerOptions): Container {
   };
 }
 
-function buildSigners(
+/**
+ * One registration, from today's singular `config.chain`. T6.2 replaces the
+ * argument list; this function must not grow a second chain on its own (D18).
+ */
+function buildChainAdapters(config: ChainBankConfig, clock: Clock, logger: Logger) {
+  const balanceReader = createBalanceReader({ chain: config.chain, clock, logger });
+  const receiptTracker = createTransactionReceiptTracker({
+    chain: config.chain,
+    clock,
+    logger,
+  });
+  const outgoingScanner = createTreasuryOutgoingScanner({ chain: config.chain, logger });
+  const signers = buildChainSigners(config, logger);
+
+  return createChainAdapterRegistry([
+    {
+      chainId: config.chain.chainId,
+      balanceReader,
+      receiptTracker,
+      outgoingScanner,
+      ...(signers === undefined
+        ? {}
+        : {
+            signers: signers.signers,
+            ...(signers.externalSigner === undefined ? {} : { externalSigner: signers.externalSigner }),
+          }),
+    },
+  ]);
+}
+
+function buildChainSigners(
   config: ChainBankConfig,
   logger: Logger,
-): {
-  readonly treasurySigner: TreasurySigner | undefined;
-  readonly externalTreasurySigner: TreasurySigner | undefined;
-  readonly operationalTreasurySigner: TreasurySigner | undefined;
-  readonly treasurySigners: TreasurySignerRegistry | undefined;
-} {
+):
+  | {
+      readonly signers: readonly TreasurySigner[];
+      readonly externalSigner: TreasurySigner | undefined;
+    }
+  | undefined {
   if (!isSigningCapableRole(config.app.serviceRole)) {
-    return {
-      treasurySigner: undefined,
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
-    };
+    return undefined;
   }
 
   const externalKey = getTreasuryPrivateKey(config);
   const operationalKey = getOperationalTreasuryPrivateKey(config);
 
-  const externalTreasurySigner =
+  const externalSigner =
     externalKey === undefined
       ? undefined
       : createTreasurySigner({
@@ -213,7 +228,7 @@ function buildSigners(
             : { allowedDestinationAddresses: [config.operationalTreasury.address] }),
         });
 
-  const operationalTreasurySigner =
+  const operationalSigner =
     operationalKey === undefined
       ? undefined
       : createTreasurySigner({
@@ -223,40 +238,17 @@ function buildSigners(
           logger,
         });
 
-  const walletFundingSigner = operationalTreasurySigner ?? externalTreasurySigner;
+  // Operational first so a shared address (which should not happen) prefers
+  // the wallet-funding key, matching the previous address-only order.
+  const signers = [operationalSigner, externalSigner].filter(
+    (signer): signer is TreasurySigner => signer !== undefined,
+  );
 
-  const treasurySigners: TreasurySignerRegistry | undefined =
-    externalTreasurySigner === undefined && operationalTreasurySigner === undefined
-      ? undefined
-      : {
-          getSignerForTreasury(treasury) {
-            const address = treasury.address.toLowerCase();
-            if (
-              operationalTreasurySigner !== undefined &&
-              operationalTreasurySigner.address.toLowerCase() === address
-            ) {
-              return operationalTreasurySigner;
-            }
-            if (
-              externalTreasurySigner !== undefined &&
-              externalTreasurySigner.address.toLowerCase() === address
-            ) {
-              return externalTreasurySigner;
-            }
-            throw new ChainBankError(
-              'INVALID_CONFIGURATION',
-              `No signer is configured for treasury ${treasury.id}`,
-              { publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.' },
-            );
-          },
-        };
+  if (signers.length === 0) {
+    return undefined;
+  }
 
-  return {
-    treasurySigner: walletFundingSigner,
-    externalTreasurySigner,
-    operationalTreasurySigner,
-    treasurySigners,
-  };
+  return { signers, externalSigner };
 }
 
 function buildEmailSender(config: ChainBankConfig, logger: Logger): EmailSender | undefined {

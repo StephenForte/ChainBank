@@ -35,7 +35,11 @@ import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
 import { validWebEnv } from '../support/env.js';
-import { createFakeReceiptTracker, createFakeSigner } from '../support/funding-fakes.js';
+import {
+  createFakeReceiptTracker,
+  createFakeSigner,
+  createTestChainAdapterRegistry,
+} from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -87,8 +91,9 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
     signer = createFakeSigner({ address: getAddress(NEW_TREASURY_ADDRESS) });
 
     const balanceReader: BalanceReader = {
-      readBalance(address) {
-        const normalized = address.toLowerCase();
+      chainId: 11_155_111,
+      readBalance(request) {
+        const normalized = request.address.toLowerCase();
         const isTreasury =
           normalized === OLD_TREASURY_ADDRESS.toLowerCase() ||
           normalized === NEW_TREASURY_ADDRESS.toLowerCase();
@@ -145,18 +150,16 @@ describe.skipIf(!integrationEnabled)('treasury row lifecycle / rotation (integra
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader,
-      treasurySigner: signer,
-      externalTreasurySigner: signer,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader,
+        signer,
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: new Date('2026-08-01T12:00:01.000Z'),
+        }),
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: new Date('2026-08-01T12:00:01.000Z'),
-      }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

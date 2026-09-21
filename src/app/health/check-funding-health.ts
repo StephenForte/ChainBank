@@ -2,7 +2,7 @@ import { ChainBankError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
 import { isEligibleForReconciliation } from '../reconciliation/reconciliation-decisions.js';
 import type {
-  BalanceReader,
+  ChainAdapterRegistry,
   FundingHealthQuery,
   ManagedWallet,
   ManagedWalletRepository,
@@ -82,7 +82,7 @@ export interface CheckFundingHealthDependencies {
   readonly reconciliationRuns: ReconciliationRunRepository;
   readonly managedWallets: ManagedWalletRepository;
   readonly fundingHealth: FundingHealthQuery;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly clock: Clock;
 }
 
@@ -124,7 +124,10 @@ export async function checkFundingHealth(
       continue;
     }
 
-    const reading = await dependencies.balanceReader.readBalance(wallet.addressDisplay);
+    const reading = await dependencies.chainAdapters.balanceReader(wallet.chain.chainId).readBalance({
+      chainId: wallet.chain.chainId,
+      address: wallet.addressDisplay,
+    });
     if (reading.kind === 'unavailable') {
       throw new ChainBankError(reading.errorCode, reading.reason, {
         publicMessage: 'Funding health could not read a managed wallet balance.',

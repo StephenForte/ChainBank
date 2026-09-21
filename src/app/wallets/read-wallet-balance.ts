@@ -3,7 +3,7 @@ import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import type { BalanceReading } from '../../domain/balance-reading.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type {
-  BalanceReader,
+  ChainAdapterRegistry,
   CredentialScopeRepository,
   ManagedWallet,
   ManagedWalletRepository,
@@ -12,7 +12,7 @@ import type {
 export interface ReadWalletBalanceDependencies {
   readonly managedWallets: ManagedWalletRepository;
   readonly credentialScopes: CredentialScopeRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
 }
 
 export interface ReadWalletBalanceInput {
@@ -70,6 +70,9 @@ export async function readWalletBalance(
     },
   );
 
-  const reading = await dependencies.balanceReader.readBalance(wallet.addressDisplay);
+  const reading = await dependencies.chainAdapters.balanceReader(wallet.chain.chainId).readBalance({
+    chainId: wallet.chain.chainId,
+    address: wallet.addressDisplay,
+  });
   return { wallet, reading };
 }

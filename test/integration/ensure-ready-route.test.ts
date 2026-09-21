@@ -34,7 +34,11 @@ import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
 import { validWebEnv } from '../support/env.js';
-import { createFakeReceiptTracker, createFakeSigner } from '../support/funding-fakes.js';
+import {
+  createFakeReceiptTracker,
+  createFakeSigner,
+  createTestChainAdapterRegistry,
+} from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -167,8 +171,9 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
     });
 
     const balanceReader: BalanceReader = {
-      readBalance(address) {
-        const normalized = address.toLowerCase();
+      chainId: 11_155_111,
+      readBalance(request) {
+        const normalized = request.address.toLowerCase();
         const balanceWei =
           normalized === TREASURY_ADDRESS.toLowerCase()
             ? treasuryBalanceWei
@@ -226,18 +231,16 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader,
-      treasurySigner: signer,
-      externalTreasurySigner: signer,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader,
+        signer,
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: new Date('2026-08-01T12:00:01.000Z'),
+        }),
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: new Date('2026-08-01T12:00:01.000Z'),
-      }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: {
         send() {
           return Promise.resolve({
@@ -311,8 +314,11 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
     await app.close();
     app = await buildApp({
       ...container,
-      transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: container.chainAdapters.balanceReader(11_155_111),
+        signer,
+        receiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
+      }),
     });
 
     const path = `/v1/environments/${seed.environmentId}/ensure-ready`;
@@ -351,13 +357,18 @@ describe.skipIf(!integrationEnabled)('POST /v1/environments/:id/ensure-ready (in
     // Spendable is zero after reserve + gas: every wallet is refused.
     treasuryBalanceWei = ONE_ETH / 10n;
     await app.close();
+    const reserveSigner = createFakeSigner({
+      estimatedCostWei: ONE_ETH / 100n,
+      send: () => {
+        throw new Error('signer must not be called when reserve blocks');
+      },
+    });
     app = await buildApp({
       ...container,
-      treasurySigner: createFakeSigner({
-        estimatedCostWei: ONE_ETH / 100n,
-        send: () => {
-          throw new Error('signer must not be called when reserve blocks');
-        },
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: container.chainAdapters.balanceReader(11_155_111),
+        signer: reserveSigner,
+        receiptTracker: container.chainAdapters.receiptTracker(11_155_111),
       }),
     });
     // Keep the outer signer counter for other tests; this rebuild replaces the app signer.

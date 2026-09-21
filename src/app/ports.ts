@@ -218,10 +218,25 @@ export interface ServiceHeartbeatRepository {
  *
  * Signing capability lives behind {@link TreasurySigner}, constructed only in
  * signing-capable processes. BalanceReader must never submit a transaction.
+ *
+ * Each reader is bound to one chain. Callers obtain it from
+ * {@link ChainAdapterRegistry} by naming that chain — never from a process-global
+ * default. A read that names a different chain throws rather than returning a
+ * balance from this reader's RPC (C26).
  */
+export interface BalanceReadRequest {
+  readonly chainId: number;
+  readonly address: string;
+}
+
 export interface BalanceReader {
-  /** Never throws for provider failure; returns an `unavailable` reading instead. */
-  readBalance(address: string): Promise<BalanceReading>;
+  /** EVM chain id this reader is bound to. */
+  readonly chainId: number;
+  /**
+   * Never throws for provider failure; returns an `unavailable` reading instead.
+   * Throws `INVALID_CONFIGURATION` when `request.chainId` is not this reader's chain.
+   */
+  readBalance(request: BalanceReadRequest): Promise<BalanceReading>;
   /** Confirms the connected RPC reports the configured chain ID. */
   verifyChainId(): Promise<{ readonly matches: boolean; readonly observedChainId: number | undefined }>;
 }
@@ -236,6 +251,8 @@ export interface BalanceReader {
 export interface TreasurySigner {
   /** Fails closed: throws SIGNER_UNAVAILABLE if key config is absent/malformed. */
   readonly address: string;
+  /** EVM chain id this signer broadcasts on. Part of the C26 lookup key. */
+  readonly chainId: number;
   sendNativeTransfer(input: {
     readonly to: string;
     readonly valueWei: bigint;
@@ -247,9 +264,46 @@ export interface TreasurySigner {
   verifyChainId(): Promise<{ readonly matches: boolean; readonly observedChainId: number | undefined }>;
 }
 
-/** C25 — signer keyed by the treasury row being debited. */
-export interface TreasurySignerRegistry {
-  getSignerForTreasury(treasury: { readonly id: string; readonly address: string }): TreasurySigner;
+/**
+ * C26 — the only way to obtain a balance reader, receipt tracker, outgoing
+ * scanner, or treasury signer.
+ *
+ * Every method that selects an adapter takes a chain id. An unregistered chain
+ * throws `INVALID_CONFIGURATION`. There is no default and no "first registered
+ * chain" fallback: with one chain today that fallback would be invisible, and
+ * on the day a second chain is registered it would send on the wrong RPC.
+ *
+ * Signer resolution is `(chain, address)`. Address-only matching is unsafe
+ * because the same EOA is a legal treasury on two chains.
+ */
+export interface ChainAdapterRegistry {
+  /** Insertion order. Readiness verifies each of these. */
+  readonly registeredChainIds: readonly number[];
+  /**
+   * True when this process constructed at least one treasury signer.
+   * Read-only roles are false. This does not select a signer.
+   */
+  readonly canSign: boolean;
+  balanceReader(chainId: number): BalanceReader;
+  receiptTracker(chainId: number): TransactionReceiptTracker;
+  outgoingScanner(chainId: number): TreasuryOutgoingScanner;
+  /**
+   * Signer bound to this treasury's chain and address.
+   * Unregistered chain, or no signer for that pair while {@link canSign} is
+   * true, throws `INVALID_CONFIGURATION`. A process with no signing
+   * credentials throws `SIGNER_UNAVAILABLE`. Never returns another chain's signer.
+   */
+  getSignerForTreasury(treasury: {
+    readonly id: string;
+    readonly address: string;
+    readonly chain: { readonly chainId: number };
+  }): TreasurySigner;
+  /**
+   * Public-treasury signer for replenish on this chain (C25), or `undefined`
+   * when this chain has no external key. Unregistered chain id throws
+   * `INVALID_CONFIGURATION`.
+   */
+  externalSigner(chainId: number): TreasurySigner | undefined;
 }
 
 export interface EmailMessage {

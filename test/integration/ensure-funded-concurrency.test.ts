@@ -41,6 +41,7 @@ import {
   createDeferred,
   createFakeBalanceReader,
   createFakeReceiptTracker,
+  createTestChainAdapterRegistry,
 } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
@@ -113,8 +114,9 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
     const walletBalances =
       options.walletBalances ?? new Map([[WALLET_A_ADDRESS.toLowerCase(), ONE_ETH / 10n]]);
     return {
-      readBalance(address) {
-        const normalized = address.toLowerCase();
+      chainId: 11_155_111,
+      readBalance(request) {
+        const normalized = request.address.toLowerCase();
         const balanceWei =
           normalized === TREASURY_ADDRESS.toLowerCase()
             ? treasuryBalanceWei
@@ -146,7 +148,18 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: options.balanceReader ?? createBalanceReader(),
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: options.balanceReader ?? createBalanceReader(),
+        receiptTracker: createFakeReceiptTracker(
+          options.leaveSubmittedPending === true
+            ? { kind: 'pending' }
+            : {
+                kind: 'confirmed',
+                confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
+              },
+        ),
+        signer,
+      }),
       credentialScopes: createCredentialScopeRepository(handle.db),
       auditEvents: createAuditEventRepository(handle.db),
       alerts: createAlertRepository(handle.db),
@@ -154,15 +167,6 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
       operations: createFundingOperationRepository(handle.db),
       transactions: createFundingTransactionRepository(handle.db),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker(
-        options.leaveSubmittedPending === true
-          ? { kind: 'pending' }
-          : {
-              kind: 'confirmed',
-              confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
-            },
-      ),
-      signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger,
@@ -217,18 +221,16 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader: createBalanceReader(),
-      treasurySigner: signer,
-      externalTreasurySigner: signer,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: createBalanceReader(),
+        signer,
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
+        }),
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
-      }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };
@@ -334,9 +336,10 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
 
       let walletReadsForLoser = 0;
       const loserReader: BalanceReader = {
+        chainId: balanceReader.chainId,
         verifyChainId: () => balanceReader.verifyChainId(),
-        readBalance: async (address) => {
-          if (address.toLowerCase() === WALLET_A_ADDRESS.toLowerCase()) {
+        readBalance: async (request) => {
+          if (request.address.toLowerCase() === WALLET_A_ADDRESS.toLowerCase()) {
             walletReadsForLoser += 1;
             if (walletReadsForLoser === 1) {
               return {
@@ -347,12 +350,22 @@ describe.skipIf(!integrationEnabled)('ensure-funded concurrency (integration)', 
               };
             }
           }
-          return balanceReader.readBalance(address);
+          return balanceReader.readBalance(request);
         },
       };
 
       return ensureWalletFunded(
-        { ...deps, balanceReader: loserReader },
+        {
+          ...deps,
+          chainAdapters: createTestChainAdapterRegistry({
+            balanceReader: loserReader,
+            signer,
+            receiptTracker: createFakeReceiptTracker({
+              kind: 'confirmed',
+              confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
+            }),
+          }),
+        },
         {
           walletId: seed.managedWalletId,
           idempotencyKey: 'inst-loser',

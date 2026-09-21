@@ -340,7 +340,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
         {
           managedWallets: container.repositories.managedWallets,
           credentialScopes: container.repositories.credentialScopes,
-          balanceReader: container.balanceReader,
+          chainAdapters: container.chainAdapters,
         },
         {
           role: actor.role,
@@ -531,7 +531,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           managedWallets: container.repositories.managedWallets,
           treasuries: container.repositories.treasuries,
           balanceObservations: container.repositories.balanceObservations,
-          balanceReader: container.balanceReader,
+          chainAdapters: container.chainAdapters,
           credentialScopes: container.repositories.credentialScopes,
           auditEvents: container.repositories.auditEvents,
           alerts: container.repositories.alerts,
@@ -539,18 +539,6 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           operations: container.repositories.fundingOperations,
           transactions: container.repositories.fundingTransactions,
           lock: container.fundingDispatchLock,
-          receiptTracker: container.transactionReceiptTracker,
-          signer: container.treasurySigner,
-          ...(container.treasurySigners === undefined
-            ? {}
-            : {
-                getSignerForTreasury: container.treasurySigners.getSignerForTreasury.bind(
-                  container.treasurySigners,
-                ),
-              }),
-          ...(container.externalTreasurySigner === undefined
-            ? {}
-            : { externalSigner: container.externalTreasurySigner }),
           clock: container.clock,
           idGenerator: container.idGenerator,
           logger: container.logger,

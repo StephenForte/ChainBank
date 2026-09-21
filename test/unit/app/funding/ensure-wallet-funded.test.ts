@@ -24,6 +24,7 @@ import {
   createFakeReceiptTracker,
   createFakeSigner,
   createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
 } from '../../../support/funding-fakes.js';
 
 const ONE_ETH = 10n ** 18n;
@@ -275,10 +276,11 @@ function createBalanceReader(balances: Readonly<Record<string, bigint>>): Balanc
 } {
   const reads: string[] = [];
   return {
+    chainId: 11_155_111,
     reads,
-    readBalance(address) {
-      reads.push(address.toLowerCase());
-      const balanceWei = balances[address.toLowerCase()];
+    readBalance(request) {
+      reads.push(request.address.toLowerCase());
+      const balanceWei = balances[request.address.toLowerCase()];
       if (balanceWei === undefined) {
         return Promise.resolve({
           kind: 'unavailable',
@@ -377,7 +379,14 @@ function buildDeps(options?: {
     managedWallets,
     treasuries,
     balanceObservations,
-    balanceReader,
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader,
+      receiptTracker: createFakeReceiptTracker(
+        options?.receiptOutcome === 'pending' ? { kind: 'pending' } : { kind: 'confirmed', confirmedAt: now },
+      ),
+      signer,
+      ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
+    }),
     credentialScopes: createScopeRepo(options?.scopes ?? []),
     auditEvents,
     alerts,
@@ -385,11 +394,6 @@ function buildDeps(options?: {
     operations: stores.operations,
     transactions: stores.transactions,
     lock: stores.lock,
-    receiptTracker: createFakeReceiptTracker(
-      options?.receiptOutcome === 'pending' ? { kind: 'pending' } : { kind: 'confirmed', confirmedAt: now },
-    ),
-    signer,
-    ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
     clock,
     idGenerator: { next: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` },
     logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),

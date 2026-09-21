@@ -14,7 +14,7 @@ import type {
   WalletFundingAttemptRecord,
   WalletLastFundedRecord,
 } from '../../../../src/app/ports.js';
-import { createFakeBalanceReader } from '../../../support/funding-fakes.js';
+import { createFakeBalanceReader, createTestChainAdapterRegistry } from '../../../support/funding-fakes.js';
 import { createFixedClock } from '../../../support/clock.js';
 
 const NOW = new Date('2026-08-11T19:00:00.000Z');
@@ -125,7 +125,9 @@ function buildDeps(options: {
     reconciliationRuns,
     managedWallets,
     fundingHealth,
-    balanceReader: createFakeBalanceReader({ balances }),
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader: createFakeBalanceReader({ balances }),
+    }),
     clock: createFixedClock(NOW),
   };
 }

@@ -1,6 +1,6 @@
 import { describeUnknownError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
-import type { BalanceReader, ServiceHeartbeat, ServiceHeartbeatRepository } from '../ports.js';
+import type { ChainAdapterRegistry, ServiceHeartbeat, ServiceHeartbeatRepository } from '../ports.js';
 
 export type ComponentStatus = 'ok' | 'degraded' | 'failed';
 
@@ -19,7 +19,7 @@ export interface ReadinessResult {
 
 export interface CheckReadinessDependencies {
   readonly serviceHeartbeats: ServiceHeartbeatRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly clock: Clock;
 }
 
@@ -66,16 +66,25 @@ async function checkDatabase(
 }
 
 async function checkRpc(dependencies: CheckReadinessDependencies): Promise<ReadinessComponent> {
-  const verification = await dependencies.balanceReader.verifyChainId();
-  if (verification.matches) {
+  const failures: string[] = [];
+  for (const chainId of dependencies.chainAdapters.registeredChainIds) {
+    const verification = await dependencies.chainAdapters.balanceReader(chainId).verifyChainId();
+    if (!verification.matches) {
+      failures.push(rpcFailureDetail(verification.observedChainId));
+    }
+  }
+  if (failures.length === 0) {
     return { name: 'rpc', status: 'ok', detail: undefined };
   }
   return {
     name: 'rpc',
     status: 'failed',
-    detail:
-      verification.observedChainId === undefined
-        ? 'The RPC endpoint is unreachable.'
-        : `The RPC endpoint reports chain ${String(verification.observedChainId)}.`,
+    detail: failures.join(' '),
   };
+}
+
+function rpcFailureDetail(observedChainId: number | undefined): string {
+  return observedChainId === undefined
+    ? 'The RPC endpoint is unreachable.'
+    : `The RPC endpoint reports chain ${String(observedChainId)}.`;
 }

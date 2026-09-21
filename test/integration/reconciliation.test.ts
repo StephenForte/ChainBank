@@ -37,6 +37,7 @@ import {
   createFakeOutgoingScanner,
   createFakeReceiptTracker,
   createFakeSigner,
+  createTestChainAdapterRegistry,
 } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
@@ -270,14 +271,8 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
 
     // Leave winner submitted so the loser still hits the C4 in-flight gate.
     const pendingTracker = createFakeReceiptTracker({ kind: 'pending' });
-    const reconcileDeps = {
-      ...buildReconcileDeps({ signer, balanceReader }),
-      receiptTracker: pendingTracker,
-    };
-    const ensureDeps = {
-      ...buildEnsureDeps({ signer, balanceReader }),
-      receiptTracker: pendingTracker,
-    };
+    const reconcileDeps = buildReconcileDeps({ signer, balanceReader, receiptTracker: pendingTracker });
+    const ensureDeps = buildEnsureDeps({ signer, balanceReader, receiptTracker: pendingTracker });
 
     const reconcilePromise = reconcileWallets(reconcileDeps, {
       role: 'cron-reconciler',
@@ -604,6 +599,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
     readonly balanceReader: BalanceReader;
     readonly outgoingScanner?: ReturnType<typeof createFakeOutgoingScanner>;
     readonly outgoingLookbackBlocks?: bigint;
+    readonly receiptTracker?: ReturnType<typeof createFakeReceiptTracker>;
   }) {
     const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
     const clock = createFixedClock();
@@ -611,7 +607,17 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: options.balanceReader,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: options.balanceReader,
+        outgoingScanner: options.outgoingScanner ?? createFakeOutgoingScanner(),
+        receiptTracker:
+          options.receiptTracker ??
+          createFakeReceiptTracker({
+            kind: 'confirmed',
+            confirmedAt: clock.now(),
+          }),
+        signer: options.signer,
+      }),
       auditEvents: createAuditEventRepository(handle.db),
       alerts: createAlertRepository(handle.db),
       emailSender: undefined,
@@ -619,13 +625,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       transactions: createFundingTransactionRepository(handle.db),
       reconciliationRuns: createReconciliationRunRepository(handle.db),
       reconciliationFunding: createReconciliationFundingQuery(handle.db),
-      outgoingScanner: options.outgoingScanner ?? createFakeOutgoingScanner(),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: clock.now(),
-      }),
-      signer: options.signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger,
@@ -646,6 +646,7 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
   function buildEnsureDeps(options: {
     readonly signer: TreasurySigner;
     readonly balanceReader: BalanceReader;
+    readonly receiptTracker?: ReturnType<typeof createFakeReceiptTracker>;
   }) {
     const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
     const clock = createFixedClock();
@@ -653,7 +654,16 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: options.balanceReader,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: options.balanceReader,
+        receiptTracker:
+          options.receiptTracker ??
+          createFakeReceiptTracker({
+            kind: 'confirmed',
+            confirmedAt: clock.now(),
+          }),
+        signer: options.signer,
+      }),
       credentialScopes: createCredentialScopeRepository(handle.db),
       auditEvents: createAuditEventRepository(handle.db),
       alerts: createAlertRepository(handle.db),
@@ -661,11 +671,6 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       operations: createFundingOperationRepository(handle.db),
       transactions: createFundingTransactionRepository(handle.db),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: clock.now(),
-      }),
-      signer: options.signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger,

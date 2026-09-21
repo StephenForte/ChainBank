@@ -6,7 +6,12 @@ import {
 import type { CredentialScope, CredentialScopeRepository } from '../../../../src/app/ports.js';
 import { createLogger } from '../../../../src/observability/logger.js';
 import { createFixedClock } from '../../../support/clock.js';
-import { createFakeReceiptTracker, createInMemoryFundingStores } from '../../../support/funding-fakes.js';
+import {
+  createFakeBalanceReader,
+  createFakeReceiptTracker,
+  createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
+} from '../../../support/funding-fakes.js';
 
 const HASH = `0x${'ab'.repeat(32)}`;
 const SENDER = `0x${'11'.repeat(20)}`;
@@ -81,7 +86,11 @@ function deps(
   return {
     operations: stores.operations,
     transactions: stores.transactions,
-    receiptTracker: createFakeReceiptTracker(outcome),
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader: createFakeBalanceReader({}),
+      receiptTracker: createFakeReceiptTracker(outcome),
+    }),
+    treasuryChainId: () => Promise.resolve(11_155_111),
     credentialScopes: scopeRepo(scopes),
     clock,
     logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
@@ -191,7 +200,10 @@ describe('getOperationStatus', () => {
     const result = await getOperationStatus(
       {
         ...deps(stores, clock, { kind: 'pending' }),
-        receiptTracker,
+        chainAdapters: createTestChainAdapterRegistry({
+          balanceReader: createFakeBalanceReader({}),
+          receiptTracker,
+        }),
       },
       {
         operationId: operation.id,
@@ -224,7 +236,10 @@ describe('getOperationStatus', () => {
     const result = await getOperationStatus(
       {
         ...deps(stores, clock, { kind: 'pending' }),
-        receiptTracker,
+        chainAdapters: createTestChainAdapterRegistry({
+          balanceReader: createFakeBalanceReader({}),
+          receiptTracker,
+        }),
       },
       {
         operationId: 'op-term',
@@ -352,7 +367,10 @@ describe('getOperationStatus', () => {
     await getOperationStatus(
       {
         ...deps(stores, clock, { kind: 'pending' }),
-        receiptTracker,
+        chainAdapters: createTestChainAdapterRegistry({
+          balanceReader: createFakeBalanceReader({}),
+          receiptTracker,
+        }),
         treasuryAddress: SENDER,
       },
       {

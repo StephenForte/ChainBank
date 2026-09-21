@@ -23,7 +23,7 @@ import { apiCredentials } from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
-import { createFakeReceiptTracker } from '../support/funding-fakes.js';
+import { createTestChainAdapterRegistry } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   truncatePhase1Tables,
@@ -98,24 +98,21 @@ describe.skipIf(!integrationEnabled)('GET /v1/projects/:id/environments (integra
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader: {
-        readBalance: () =>
-          Promise.resolve({
-            kind: 'observed',
-            balanceWei: 0n,
-            blockNumber: 1n,
-            observedAt: new Date(),
-          }),
-        verifyChainId: () => Promise.resolve({ matches: true, observedChainId: 11_155_111 }),
-      },
-      treasurySigner: undefined,
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: {
+          chainId: 11_155_111,
+          readBalance: () =>
+            Promise.resolve({
+              kind: 'observed',
+              balanceWei: 0n,
+              blockNumber: 1n,
+              observedAt: new Date(),
+            }),
+          verifyChainId: () => Promise.resolve({ matches: true, observedChainId: 11_155_111 }),
+        },
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

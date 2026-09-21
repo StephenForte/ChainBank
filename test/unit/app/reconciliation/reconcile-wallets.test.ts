@@ -41,6 +41,7 @@ import {
   createInMemoryFundingStores,
   createInMemoryReconciliationFundingQuery,
   createInMemoryReconciliationRunRepository,
+  createTestChainAdapterRegistry,
 } from '../../../support/funding-fakes.js';
 
 function collectLogs(): { stream: Writable; lines: () => Array<Record<string, unknown>> } {
@@ -476,8 +477,7 @@ describe('reconcileWallets sweep decisions', () => {
   it('keeps the run outcome when the reconciliation-failure alert hook throws', async () => {
     const stores = createInMemoryFundingStores();
     const deps = {
-      ...buildDeps(stores, [], buildTreasury()),
-      signer: undefined,
+      ...buildDeps(stores, [], buildTreasury(), { omitSigner: true }),
       reconcileFailureAlertThreshold: 1,
     };
     deps.alerts.findOpenByEntity = () => Promise.reject(new Error('alert store down'));
@@ -866,7 +866,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     });
     expect(killResult.outgoingScanStatus).toBe('not-run');
 
-    const noSigner = { ...buildDeps(stores, [], buildTreasury()), signer: undefined };
+    const noSigner = buildDeps(stores, [], buildTreasury(), { omitSigner: true });
     const noSignerResult = await reconcileWallets(noSigner, {
       role: 'cron-reconciler',
       credentialId: 'cron-cred',
@@ -1259,10 +1259,10 @@ describe('reconcileWallets replenish prelude and C23 findings (P6-PREP-3)', () =
       },
     });
     const stores = createInMemoryFundingStores();
-    const deps = {
-      ...buildDeps(stores, [sepolia, other], buildTreasury()),
+    const deps = buildDeps(stores, [sepolia, other], buildTreasury(), {
       externalSigner: createFakeSigner({}),
-    };
+      extraChainIds: [BASE_SEPOLIA_CHAIN_ID],
+    });
 
     await reconcileWallets(deps, {
       role: 'cron-reconciler',
@@ -1471,6 +1471,10 @@ function buildDeps(
   treasury: Treasury,
   overrides: {
     readonly signer?: ReturnType<typeof createFakeSigner>;
+    /** Explicit read-only process: no signer is registered. */
+    readonly omitSigner?: boolean;
+    readonly externalSigner?: ReturnType<typeof createFakeSigner>;
+    readonly extraChainIds?: readonly number[];
     readonly balanceReader?: ReturnType<typeof createFakeBalanceReader>;
     readonly outgoingScanner?: ReturnType<typeof createFakeOutgoingScanner>;
     readonly outgoingLookbackBlocks?: bigint;
@@ -1533,15 +1537,43 @@ function buildDeps(
     touchLastEvaluated: vi.fn(),
   };
 
+  const balanceReader =
+    overrides.balanceReader ??
+    createFakeBalanceReader({
+      balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH },
+    });
+  const outgoingScanner = overrides.outgoingScanner ?? createFakeOutgoingScanner();
+  const receiptTracker = createFakeReceiptTracker({
+    kind: 'confirmed',
+    confirmedAt: now,
+  });
+  const signer =
+    overrides.omitSigner === true
+      ? undefined
+      : (overrides.signer ?? createFakeSigner({ address: TREASURY_ADDRESS }));
+
   return {
     managedWallets,
     treasuries,
     balanceObservations,
-    balanceReader:
-      overrides.balanceReader ??
-      createFakeBalanceReader({
-        balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH },
-      }),
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader,
+      outgoingScanner,
+      receiptTracker,
+      ...(signer === undefined ? {} : { signer }),
+      ...(overrides.externalSigner === undefined ? {} : { externalSigner: overrides.externalSigner }),
+      extraChains: (overrides.extraChainIds ?? []).map((chainId) => ({
+        chainId,
+        ...(overrides.externalSigner === undefined
+          ? {}
+          : {
+              externalSigner: createFakeSigner({
+                chainId,
+                address: overrides.externalSigner.address,
+              }),
+            }),
+      })),
+    }),
     auditEvents,
     alerts,
     emailSender: undefined,
@@ -1549,13 +1581,7 @@ function buildDeps(
     transactions: stores.transactions,
     reconciliationRuns: createInMemoryReconciliationRunRepository(),
     reconciliationFunding: createInMemoryReconciliationFundingQuery(stores.txsById),
-    outgoingScanner: overrides.outgoingScanner ?? createFakeOutgoingScanner(),
     lock: stores.lock,
-    receiptTracker: createFakeReceiptTracker({
-      kind: 'confirmed',
-      confirmedAt: now,
-    }),
-    signer: overrides.signer ?? createFakeSigner({ address: TREASURY_ADDRESS }),
     clock: createFixedClock(now),
     idGenerator: (() => {
       let n = 0;

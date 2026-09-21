@@ -1444,6 +1444,36 @@ Local design choices (Phase 9, 2026-08-27):
 - Legacy hatch: a single `TREASURY_PRIVATE_KEY` builds one signer with no
   extra destination allowlist (today's behavior).
 
+### C26 — Chain-keyed adapter registry (owner: T6.1)
+
+Application code, routes, and jobs obtain a balance reader, receipt tracker,
+outgoing scanner, or treasury signer only through `ChainAdapterRegistry`.
+
+- Lookup is fail-closed. `balanceReader`, `receiptTracker`, `outgoingScanner`,
+  `getSignerForTreasury`, and `externalSigner` throw `INVALID_CONFIGURATION`
+  for an unregistered chain id. There is no default and no fallback to the
+  first registered chain.
+- `BalanceReader.readBalance` takes `{ chainId, address }`. A reader asked for
+  a different chain id throws `INVALID_CONFIGURATION` before any RPC call.
+  Provider failure still returns `unavailable`.
+- Signer resolution is keyed by `(chain id, address)`. Address-only matching
+  was unsafe: the same EOA is a legal treasury row on two chains
+  (`treasuries_chain_address_key`), and `verifyChainId` compares a signer only
+  against its own RPC, so a row on one chain would draw the other chain's
+  signer and broadcast there while every log and receipt looked correct.
+  Whether a later chain reuses that EOA or gets a distinct key is still an
+  open operator decision (T6.3); both are safe only when the chain is part of
+  the key.
+- A process with no signing credentials (`canSign === false`) throws
+  `SIGNER_UNAVAILABLE`. A process that can sign, but has no signer for that
+  chain and address, throws `INVALID_CONFIGURATION` and never returns another
+  chain's signer.
+- `externalSigner(chainId)` returns the Public key for replenish on that
+  chain, or `undefined` when that chain has no external key (C23 hatch / C25).
+  An unregistered chain id still throws.
+- The registry is populated from the singular `config.chain` until T6.2.
+  `SUPPORTED_CHAINS` stays one row (Ethereum Sepolia).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1534,3 +1564,4 @@ Local design choices (Phase 9, 2026-08-27):
 - 2026-09-21 — **D18 / Phase 6 opened (`tasks/p6-plan.md`).** Operator: Base Sepolia (84532) is the second chain. Wave is T6.1 registry (**C26**) → T6.2 multi-chain config (**C27**) → T6.3 Base Sepolia (**C28**) → T6.4 per-chain failure isolation (**C29**) ∥ T6.5 chain surfacing (**C30**); next free **C31**. **No migration is expected** — `chains`, `treasuries.chain_id`, `managed_wallets.chain_id` and `balance_observations.chain_id` already scope every row to a chain, so `0011` stays unconsumed. Three latent single-chain defects are fixed before Base is registered, the sharpest being that `getSignerForTreasury` (`src/container.ts`) matches on **address only**: the same EOA is a legal treasury row on both chains, so a Base row would silently draw the Sepolia-bound signer and broadcast on Sepolia — `verifyChainId` cannot catch it, because it compares a signer against its own RPC.
 - 2026-09-21 — **`main` was red on two security gates before Phase 6 started; tracked as TX.26.** PR #113 (five Markdown files, no source) failed `dependency audit` and `Trivy Dependency & Misconfig Scan`. Reproduced on the unmodified `3a3fbcd` checkout with the workflow's own command (`npm audit --omit=dev --audit-level=high` → 5 vulnerabilities, 1 moderate / 4 high, exit 1), so the failure is pre-existing and not PR-introduced. Root cause is `fast-uri` 3.1.5 and 4.1.2 (CVE-2026-75899, -75931, -75975, -76172; SSRF and host confusion; fixed in 3.1.6 / 4.1.3) reached transitively through `ajv`, `fast-json-stringify` and `@fastify/ajv-compiler` — the same four CVEs are the whole of Trivy's `Total: 8 (HIGH: 8)` — plus `fastify <= 5.12.0` (GHSA-w2qp-rph6-63g4 schema-validation bypass, GHSA-3m5p-2c4r-xxw2 `X-Forwarded-*` spoofing under `trustProxy`). PR #112 was green on 2026-09-01; the advisories published in the 21 days since. **Contrast with 2026-08-06**, when a Trivy red was a setup failure and was wrongly generalised into "Actions is down": this one carries CVE rows and reproduces locally, so it is signal. Dispatched before T6.1 so the Phase 6 gate means what it says, and so no worker following the standing `/goal keep this PR merge-ready` line reaches for `npm audit fix --force` inside a money-path refactor.
 - 2026-09-21 — **CVE-2026-16732: ChainBank was running the vulnerable `trustProxy` hop-count form in production; tracked as TX.27, decided as D19.** Surfaced by TX.26: bumping fastify to 5.12.5 broke `typecheck` and `build` because 5.12.1+ **removes `number` from the `trustProxy` type** (`boolean | string | string[] | TrustProxyFunction`). That removal _is_ the security fix. Per GHSA-3m5p-2c4r-xxw2, the hop-count form "compiles to a predicate that structurally ignores the address argument, so the guard reduces to `0 < tp`, always true for any `tp >= 1`" — so a caller with a direct network path to the origin can forge `X-Forwarded-For` and therefore `request.ip`. `src/api/app.ts:54` passed `config.app.isHosted ? security.trustedProxyHops : false` and `render.yaml` sets `TRUSTED_PROXY_HOPS: '1'`, so the hosted service was in the affected range (5.8.3–5.12.0). **The comment above that line documents the hop count as the mitigation chosen specifically to stop `request.ip` forgery — the mitigation was itself the vulnerability.** Blast radius is exactly what that comment predicted: `request.ip` keys the rate limiter (`src/api/app.ts:135`) and populates audit `sourceIp` across the projects, environments and admin routes. Residual exposure depends on whether the Render origin is reachable without traversing the proxy — **not established in this session**. The type error must not be silenced with a cast: the runtime no longer honours a number, so a cast yields undefined proxy behaviour on the authorization boundary, which is worse than the bug.
+- 2026-09-21 — **T6.1 published C26:** chain-keyed adapter registry. Lookups fail closed on an unregistered chain id. Treasury signer resolution is `(chain, address)`, because address-only matching would hand a Sepolia-bound signer to a same-EOA treasury row on another chain. Populated from the singular `config.chain` until T6.2. Whether Base reuses the Sepolia EOA remains an open operator decision (T6.3).

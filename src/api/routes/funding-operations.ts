@@ -1,6 +1,7 @@
 import type { AppInstance } from '../types.js';
 import { getOperationStatus } from '../../app/funding/get-operation-status.js';
 import type { Container } from '../../container.js';
+import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
 import { serializeFundingOperation } from '../serializers/funding-operation.js';
 
@@ -113,7 +114,18 @@ export function registerFundingOperationRoutes(app: AppInstance, container: Cont
         {
           operations: container.repositories.fundingOperations,
           transactions: container.repositories.fundingTransactions,
-          receiptTracker: container.transactionReceiptTracker,
+          chainAdapters: container.chainAdapters,
+          treasuryChainId: async (treasuryId) => {
+            const treasury = await container.repositories.treasuries.findById(treasuryId);
+            if (treasury === undefined) {
+              throw new ChainBankError(
+                'INVALID_CONFIGURATION',
+                `Funding transaction treasury ${treasuryId} does not exist`,
+                { publicMessage: 'The service is misconfigured.' },
+              );
+            }
+            return treasury.chain.chainId;
+          },
           credentialScopes: container.repositories.credentialScopes,
           clock: container.clock,
           logger: container.logger,

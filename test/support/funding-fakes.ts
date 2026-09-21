@@ -1,5 +1,7 @@
+import { createChainAdapterRegistry } from '../../src/infrastructure/evm/chain-adapter-registry.js';
 import type {
   BalanceReader,
+  ChainAdapterRegistry,
   ConfirmedNonceResult,
   FindByNonceResult,
   FundingDispatchLock,
@@ -329,6 +331,7 @@ export function createFakeBalanceReader(options?: {
   const chainId = options?.chainId ?? 11_155_111;
 
   return {
+    chainId,
     reads,
     balances,
     setBalance(address, balanceWei) {
@@ -338,8 +341,17 @@ export function createFakeBalanceReader(options?: {
     setUnavailable(address, errorCode) {
       unavailable.set(address.toLowerCase(), errorCode);
     },
-    readBalance(address) {
-      const normalized = address.toLowerCase();
+    readBalance(request) {
+      if (request.chainId !== chainId) {
+        return Promise.reject(
+          new ChainBankError(
+            'INVALID_CONFIGURATION',
+            `Balance reader for chain ${String(chainId)} was asked to read chain ${String(request.chainId)}`,
+            { publicMessage: 'The service is misconfigured.' },
+          ),
+        );
+      }
+      const normalized = request.address.toLowerCase();
       reads.push(normalized);
       const errorCode = unavailable.get(normalized);
       if (errorCode !== undefined) {
@@ -378,6 +390,8 @@ export function createFakeSigner(overrides: {
   readonly nonce?: number;
   readonly estimatedCostWei?: bigint;
   readonly address?: string;
+  /** Chain this signer broadcasts on. Default Ethereum Sepolia. */
+  readonly chainId?: number;
   /** When true, reject a nonce that has already been used (C16). Default false. */
   readonly rejectReusedNonce?: boolean;
 }): TreasurySigner & {
@@ -396,6 +410,7 @@ export function createFakeSigner(overrides: {
     get address() {
       return overrides.address ?? '0x1111111111111111111111111111111111111111';
     },
+    chainId: overrides.chainId ?? 11_155_111,
     get sendCalls() {
       return state.sendCalls;
     },
@@ -485,6 +500,7 @@ export function createDeferred<T = void>(): {
  */
 export function createControllableSigner(options: {
   readonly address?: string;
+  readonly chainId?: number;
   readonly estimatedCostWei?: bigint;
   readonly chainMatches?: boolean;
   /** Invoked before the call is counted; await a deferred here to hold the lock. */
@@ -506,6 +522,7 @@ export function createControllableSigner(options: {
     get address() {
       return options.address ?? '0x1111111111111111111111111111111111111111';
     },
+    chainId: options.chainId ?? 11_155_111,
     get sendCalls() {
       return state.sendCalls;
     },
@@ -789,5 +806,69 @@ export function createInMemoryReconciliationFundingQuery(
       }
       return Promise.resolve(hashes);
     },
+  };
+}
+
+export interface TestChainRegistration {
+  readonly chainId: number;
+  readonly balanceReader?: BalanceReader;
+  readonly receiptTracker?: TransactionReceiptTracker;
+  readonly outgoingScanner?: TreasuryOutgoingScanner;
+  readonly signer?: TreasurySigner;
+  readonly externalSigner?: TreasurySigner;
+}
+
+/**
+ * One-chain registry for tests that used to pass a single balance reader and signer.
+ * Extra chains exist only inside a test fixture — production `SUPPORTED_CHAINS` stays at one.
+ */
+export function emptyChainAdapterRegistry(): ChainAdapterRegistry {
+  return createChainAdapterRegistry([]);
+}
+
+export function createTestChainAdapterRegistry(input: {
+  readonly chainId?: number;
+  readonly balanceReader: BalanceReader;
+  readonly receiptTracker?: TransactionReceiptTracker;
+  readonly outgoingScanner?: TreasuryOutgoingScanner;
+  readonly signer?: TreasurySigner;
+  readonly externalSigner?: TreasurySigner;
+  readonly extraChains?: readonly TestChainRegistration[];
+}): ChainAdapterRegistry {
+  const chainId = input.chainId ?? input.balanceReader.chainId;
+  return createChainAdapterRegistry([
+    toRegistration({
+      chainId,
+      balanceReader: input.balanceReader,
+      ...(input.receiptTracker === undefined ? {} : { receiptTracker: input.receiptTracker }),
+      ...(input.outgoingScanner === undefined ? {} : { outgoingScanner: input.outgoingScanner }),
+      ...(input.signer === undefined ? {} : { signer: input.signer }),
+      ...(input.externalSigner === undefined ? {} : { externalSigner: input.externalSigner }),
+    }),
+    ...(input.extraChains ?? []).map((extra) => toRegistration(extra)),
+  ]);
+}
+
+function toRegistration(input: TestChainRegistration & { readonly balanceReader?: BalanceReader }) {
+  const balanceReader = input.balanceReader ?? createFakeBalanceReader({ chainId: input.chainId });
+  const signers = [input.signer, input.externalSigner].filter(
+    (signer): signer is TreasurySigner => signer !== undefined,
+  );
+  const unique = new Map<string, TreasurySigner>();
+  for (const signer of signers) {
+    const key = `${String(signer.chainId)}:${signer.address.toLowerCase()}`;
+    if (!unique.has(key)) {
+      unique.set(key, signer);
+    }
+  }
+  return {
+    chainId: input.chainId,
+    balanceReader,
+    receiptTracker:
+      input.receiptTracker ??
+      createFakeReceiptTracker({ kind: 'confirmed', confirmedAt: new Date('2026-07-29T12:00:00.000Z') }),
+    outgoingScanner: input.outgoingScanner ?? createFakeOutgoingScanner(),
+    ...(unique.size === 0 ? {} : { signers: [...unique.values()] }),
+    ...(input.externalSigner === undefined ? {} : { externalSigner: input.externalSigner }),
   };
 }

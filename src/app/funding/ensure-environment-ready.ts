@@ -7,7 +7,6 @@ import type {
   ManagedWallet,
   ManagedWalletRepository,
   ProjectRepository,
-  TreasurySigner,
 } from '../ports.js';
 import {
   ensureWalletFunded,
@@ -33,8 +32,6 @@ export type EnsureReadyOverallStatus = 'ready' | 'degraded' | 'pending' | 'block
 export interface EnsureEnvironmentReadyDependencies extends EnsureWalletFundedDependencies {
   readonly environments: EnvironmentRepository;
   readonly projects: ProjectRepository;
-  /** Public-treasury signer for the D14 replenish prelude. */
-  readonly externalSigner?: TreasurySigner;
   /** Injectable for unit tests; production uses {@link ensureWalletFunded}. */
   readonly fundWallet?: typeof ensureWalletFunded;
 }
@@ -133,23 +130,17 @@ export async function ensureEnvironmentReady(
   const wallets = await listAllEnabledWallets(dependencies.managedWallets, environment.id);
   const fundWallet = dependencies.fundWallet ?? ensureWalletFunded;
 
-  if (dependencies.externalSigner !== undefined) {
-    const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
-    for (const evmChainId of chainIds) {
-      await replenishOperationalPrelude(
-        {
-          ...dependencies,
-          externalSigner: dependencies.externalSigner,
-        },
-        {
-          evmChainId,
-          role: input.role,
-          credentialId: input.credentialId,
-          correlationId: input.correlationId,
-          sourceIp: input.sourceIp,
-          idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}:chain:${String(evmChainId)}`,
-        },
-      );
+  const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
+  for (const evmChainId of chainIds) {
+    if (dependencies.chainAdapters.externalSigner(evmChainId) !== undefined) {
+      await replenishOperationalPrelude(dependencies, {
+        evmChainId,
+        role: input.role,
+        credentialId: input.credentialId,
+        correlationId: input.correlationId,
+        sourceIp: input.sourceIp,
+        idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}:chain:${String(evmChainId)}`,
+      });
     }
   }
 
