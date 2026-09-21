@@ -5,6 +5,7 @@ import { assertValidTreasuryThresholds } from '../domain/treasury/treasury-statu
 import { parseEtherToWei } from '../domain/wei.js';
 import { environmentSchema, type RawEnvironment } from './schema.js';
 import { findSupportedChainById, supportedChainIds, type SupportedChain } from './supported-chains.js';
+import { parseTrustedProxyCidrs } from './trusted-proxy.js';
 
 /**
  * Which process is booting. The role decides which configuration sections are
@@ -88,7 +89,8 @@ export interface ApiSecurityConfig {
   readonly corsAllowedOrigins: readonly string[];
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
-  readonly trustedProxyHops: number;
+  /** Canonical `address/prefix` entries. X-Forwarded-* is honoured only for a peer in this set. */
+  readonly trustedProxyCidrs: readonly string[];
   /**
    * Static bearer for GET /health/funding. Undefined when FUNDING_HEALTH_TOKEN
    * is unset — the route then fails closed (401) rather than exposing inventory.
@@ -200,6 +202,9 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
 
   const env = parsed.data;
   const isHosted = env.CHAINBANK_ENVIRONMENT !== 'local';
+  // Parsed for every role. A malformed allowlist must fail the process that
+  // loaded it, including roles that never honour X-Forwarded-*.
+  const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
   const funding = buildFundingConfig(env, options.serviceRole);
 
   return {
@@ -218,7 +223,8 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     treasury: buildTreasuryConfig(env),
     operationalTreasury: buildOperationalTreasuryConfig(env),
     email: requiresEmailConfig(options.serviceRole) ? buildEmailConfig(env, options.serviceRole) : undefined,
-    apiSecurity: options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted) : undefined,
+    apiSecurity:
+      options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted, trustedProxyCidrs) : undefined,
     alerts: {
       reminderIntervalMs: env.ALERT_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000,
       reconcileFailureAlertThreshold: env.RECONCILE_FAILURE_ALERT_THRESHOLD,
@@ -626,7 +632,11 @@ function buildEmailConfig(env: RawEnvironment, serviceRole: ServiceRole): EmailC
   };
 }
 
-function buildApiSecurityConfig(env: RawEnvironment, isHosted: boolean): ApiSecurityConfig {
+function buildApiSecurityConfig(
+  env: RawEnvironment,
+  isHosted: boolean,
+  trustedProxyCidrs: readonly string[],
+): ApiSecurityConfig {
   const corsAllowedOrigins =
     env.CORS_ALLOWED_ORIGINS === undefined ? [] : splitList(env.CORS_ALLOWED_ORIGINS);
 
@@ -642,7 +652,7 @@ function buildApiSecurityConfig(env: RawEnvironment, isHosted: boolean): ApiSecu
     corsAllowedOrigins,
     rateLimitMax: env.RATE_LIMIT_MAX,
     rateLimitWindowSeconds: env.RATE_LIMIT_WINDOW_SECONDS,
-    trustedProxyHops: env.TRUSTED_PROXY_HOPS,
+    trustedProxyCidrs,
     fundingHealthToken: env.FUNDING_HEALTH_TOKEN,
   };
 }
