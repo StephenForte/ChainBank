@@ -38,7 +38,7 @@ export function registerHealthRoutes(app: AppInstance, container: Container): vo
   app.get('/health/ready', async (_request, reply) => {
     const result = await checkReadiness({
       serviceHeartbeats: container.repositories.serviceHeartbeats,
-      balanceReader: container.balanceReader,
+      chainAdapters: container.chainAdapters,
       clock: container.clock,
     });
 
@@ -68,7 +68,7 @@ export function registerHealthRoutes(app: AppInstance, container: Container): vo
       reconciliationRuns: container.repositories.reconciliationRuns,
       managedWallets: container.repositories.managedWallets,
       fundingHealth: container.repositories.fundingHealth,
-      balanceReader: container.balanceReader,
+      chainAdapters: container.chainAdapters,
       clock: container.clock,
     });
 

@@ -7,6 +7,7 @@ import {
   createFakeBalanceReader,
   createFakeSigner,
   createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
 } from '../../../support/funding-fakes.js';
 
 const WALLET_ADDRESS = '0x2222222222222222222222222222222222222222';
@@ -139,7 +140,7 @@ function deps(overrides: {
       managedWallets: overrides.managedWallets ?? createManagedWalletRepo(),
       lock: overrides.lock ?? stores.lock,
       signer,
-      balanceReader,
+      chainAdapters: createTestChainAdapterRegistry({ balanceReader, signer }),
       clock,
       idGenerator: { next: () => `id-${String(++n)}` },
       logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),

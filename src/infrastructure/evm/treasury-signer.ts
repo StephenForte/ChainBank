@@ -136,6 +136,8 @@ export function createTreasurySigner(options: CreateTreasurySignerOptions): Trea
       return account.address;
     },
 
+    chainId: chain.chainId,
+
     verifyChainId,
 
     async getTransactionCount(): Promise<number> {

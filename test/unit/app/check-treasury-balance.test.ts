@@ -9,6 +9,7 @@ import type {
 } from '../../../src/app/ports.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
+import { createTestChainAdapterRegistry } from '../../support/funding-fakes.js';
 import { createInlineOperatorMutations } from '../../support/operator-mutations.js';
 
 const treasury: Treasury = {
@@ -45,7 +46,7 @@ const treasury: Treasury = {
 function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalance']>> }): {
   treasuries: TreasuryRepository;
   balanceObservations: BalanceObservationRepository;
-  balanceReader: BalanceReader;
+  chainAdapters: ReturnType<typeof createTestChainAdapterRegistry>;
   auditEvents: AuditEventRepository;
   operatorMutations: ReturnType<typeof createInlineOperatorMutations>;
 } {
@@ -86,10 +87,13 @@ function deps(overrides: { reading?: Awaited<ReturnType<BalanceReader['readBalan
   return {
     treasuries,
     balanceObservations,
-    balanceReader: {
-      readBalance: vi.fn(() => Promise.resolve(reading)),
-      verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11155111 })),
-    },
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader: {
+        chainId: 11155111,
+        readBalance: vi.fn(() => Promise.resolve(reading)),
+        verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11155111 })),
+      },
+    }),
     auditEvents,
     operatorMutations: createInlineOperatorMutations({
       treasuries,

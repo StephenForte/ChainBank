@@ -28,7 +28,7 @@ import {
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
-import { createFakeReceiptTracker, createFakeSigner } from '../support/funding-fakes.js';
+import { createFakeSigner, createTestChainAdapterRegistry } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -171,24 +171,22 @@ describe.skipIf(!integrationEnabled)('GET /v1/reconciliation-runs (integration, 
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader: {
-        readBalance: () =>
-          Promise.resolve({
-            kind: 'observed',
-            balanceWei: 0n,
-            blockNumber: 1n,
-            observedAt: new Date(),
-          }),
-        verifyChainId: () => Promise.resolve({ matches: true, observedChainId: 11_155_111 }),
-      },
-      treasurySigner: createFakeSigner({}),
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: {
+          chainId: 11_155_111,
+          readBalance: () =>
+            Promise.resolve({
+              kind: 'observed',
+              balanceWei: 0n,
+              blockNumber: 1n,
+              observedAt: new Date(),
+            }),
+          verifyChainId: () => Promise.resolve({ matches: true, observedChainId: 11_155_111 }),
+        },
+        signer: createFakeSigner({}),
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({ kind: 'pending' }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

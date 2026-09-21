@@ -13,7 +13,7 @@ import type {
   AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
-  BalanceReader,
+  ChainAdapterRegistry,
   CredentialScopeRepository,
   EmailSender,
   FundingDispatchLock,
@@ -22,7 +22,6 @@ import type {
   FundingTransactionRepository,
   ManagedWallet,
   ManagedWalletRepository,
-  TransactionReceiptTracker,
   Treasury,
   TreasuryRepository,
   TreasurySigner,
@@ -42,7 +41,7 @@ export interface EnsureWalletFundedDependencies {
   readonly managedWallets: ManagedWalletRepository;
   readonly treasuries: TreasuryRepository;
   readonly balanceObservations: BalanceObservationRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly credentialScopes: CredentialScopeRepository;
   readonly auditEvents: AuditEventRepository;
   readonly alerts: AlertRepository;
@@ -50,12 +49,6 @@ export interface EnsureWalletFundedDependencies {
   readonly operations: FundingOperationRepository;
   readonly transactions: FundingTransactionRepository;
   readonly lock: FundingDispatchLock;
-  readonly receiptTracker: TransactionReceiptTracker;
-  readonly signer: TreasurySigner | undefined;
-  /** C25. When omitted, {@link signer} is used for every treasury. */
-  readonly getSignerForTreasury?: (treasury: Treasury) => TreasurySigner;
-  /** Public-treasury signer for the D14 replenish prelude. */
-  readonly externalSigner?: TreasurySigner;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -128,25 +121,23 @@ export async function ensureWalletFunded(
     // Fail closed before any RPC or signer construction path.
     assertFundingArmed(dependencies);
 
-    if (dependencies.externalSigner !== undefined) {
-      await replenishOperationalPrelude(
-        {
-          ...dependencies,
-          externalSigner: dependencies.externalSigner,
-        },
-        {
-          evmChainId: wallet.chain.chainId,
-          role: input.role,
-          credentialId: input.credentialId,
-          correlationId: input.correlationId,
-          sourceIp: input.sourceIp,
-          idempotencyKey: `ensure-funded:${wallet.id}:${input.idempotencyKey}`,
-        },
-      );
+    const externalSigner = dependencies.chainAdapters.externalSigner(wallet.chain.chainId);
+    if (externalSigner !== undefined) {
+      await replenishOperationalPrelude(dependencies, {
+        evmChainId: wallet.chain.chainId,
+        role: input.role,
+        credentialId: input.credentialId,
+        correlationId: input.correlationId,
+        sourceIp: input.sourceIp,
+        idempotencyKey: `ensure-funded:${wallet.id}:${input.idempotencyKey}`,
+      });
     }
 
     const treasury = await resolveTreasuryForWallet(dependencies, wallet);
-    const walletReading = await dependencies.balanceReader.readBalance(wallet.addressDisplay);
+    const walletReading = await dependencies.chainAdapters.balanceReader(wallet.chain.chainId).readBalance({
+      chainId: wallet.chain.chainId,
+      address: wallet.addressDisplay,
+    });
     if (walletReading.kind === 'unavailable') {
       throw new ChainBankError(walletReading.errorCode, walletReading.reason, {
         publicMessage: 'The managed wallet balance could not be read from the chain.',
@@ -154,7 +145,12 @@ export async function ensureWalletFunded(
       });
     }
 
-    const treasuryReading = await dependencies.balanceReader.readBalance(treasury.address);
+    const treasuryReading = await dependencies.chainAdapters
+      .balanceReader(treasury.chain.chainId)
+      .readBalance({
+        chainId: treasury.chain.chainId,
+        address: treasury.address,
+      });
     if (treasuryReading.kind === 'unavailable') {
       throw new ChainBankError(treasuryReading.errorCode, treasuryReading.reason, {
         publicMessage: 'The treasury balance could not be read from the chain.',
@@ -181,14 +177,7 @@ export async function ensureWalletFunded(
       sourceOperationId: input.correlationId,
     });
 
-    const signer = dependencies.getSignerForTreasury?.(treasury) ?? dependencies.signer;
-    if (signer === undefined) {
-      throw new ChainBankError(
-        'SIGNER_UNAVAILABLE',
-        'Funding is enabled but no treasury signer is configured for this process.',
-        { publicMessage: 'Funding is unavailable because the treasury signer is not configured.' },
-      );
-    }
+    const signer = resolveWalletSigner(dependencies, treasury);
 
     assertSignerMatchesTreasury(signer, treasury);
 
@@ -201,7 +190,7 @@ export async function ensureWalletFunded(
         signer,
         // In-lock re-reads drive the money decision; pre-lock readings above
         // remain the recorded observations / API balanceBeforeWei (TX.8).
-        balanceReader: dependencies.balanceReader,
+        chainAdapters: dependencies.chainAdapters,
         clock: dependencies.clock,
         idGenerator: dependencies.idGenerator,
         logger: dependencies.logger,
@@ -313,8 +302,25 @@ function assertFundingArmed(dependencies: EnsureWalletFundedDependencies): void 
  * the real treasury drains. Compared case-insensitively because one side is
  * checksummed and the other is stored normalized.
  */
+function resolveWalletSigner(
+  dependencies: EnsureWalletFundedDependencies,
+  treasury: Treasury,
+): TreasurySigner {
+  if (!dependencies.chainAdapters.canSign) {
+    throw new ChainBankError(
+      'SIGNER_UNAVAILABLE',
+      'Funding is enabled but no treasury signer is configured for this process.',
+      { publicMessage: 'Funding is unavailable because the treasury signer is not configured.' },
+    );
+  }
+  return dependencies.chainAdapters.getSignerForTreasury(treasury);
+}
+
 function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury): void {
-  if (signer.address.toLowerCase() !== treasury.address.toLowerCase()) {
+  if (
+    signer.chainId !== treasury.chain.chainId ||
+    signer.address.toLowerCase() !== treasury.address.toLowerCase()
+  ) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
       'Treasury signing key does not match the configured treasury address; refusing to sign.',
@@ -322,7 +328,7 @@ function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury)
         publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.',
         // The signer address is deliberately omitted: it is the public half of
         // the key this process holds, and the caller has no need for it.
-        context: { treasuryId: treasury.id },
+        context: { treasuryId: treasury.id, chainId: treasury.chain.chainId },
       },
     );
   }
@@ -472,7 +478,7 @@ async function mapDispatchOutcome(
         {
           operations: dependencies.operations,
           transactions: dependencies.transactions,
-          receiptTracker: dependencies.receiptTracker,
+          receiptTracker: dependencies.chainAdapters.receiptTracker(input.treasury.chain.chainId),
           clock: dependencies.clock,
           logger: dependencies.logger,
           confirmations: dependencies.confirmations,

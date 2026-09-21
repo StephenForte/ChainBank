@@ -11,7 +11,7 @@ import { createManagedWalletRepository } from '../../src/infrastructure/db/repos
 import { fundingTransactions, managedWallets } from '../../src/infrastructure/db/schema.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { createFixedClock } from '../support/clock.js';
-import { createFakeBalanceReader } from '../support/funding-fakes.js';
+import { createFakeBalanceReader, createTestChainAdapterRegistry } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -31,6 +31,7 @@ function createControllableSigner(options: {
 }): TreasurySigner & { readonly sendCalls: number; readonly nonces: number[] } {
   const state = { sendCalls: 0, nonces: [] as number[] };
   return {
+    chainId: 11_155_111,
     get address() {
       return '0x1111111111111111111111111111111111111111';
     },
@@ -95,7 +96,7 @@ describe.skipIf(!integrationEnabled)('Funding dispatch engine (integration)', ()
         managedWallets: createManagedWalletRepository(handle.db),
         lock: createFundingDispatchLock(handle.db),
         signer,
-        balanceReader,
+        chainAdapters: createTestChainAdapterRegistry({ balanceReader, signer }),
         clock,
         idGenerator: { next: () => crypto.randomUUID() },
         logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),

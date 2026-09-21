@@ -2,12 +2,17 @@ import type { BalanceReading } from '../../domain/balance-reading.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { evaluateTreasuryStatus } from '../../domain/treasury/treasury-status.js';
-import type { BalanceReader, OperatorMutationTransaction, Treasury, TreasuryRepository } from '../ports.js';
+import type {
+  ChainAdapterRegistry,
+  OperatorMutationTransaction,
+  Treasury,
+  TreasuryRepository,
+} from '../ports.js';
 
 export interface CheckTreasuryBalanceDependencies {
   /** Pre-RPC lookup only; persistence goes through {@link operatorMutations}. */
   readonly treasuries: TreasuryRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly operatorMutations: OperatorMutationTransaction;
 }
 
@@ -49,7 +54,10 @@ export async function checkTreasuryBalance(
   }
 
   // Hold no DB transaction across the RPC round trip.
-  const reading = await dependencies.balanceReader.readBalance(treasury.address);
+  const reading = await dependencies.chainAdapters.balanceReader(treasury.chain.chainId).readBalance({
+    chainId: treasury.chain.chainId,
+    address: treasury.address,
+  });
 
   if (reading.kind === 'unavailable') {
     const updated = await dependencies.operatorMutations.run(async (uow) => {

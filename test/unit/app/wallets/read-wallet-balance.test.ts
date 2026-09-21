@@ -8,6 +8,7 @@ import type {
 } from '../../../../src/app/ports.js';
 import { readWalletBalance } from '../../../../src/app/wallets/read-wallet-balance.js';
 import type { Role } from '../../../../src/domain/auth/roles.js';
+import { createFakeBalanceReader, createTestChainAdapterRegistry } from '../../../support/funding-fakes.js';
 
 const WALLET_ID = '44444444-4444-4444-8444-444444444444';
 const OTHER_WALLET_ID = '55555555-5555-4555-8555-555555555555';
@@ -59,6 +60,7 @@ function scopeRepo(scopes: readonly CredentialScope[]): CredentialScopeRepositor
 
 function observedReader(balanceWei = 10n ** 17n): BalanceReader {
   return {
+    chainId: 11_155_111,
     readBalance: vi.fn(() =>
       Promise.resolve({
         kind: 'observed' as const,
@@ -73,6 +75,7 @@ function observedReader(balanceWei = 10n ** 17n): BalanceReader {
 
 function unavailableReader(): BalanceReader {
   return {
+    chainId: 11_155_111,
     readBalance: vi.fn(() =>
       Promise.resolve({
         kind: 'unavailable' as const,
@@ -100,14 +103,53 @@ function buildDeps(options: {
     update: vi.fn(),
   };
 
+  const balanceReader = options.balanceReader ?? observedReader();
   return {
     managedWallets,
     credentialScopes: scopeRepo(options.scopes ?? []),
-    balanceReader: options.balanceReader ?? observedReader(),
+    balanceReader,
+    chainAdapters: createTestChainAdapterRegistry({ balanceReader }),
   };
 }
 
 describe('readWalletBalance', () => {
+  it('issues the balance read against the wallet chain reader only', async () => {
+    const fixtureChainId = 84_532;
+    const wallet = buildWallet();
+    const readerA = createFakeBalanceReader({
+      chainId: wallet.chain.chainId,
+      balances: { [wallet.addressDisplay]: 1n },
+    });
+    const readerB = createFakeBalanceReader({
+      chainId: fixtureChainId,
+      balances: { [wallet.addressDisplay]: 9n },
+    });
+    const result = await readWalletBalance(
+      {
+        managedWallets: {
+          insert: vi.fn(),
+          findById: vi.fn(() => Promise.resolve(wallet)),
+          list: vi.fn(),
+          update: vi.fn(),
+        },
+        credentialScopes: scopeRepo([]),
+        chainAdapters: createTestChainAdapterRegistry({
+          balanceReader: readerA,
+          extraChains: [{ chainId: fixtureChainId, balanceReader: readerB }],
+        }),
+      },
+      {
+        role: 'operator',
+        credentialId: CREDENTIAL_ID,
+        walletId: wallet.id,
+      },
+    );
+
+    expect(readerA.reads).toEqual([wallet.addressDisplay.toLowerCase()]);
+    expect(readerB.reads).toEqual([]);
+    expect(result.reading).toMatchObject({ kind: 'observed', balanceWei: 1n });
+  });
+
   it('returns an observed reading for operator', async () => {
     const wallet = buildWallet();
     const deps = buildDeps({ wallet });
@@ -123,7 +165,10 @@ describe('readWalletBalance', () => {
       balanceWei: 10n ** 17n,
       blockNumber: 99n,
     });
-    expect(deps.balanceReader.readBalance).toHaveBeenCalledWith(wallet.addressDisplay);
+    expect(deps.balanceReader.readBalance).toHaveBeenCalledWith({
+      chainId: wallet.chain.chainId,
+      address: wallet.addressDisplay,
+    });
   });
 
   it('returns an observed reading for read-only', async () => {

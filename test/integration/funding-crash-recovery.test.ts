@@ -25,6 +25,7 @@ import {
   createControllableSigner,
   createDeferred,
   createFakeReceiptTracker,
+  createTestChainAdapterRegistry,
 } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
@@ -83,8 +84,9 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
 
   function createBalanceReader(): BalanceReader {
     return {
-      readBalance(address) {
-        const normalized = address.toLowerCase();
+      chainId: 11_155_111,
+      readBalance(request) {
+        const normalized = request.address.toLowerCase();
         const balanceWei = normalized === TREASURY_ADDRESS.toLowerCase() ? 20n * ONE_ETH : ONE_ETH / 10n;
         return Promise.resolve({
           kind: 'observed',
@@ -105,7 +107,14 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: createBalanceReader(),
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: createBalanceReader(),
+        signer,
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
+        }),
+      }),
       credentialScopes: createCredentialScopeRepository(handle.db),
       auditEvents: createAuditEventRepository(handle.db),
       alerts: createAlertRepository(handle.db),
@@ -113,11 +122,6 @@ describe.skipIf(!integrationEnabled)('Funding crash recovery (integration)', () 
       operations: createFundingOperationRepository(handle.db),
       transactions: createFundingTransactionRepository(handle.db),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: new Date('2026-07-29T12:00:01.000Z'),
-      }),
-      signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),

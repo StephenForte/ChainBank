@@ -79,7 +79,7 @@ export function buildReconcileWalletsDependencies(
     managedWallets: container.repositories.managedWallets,
     treasuries: container.repositories.treasuries,
     balanceObservations: container.repositories.balanceObservations,
-    balanceReader: container.balanceReader,
+    chainAdapters: container.chainAdapters,
     auditEvents: container.repositories.auditEvents,
     alerts: container.repositories.alerts,
     emailSender: container.emailSender,
@@ -87,20 +87,7 @@ export function buildReconcileWalletsDependencies(
     transactions: container.repositories.fundingTransactions,
     reconciliationRuns: container.repositories.reconciliationRuns,
     reconciliationFunding: container.repositories.reconciliationFunding,
-    outgoingScanner: container.treasuryOutgoingScanner,
     lock: container.fundingDispatchLock,
-    receiptTracker: container.transactionReceiptTracker,
-    signer: container.treasurySigner,
-    ...(container.externalTreasurySigner === undefined
-      ? {}
-      : { externalSigner: container.externalTreasurySigner }),
-    ...(container.treasurySigners === undefined
-      ? {}
-      : {
-          getSignerForTreasury: container.treasurySigners.getSignerForTreasury.bind(
-            container.treasurySigners,
-          ),
-        }),
     clock: container.clock,
     idGenerator: container.idGenerator,
     logger: container.logger,

@@ -25,6 +25,7 @@ import {
   type Phase1Seed,
 } from '../support/integration-db.js';
 import { integrationEnabled } from '../support/integration-setup.js';
+import { emptyChainAdapterRegistry } from '../support/funding-fakes.js';
 import { validWebEnv } from '../support/env.js';
 import type { AppInstance } from '../../src/api/types.js';
 
@@ -122,15 +123,9 @@ describe.skipIf(!integrationEnabled)('admin credential lifecycle (integration)',
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader: {} as Container['balanceReader'],
-      treasurySigner: undefined,
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: emptyChainAdapterRegistry(),
       fundingDispatchLock: {} as Container['fundingDispatchLock'],
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: {} as Container['transactionReceiptTracker'],
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

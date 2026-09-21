@@ -16,14 +16,13 @@ import type {
   AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
-  BalanceReader,
+  ChainAdapterRegistry,
   EmailSender,
   FundingDispatchLock,
   FundingOperationRepository,
   FundingTransaction,
   FundingTransactionRepository,
   ManagedWalletRepository,
-  TransactionReceiptTracker,
   Treasury,
   TreasuryRepository,
   TreasurySigner,
@@ -41,7 +40,7 @@ export type ReplenishOperationalStatus = 'no-op' | 'funded' | 'pending' | 'block
 export interface EnsureOperationalTreasuryFundedDependencies {
   readonly treasuries: TreasuryRepository;
   readonly balanceObservations: BalanceObservationRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly auditEvents: AuditEventRepository;
   readonly alerts: AlertRepository;
   readonly emailSender: EmailSender | undefined;
@@ -49,8 +48,6 @@ export interface EnsureOperationalTreasuryFundedDependencies {
   readonly transactions: FundingTransactionRepository;
   readonly managedWallets: ManagedWalletRepository;
   readonly lock: FundingDispatchLock;
-  readonly receiptTracker: TransactionReceiptTracker;
-  readonly externalSigner: TreasurySigner | undefined;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -124,7 +121,10 @@ export async function ensureOperationalTreasuryFunded(
   assertFundingArmed(dependencies);
   const policy = requireOperationalPolicy(operational);
 
-  const destReading = await dependencies.balanceReader.readBalance(operational.addressDisplay);
+  const destReading = await dependencies.chainAdapters.balanceReader(operational.chain.chainId).readBalance({
+    chainId: operational.chain.chainId,
+    address: operational.addressDisplay,
+  });
   if (destReading.kind === 'unavailable') {
     throw new ChainBankError(destReading.errorCode, destReading.reason, {
       publicMessage: 'The Private treasury balance could not be read from the chain.',
@@ -132,7 +132,10 @@ export async function ensureOperationalTreasuryFunded(
     });
   }
 
-  const sourceReading = await dependencies.balanceReader.readBalance(source.addressDisplay);
+  const sourceReading = await dependencies.chainAdapters.balanceReader(source.chain.chainId).readBalance({
+    chainId: source.chain.chainId,
+    address: source.addressDisplay,
+  });
   if (sourceReading.kind === 'unavailable') {
     throw new ChainBankError(sourceReading.errorCode, sourceReading.reason, {
       publicMessage: 'The Public treasury balance could not be read from the chain.',
@@ -159,7 +162,7 @@ export async function ensureOperationalTreasuryFunded(
     sourceOperationId: input.correlationId,
   });
 
-  const signer = dependencies.externalSigner;
+  const signer = dependencies.chainAdapters.externalSigner(source.chain.chainId);
   if (signer === undefined) {
     throw new ChainBankError(
       'SIGNER_UNAVAILABLE',
@@ -177,7 +180,7 @@ export async function ensureOperationalTreasuryFunded(
         managedWallets: dependencies.managedWallets,
         lock: dependencies.lock,
         signer,
-        balanceReader: dependencies.balanceReader,
+        chainAdapters: dependencies.chainAdapters,
         clock: dependencies.clock,
         idGenerator: dependencies.idGenerator,
         logger: dependencies.logger,
@@ -282,7 +285,10 @@ function assertFundingArmed(dependencies: EnsureOperationalTreasuryFundedDepende
 }
 
 function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury): void {
-  if (signer.address.toLowerCase() !== treasury.address.toLowerCase()) {
+  if (
+    signer.chainId !== treasury.chain.chainId ||
+    signer.address.toLowerCase() !== treasury.address.toLowerCase()
+  ) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
       'Treasury signing key does not match the configured treasury address; refusing to sign.',
@@ -418,7 +424,7 @@ async function mapDispatchOutcome(
         {
           operations: dependencies.operations,
           transactions: dependencies.transactions,
-          receiptTracker: dependencies.receiptTracker,
+          receiptTracker: dependencies.chainAdapters.receiptTracker(input.source.chain.chainId),
           clock: dependencies.clock,
           logger: dependencies.logger,
           confirmations: dependencies.confirmations,

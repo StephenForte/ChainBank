@@ -44,6 +44,7 @@ import {
   createFakeOutgoingScanner,
   createFakeReceiptTracker,
   createFakeSigner,
+  createTestChainAdapterRegistry,
 } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
@@ -116,12 +117,14 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
 
     const outcome = await runWalletReconciler(container, `corr-${randomUUID()}`, {
       reconcileDeps: buildReconcileWalletsDependencies(container, {
-        signer,
-        balanceReader,
-        outgoingScanner: createFakeOutgoingScanner(),
-        receiptTracker: createFakeReceiptTracker({
-          kind: 'confirmed',
-          confirmedAt: container.clock.now(),
+        chainAdapters: createTestChainAdapterRegistry({
+          signer,
+          balanceReader,
+          outgoingScanner: createFakeOutgoingScanner(),
+          receiptTracker: createFakeReceiptTracker({
+            kind: 'confirmed',
+            confirmedAt: container.clock.now(),
+          }),
         }),
         isFundingEnabled: true,
         isFundingKillSwitchActive: false,
@@ -153,9 +156,11 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
 
     const outcome = await runWalletReconciler(container, `corr-${randomUUID()}`, {
       reconcileDeps: buildReconcileWalletsDependencies(container, {
-        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
-        balanceReader: createFakeBalanceReader({
-          balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+        chainAdapters: createTestChainAdapterRegistry({
+          signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+          balanceReader: createFakeBalanceReader({
+            balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+          }),
         }),
         isFundingEnabled: false,
         isFundingKillSwitchActive: false,
@@ -175,9 +180,11 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
   it('exits non-zero on a forced run-level error and still records the run', async () => {
     const container = buildJobContainer({ fundingEnabled: true });
     const base = buildReconcileWalletsDependencies(container, {
-      signer: createFakeSigner({ address: TREASURY_ADDRESS }),
-      balanceReader: createFakeBalanceReader({
-        balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+      chainAdapters: createTestChainAdapterRegistry({
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        balanceReader: createFakeBalanceReader({
+          balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+        }),
       }),
       isFundingEnabled: true,
     });
@@ -269,20 +276,19 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
         reconciliationFunding: createReconciliationFundingQuery(database.db),
         fundingHealth: createFundingHealthQuery(database.db),
       },
-      balanceReader: createFakeBalanceReader({
-        balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: createFakeBalanceReader({
+          balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A_ADDRESS]: 0n },
+        }),
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: clock.now(),
+        }),
+        outgoingScanner: createFakeOutgoingScanner(),
       }),
-      treasurySigner: createFakeSigner({ address: TREASURY_ADDRESS }),
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
       fundingDispatchLock: createFundingDispatchLock(database.db),
       operatorMutations: createOperatorMutationTransaction(database.db),
-      transactionReceiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: clock.now(),
-      }),
-      treasuryOutgoingScanner: createFakeOutgoingScanner(),
       emailSender: {
         send() {
           return Promise.resolve({ kind: 'sent' as const, providerMessageId: `msg-${randomUUID()}` });

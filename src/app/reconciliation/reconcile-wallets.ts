@@ -33,7 +33,7 @@ import type {
   AlertRepository,
   AuditEventRepository,
   BalanceObservationRepository,
-  BalanceReader,
+  ChainAdapterRegistry,
   EmailSender,
   FundingDispatchLock,
   FundingOperationRepository,
@@ -45,7 +45,6 @@ import type {
   ReconciliationFundingQuery,
   ReconciliationRun,
   ReconciliationRunRepository,
-  TransactionReceiptTracker,
   Treasury,
   TreasuryOutgoingScanner,
   TreasuryRepository,
@@ -77,7 +76,7 @@ export interface ReconcileWalletsDependencies {
   readonly managedWallets: ManagedWalletRepository;
   readonly treasuries: TreasuryRepository;
   readonly balanceObservations: BalanceObservationRepository;
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly auditEvents: AuditEventRepository;
   readonly alerts: AlertRepository;
   readonly emailSender: EmailSender | undefined;
@@ -85,12 +84,7 @@ export interface ReconcileWalletsDependencies {
   readonly transactions: FundingTransactionRepository;
   readonly reconciliationRuns: ReconciliationRunRepository;
   readonly reconciliationFunding: ReconciliationFundingQuery;
-  readonly outgoingScanner: TreasuryOutgoingScanner;
   readonly lock: FundingDispatchLock;
-  readonly receiptTracker: TransactionReceiptTracker;
-  readonly signer: TreasurySigner | undefined;
-  readonly externalSigner?: TreasurySigner;
-  readonly getSignerForTreasury?: (treasury: Treasury) => TreasurySigner;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -188,8 +182,7 @@ export async function reconcileWallets(
   try {
     assertFundingArmed(dependencies);
 
-    const signer = dependencies.signer;
-    if (signer === undefined) {
+    if (!dependencies.chainAdapters.canSign) {
       throw new ChainBankError(
         'SIGNER_UNAVAILABLE',
         'Reconciliation requires a treasury signer in this process.',
@@ -238,14 +231,14 @@ export async function reconcileWallets(
 
     const wallets = await listAllEligibleWallets(dependencies.managedWallets);
 
-    if (dependencies.externalSigner !== undefined) {
-      const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
-      for (const evmChainId of chainIds) {
+    const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
+    for (const evmChainId of chainIds) {
+      if (dependencies.chainAdapters.externalSigner(evmChainId) !== undefined) {
         await replenishOperationalPrelude(
           {
             treasuries: dependencies.treasuries,
             balanceObservations: dependencies.balanceObservations,
-            balanceReader: dependencies.balanceReader,
+            chainAdapters: dependencies.chainAdapters,
             auditEvents: dependencies.auditEvents,
             alerts: dependencies.alerts,
             emailSender: dependencies.emailSender,
@@ -253,8 +246,6 @@ export async function reconcileWallets(
             transactions: dependencies.transactions,
             managedWallets: dependencies.managedWallets,
             lock: dependencies.lock,
-            receiptTracker: dependencies.receiptTracker,
-            externalSigner: dependencies.externalSigner,
             clock: dependencies.clock,
             idGenerator: dependencies.idGenerator,
             logger: dependencies.logger,
@@ -313,7 +304,7 @@ export async function reconcileWallets(
       const reserveStopped = reserveStoppedByTreasury.get(treasury.id) === true;
 
       try {
-        const walletSigner = dependencies.getSignerForTreasury?.(treasury) ?? signer;
+        const walletSigner = dependencies.chainAdapters.getSignerForTreasury(treasury);
         assertSignerMatchesTreasury(walletSigner, treasury);
         const outcome = await assessAndMaybeFundWallet(dependencies, {
           wallet,
@@ -750,7 +741,12 @@ async function assessAndMaybeFundWallet(
     readonly reserveStopped: boolean;
   },
 ): Promise<SweepWalletAttribution> {
-  const walletReading = await dependencies.balanceReader.readBalance(input.wallet.addressDisplay);
+  const walletReading = await dependencies.chainAdapters
+    .balanceReader(input.wallet.chain.chainId)
+    .readBalance({
+      chainId: input.wallet.chain.chainId,
+      address: input.wallet.addressDisplay,
+    });
   if (walletReading.kind === 'unavailable') {
     throw new ChainBankError(walletReading.errorCode, walletReading.reason, {
       publicMessage: 'The managed wallet balance could not be read from the chain.',
@@ -811,7 +807,12 @@ async function assessAndMaybeFundWallet(
 
   const policy = requireFundingPolicy(input.wallet);
 
-  const treasuryReading = await dependencies.balanceReader.readBalance(input.treasury.address);
+  const treasuryReading = await dependencies.chainAdapters
+    .balanceReader(input.treasury.chain.chainId)
+    .readBalance({
+      chainId: input.treasury.chain.chainId,
+      address: input.treasury.address,
+    });
   if (treasuryReading.kind === 'unavailable') {
     throw new ChainBankError(treasuryReading.errorCode, treasuryReading.reason, {
       publicMessage: 'The treasury balance could not be read from the chain.',
@@ -836,7 +837,7 @@ async function assessAndMaybeFundWallet(
       managedWallets: dependencies.managedWallets,
       lock: dependencies.lock,
       signer: input.signer,
-      balanceReader: dependencies.balanceReader,
+      chainAdapters: dependencies.chainAdapters,
       clock: dependencies.clock,
       idGenerator: dependencies.idGenerator,
       logger: dependencies.logger,
@@ -963,7 +964,7 @@ async function mapDispatchToSweepCounter(
         {
           operations: dependencies.operations,
           transactions: dependencies.transactions,
-          receiptTracker: dependencies.receiptTracker,
+          receiptTracker: dependencies.chainAdapters.receiptTracker(input.treasury.chain.chainId),
           clock: dependencies.clock,
           logger: dependencies.logger,
           confirmations: dependencies.confirmations,
@@ -1210,9 +1211,10 @@ async function settleSubmissionUnknownRow(
     return { kind: 'pending', reason: 'submission_unknown row has no recorded nonce' };
   }
 
-  const nonceResult = await dependencies.outgoingScanner.getConfirmedTransactionCount(
-    treasury.addressDisplay,
-  );
+  const nonceResult = await outgoingScannerFor(
+    dependencies,
+    treasury.chain.chainId,
+  ).getConfirmedTransactionCount(treasury.addressDisplay);
   if (nonceResult.kind === 'unavailable') {
     return {
       kind: 'pending',
@@ -1242,7 +1244,7 @@ async function settleSubmissionUnknownRow(
     blockTimeMs: chain.blockTimeMs,
   });
 
-  const found = await dependencies.outgoingScanner.findOutgoingByNonce({
+  const found = await outgoingScannerFor(dependencies, treasury.chain.chainId).findOutgoingByNonce({
     fromAddress: treasury.addressDisplay,
     nonce: row.nonce,
     lookbackBlocks,
@@ -1302,7 +1304,7 @@ async function settleSubmissionUnknownRow(
     {
       operations: dependencies.operations,
       transactions: dependencies.transactions,
-      receiptTracker: dependencies.receiptTracker,
+      receiptTracker: dependencies.chainAdapters.receiptTracker(treasury.chain.chainId),
       clock: dependencies.clock,
       logger: dependencies.logger,
       confirmations: dependencies.confirmations,
@@ -1356,7 +1358,10 @@ async function detectCrashOrphansForTreasury(
       }
     | undefined;
 }> {
-  const tipResult = await dependencies.outgoingScanner.getLatestBlockNumber();
+  const tipResult = await outgoingScannerFor(
+    dependencies,
+    input.treasury.chain.chainId,
+  ).getLatestBlockNumber();
   if (tipResult.kind === 'unavailable') {
     const finding: ReconciliationFinding = {
       kind: 'outgoing_scan_incomplete',
@@ -1391,7 +1396,10 @@ async function detectCrashOrphansForTreasury(
   let tipNonce: number | undefined;
 
   if (storedNonce !== undefined) {
-    const countAtTip = await dependencies.outgoingScanner.getTransactionCountAtBlock({
+    const countAtTip = await outgoingScannerFor(
+      dependencies,
+      input.treasury.chain.chainId,
+    ).getTransactionCountAtBlock({
       address: input.treasury.addressDisplay,
       blockNumber: plan.toBlock,
     });
@@ -1445,7 +1453,7 @@ async function detectCrashOrphansForTreasury(
     // Count unavailable or nonce delta → fall through to today's full scan.
   }
 
-  const scan = await dependencies.outgoingScanner.listOutgoingTransfers({
+  const scan = await outgoingScannerFor(dependencies, input.treasury.chain.chainId).listOutgoingTransfers({
     fromAddress: input.treasury.addressDisplay,
     fromBlock: plan.fromBlock,
     toBlock: plan.toBlock,
@@ -1508,7 +1516,10 @@ async function detectCrashOrphansForTreasury(
   // present (toBlock is immutable for this plan); otherwise read now. Fail closed
   // on unavailability — do not advance block without a durable nonce.
   if (tipNonce === undefined) {
-    const countAtTip = await dependencies.outgoingScanner.getTransactionCountAtBlock({
+    const countAtTip = await outgoingScannerFor(
+      dependencies,
+      input.treasury.chain.chainId,
+    ).getTransactionCountAtBlock({
       address: input.treasury.addressDisplay,
       blockNumber: plan.toBlock,
     });
@@ -1575,8 +1586,18 @@ function assertFundingArmed(dependencies: ReconcileWalletsDependencies): void {
   }
 }
 
+function outgoingScannerFor(
+  dependencies: ReconcileWalletsDependencies,
+  chainId: number,
+): TreasuryOutgoingScanner {
+  return dependencies.chainAdapters.outgoingScanner(chainId);
+}
+
 function assertSignerMatchesTreasury(signer: TreasurySigner, treasury: Treasury): void {
-  if (signer.address.toLowerCase() !== treasury.address.toLowerCase()) {
+  if (
+    signer.chainId !== treasury.chain.chainId ||
+    signer.address.toLowerCase() !== treasury.address.toLowerCase()
+  ) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
       'Treasury signing key does not match the configured treasury address; refusing to sign.',

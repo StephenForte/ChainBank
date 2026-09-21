@@ -9,12 +9,12 @@ import type { Clock } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import { authorizeScope } from '../auth/authorize-scope.js';
 import type {
+  ChainAdapterRegistry,
   CredentialScopeRepository,
   FundingOperation,
   FundingOperationRepository,
   FundingTransaction,
   FundingTransactionRepository,
-  TransactionReceiptTracker,
 } from '../ports.js';
 import { trackTransaction, type TrackTransactionDependencies } from './track-transaction.js';
 
@@ -34,7 +34,12 @@ export type FundingOperationStatusReason = 'submission-unconfirmed';
 export interface GetOperationStatusDependencies {
   readonly operations: FundingOperationRepository;
   readonly transactions: FundingTransactionRepository;
-  readonly receiptTracker: TransactionReceiptTracker;
+  readonly chainAdapters: ChainAdapterRegistry;
+  /**
+   * Chain of the treasury that signed `transaction.treasuryId`.
+   * Fail closed when the row is missing — never track on a default chain.
+   */
+  readonly treasuryChainId: (treasuryId: string) => Promise<number>;
   readonly credentialScopes: CredentialScopeRepository;
   readonly clock: Clock;
   readonly logger: Logger;
@@ -105,10 +110,11 @@ export async function getOperationStatus(
   }
 
   if (transaction.status === 'submitted') {
+    const chainId = await dependencies.treasuryChainId(transaction.treasuryId);
     const trackDeps: TrackTransactionDependencies = {
       operations: dependencies.operations,
       transactions: dependencies.transactions,
-      receiptTracker: dependencies.receiptTracker,
+      receiptTracker: dependencies.chainAdapters.receiptTracker(chainId),
       clock: dependencies.clock,
       logger: dependencies.logger,
       confirmations: dependencies.confirmations,

@@ -25,6 +25,7 @@ import {
   createFakeReceiptTracker,
   createFakeSigner,
   createInMemoryFundingStores,
+  createTestChainAdapterRegistry,
 } from '../../../support/funding-fakes.js';
 
 const replenishPrelude = vi.hoisted(() => ({
@@ -198,10 +199,32 @@ function buildDeps(options?: {
       recordOutgoingScanComplete: vi.fn(),
     },
     balanceObservations: { record: vi.fn(), findLatest: vi.fn() },
-    balanceReader: {
-      readBalance: vi.fn(),
-      verifyChainId: vi.fn(),
-    },
+    chainAdapters: createTestChainAdapterRegistry({
+      balanceReader: {
+        chainId: 11_155_111,
+        readBalance: vi.fn(),
+        verifyChainId: vi.fn(),
+      },
+      receiptTracker: createFakeReceiptTracker({
+        kind: 'confirmed',
+        confirmedAt: now,
+      }),
+      signer: createFakeSigner({}),
+      ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
+      extraChains: [...new Set(wallets.map((wallet) => wallet.chain.chainId))]
+        .filter((chainId) => chainId !== 11_155_111)
+        .map((chainId) => ({
+          chainId,
+          ...(options?.externalSigner === undefined
+            ? {}
+            : {
+                externalSigner: createFakeSigner({
+                  chainId,
+                  address: options.externalSigner.address,
+                }),
+              }),
+        })),
+    }),
     credentialScopes: createScopeRepo(options?.scopes ?? []),
     auditEvents: { record: vi.fn() },
     alerts: {
@@ -222,15 +245,9 @@ function buildDeps(options?: {
     operations: {} as EnsureEnvironmentReadyDependencies['operations'],
     transactions: {} as EnsureEnvironmentReadyDependencies['transactions'],
     lock: { runExclusive: vi.fn() },
-    receiptTracker: createFakeReceiptTracker({
-      kind: 'confirmed',
-      confirmedAt: now,
-    }),
-    signer: createFakeSigner({}),
     clock: createFixedClock(now),
     idGenerator: { next: () => 'id-1' },
     logger: createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
-    ...(options?.externalSigner === undefined ? {} : { externalSigner: options.externalSigner }),
     isFundingEnabled: options?.isFundingEnabled ?? true,
     isFundingKillSwitchActive: false,
     confirmations: 1,
@@ -694,26 +711,31 @@ describe('ensureEnvironmentReady', () => {
         operations: stores.operations,
         transactions: stores.transactions,
         lock: stores.lock,
-        balanceReader: {
-          readBalance(address: string) {
-            const balanceWei = balances[address.toLowerCase()];
-            if (balanceWei === undefined) {
+        chainAdapters: createTestChainAdapterRegistry({
+          balanceReader: {
+            chainId: 11_155_111,
+            readBalance(request) {
+              const balanceWei = balances[request.address.toLowerCase()];
+              if (balanceWei === undefined) {
+                return Promise.resolve({
+                  kind: 'unavailable' as const,
+                  errorCode: 'RPC_UNAVAILABLE' as const,
+                  reason: 'missing fixture balance',
+                  observedAt: now,
+                });
+              }
               return Promise.resolve({
-                kind: 'unavailable' as const,
-                errorCode: 'RPC_UNAVAILABLE' as const,
-                reason: 'missing fixture balance',
+                kind: 'observed' as const,
+                balanceWei,
+                blockNumber: 1n,
                 observedAt: now,
               });
-            }
-            return Promise.resolve({
-              kind: 'observed' as const,
-              balanceWei,
-              blockNumber: 1n,
-              observedAt: now,
-            });
+            },
+            verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11_155_111 })),
           },
-          verifyChainId: vi.fn(() => Promise.resolve({ matches: true, observedChainId: 11_155_111 })),
-        },
+          externalSigner,
+          receiptTracker: createFakeReceiptTracker({ kind: 'confirmed', confirmedAt: now }),
+        }),
         idGenerator: (() => {
           let n = 0;
           return { next: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` };

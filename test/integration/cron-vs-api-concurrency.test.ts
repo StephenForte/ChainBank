@@ -43,6 +43,7 @@ import {
   createFakeOutgoingScanner,
   createFakeReceiptTracker,
   createFakeSigner,
+  createTestChainAdapterRegistry,
 } from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
@@ -301,14 +302,8 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       rejectReusedNonce: true,
     });
 
-    const reconcileDeps = {
-      ...buildReconcileDeps({ signer, balanceReader }),
-      receiptTracker: pendingTracker,
-    };
-    const readyDeps = {
-      ...buildEnsureReadyDeps({ signer, balanceReader }),
-      receiptTracker: pendingTracker,
-    };
+    const reconcileDeps = buildReconcileDeps({ signer, balanceReader, receiptTracker: pendingTracker });
+    const readyDeps = buildEnsureReadyDeps({ signer, balanceReader, receiptTracker: pendingTracker });
 
     const settled = await runRacing<unknown>([
       () =>
@@ -824,6 +819,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
     readonly balanceReader: BalanceReader;
     readonly outgoingScanner?: ReturnType<typeof createFakeOutgoingScanner>;
     readonly outgoingLookbackBlocks?: bigint;
+    readonly receiptTracker?: ReturnType<typeof createFakeReceiptTracker>;
   }) {
     const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
     const clock = createFixedClock();
@@ -831,7 +827,17 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: options.balanceReader,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: options.balanceReader,
+        outgoingScanner: options.outgoingScanner ?? createFakeOutgoingScanner({ latestBlockNumber: 100n }),
+        receiptTracker:
+          options.receiptTracker ??
+          createFakeReceiptTracker({
+            kind: 'confirmed',
+            confirmedAt: clock.now(),
+          }),
+        signer: options.signer,
+      }),
       auditEvents: createAuditEventRepository(handle.db),
       alerts: createAlertRepository(handle.db),
       emailSender: undefined,
@@ -839,13 +845,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       transactions: createFundingTransactionRepository(handle.db),
       reconciliationRuns: createReconciliationRunRepository(handle.db),
       reconciliationFunding: createReconciliationFundingQuery(handle.db),
-      outgoingScanner: options.outgoingScanner ?? createFakeOutgoingScanner({ latestBlockNumber: 100n }),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: clock.now(),
-      }),
-      signer: options.signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger,
@@ -866,6 +866,7 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
   function buildEnsureReadyDeps(options: {
     readonly signer: TreasurySigner;
     readonly balanceReader: BalanceReader;
+    readonly receiptTracker?: ReturnType<typeof createFakeReceiptTracker>;
   }) {
     const logger = createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' });
     const clock = createFixedClock();
@@ -873,7 +874,16 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       managedWallets: createManagedWalletRepository(handle.db),
       treasuries: createTreasuryRepository(handle.db),
       balanceObservations: createBalanceObservationRepository(handle.db),
-      balanceReader: options.balanceReader,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: options.balanceReader,
+        receiptTracker:
+          options.receiptTracker ??
+          createFakeReceiptTracker({
+            kind: 'confirmed',
+            confirmedAt: clock.now(),
+          }),
+        signer: options.signer,
+      }),
       credentialScopes: createCredentialScopeRepository(handle.db),
       environments: createEnvironmentRepository(handle.db),
       projects: createProjectRepository(handle.db),
@@ -883,11 +893,6 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
       operations: createFundingOperationRepository(handle.db),
       transactions: createFundingTransactionRepository(handle.db),
       lock: createFundingDispatchLock(handle.db),
-      receiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: clock.now(),
-      }),
-      signer: options.signer,
       clock,
       idGenerator: { next: () => randomUUID() },
       logger,

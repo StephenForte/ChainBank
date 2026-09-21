@@ -24,7 +24,11 @@ import { apiCredentials, apiCredentialScopes, projects } from '../../src/infrast
 import { createLogger } from '../../src/observability/logger.js';
 import { generateApiToken } from '../../src/shared/api-token.js';
 import { createFixedClock } from '../support/clock.js';
-import { createFakeReceiptTracker, createFakeSigner } from '../support/funding-fakes.js';
+import {
+  createFakeReceiptTracker,
+  createFakeSigner,
+  createTestChainAdapterRegistry,
+} from '../support/funding-fakes.js';
 import {
   createIntegrationDatabase,
   seedPhase1Fixtures,
@@ -102,8 +106,9 @@ describe.skipIf(!integrationEnabled)('GET /v1/wallets/:id/balance (integration)'
     });
 
     const balanceReader: BalanceReader = {
-      readBalance(address) {
-        readBalanceCalls.push(address);
+      chainId: 11_155_111,
+      readBalance(request) {
+        readBalanceCalls.push(request.address);
         if (balanceMode === 'unavailable') {
           return Promise.resolve({
             kind: 'unavailable',
@@ -162,18 +167,16 @@ describe.skipIf(!integrationEnabled)('GET /v1/wallets/:id/balance (integration)'
         reconciliationFunding: {} as Container['repositories']['reconciliationFunding'],
         fundingHealth: {} as Container['repositories']['fundingHealth'],
       },
-      balanceReader,
-      treasurySigner: createFakeSigner({}),
-      externalTreasurySigner: undefined,
-      operationalTreasurySigner: undefined,
-      treasurySigners: undefined,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader,
+        signer: createFakeSigner({}),
+        receiptTracker: createFakeReceiptTracker({
+          kind: 'confirmed',
+          confirmedAt: OBSERVED_AT,
+        }),
+      }),
       fundingDispatchLock: createFundingDispatchLock(handle.db),
       operatorMutations: createOperatorMutationTransaction(handle.db),
-      transactionReceiptTracker: createFakeReceiptTracker({
-        kind: 'confirmed',
-        confirmedAt: OBSERVED_AT,
-      }),
-      treasuryOutgoingScanner: {} as Container['treasuryOutgoingScanner'],
       emailSender: undefined,
       close: () => Promise.resolve(),
     };

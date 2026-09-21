@@ -103,7 +103,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
         {
           treasuries: container.repositories.treasuries,
           balanceObservations: container.repositories.balanceObservations,
-          balanceReader: container.balanceReader,
+          chainAdapters: container.chainAdapters,
           auditEvents: container.repositories.auditEvents,
           alerts: container.repositories.alerts,
           emailSender: container.emailSender,
@@ -111,8 +111,6 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
           transactions: container.repositories.fundingTransactions,
           managedWallets: container.repositories.managedWallets,
           lock: container.fundingDispatchLock,
-          receiptTracker: container.transactionReceiptTracker,
-          externalSigner: container.externalTreasurySigner,
           clock: container.clock,
           idGenerator: container.idGenerator,
           logger: container.logger,
@@ -176,7 +174,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
       const result = await checkTreasuryBalance(
         {
           treasuries: container.repositories.treasuries,
-          balanceReader: container.balanceReader,
+          chainAdapters: container.chainAdapters,
           operatorMutations: container.operatorMutations,
         },
         {

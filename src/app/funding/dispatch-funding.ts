@@ -7,7 +7,7 @@ import { ChainBankError, describeUnknownError, isChainBankError } from '../../do
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import type {
-  BalanceReader,
+  ChainAdapterRegistry,
   FundingDispatchLock,
   FundingOperation,
   FundingOperationRepository,
@@ -26,7 +26,7 @@ export interface DispatchFundingDependencies {
   readonly lock: FundingDispatchLock;
   readonly signer: TreasurySigner;
   /** Fresh on-chain reads for the in-lock top-up / reserve decision (TX.8). */
-  readonly balanceReader: BalanceReader;
+  readonly chainAdapters: ChainAdapterRegistry;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   readonly logger: Logger;
@@ -267,6 +267,23 @@ async function dispatchUnderLock(
     };
   }
 
+  if (dependencies.signer.chainId !== input.treasury.evmChainId) {
+    const completedAt = dependencies.clock.now();
+    const reason = `Treasury signer is bound to chain ${String(dependencies.signer.chainId)}, treasury row is chain ${String(input.treasury.evmChainId)}.`;
+    await uow.operations.markFailed(operation.id, 'INVALID_CONFIGURATION', reason, completedAt);
+    return {
+      kind: 'throw',
+      error: new ChainBankError('INVALID_CONFIGURATION', reason, {
+        publicMessage: 'Funding is unavailable because the treasury signer is misconfigured.',
+        context: {
+          signerChainId: dependencies.signer.chainId,
+          treasuryChainId: input.treasury.evmChainId,
+          operationId: operation.id,
+        },
+      }),
+    };
+  }
+
   const chainCheck = await dependencies.signer.verifyChainId();
   if (!chainCheck.matches) {
     const completedAt = dependencies.clock.now();
@@ -319,6 +336,7 @@ async function dispatchUnderLock(
     dependencies,
     uow,
     operation,
+    input.treasury.evmChainId,
     destinationAddress,
     {
       entityLabel: destination.kind === 'managed_wallet' ? 'managed wallet' : 'operational treasury',
@@ -341,6 +359,7 @@ async function dispatchUnderLock(
     dependencies,
     uow,
     operation,
+    input.treasury.evmChainId,
     input.treasury.address,
     {
       entityLabel: 'treasury',
@@ -667,6 +686,7 @@ async function readBalanceInsideLock(
     readonly transactions: FundingTransactionRepository;
   },
   operation: FundingOperation,
+  chainId: number,
   address: string,
   labels: {
     readonly entityLabel: string;
@@ -674,7 +694,7 @@ async function readBalanceInsideLock(
     readonly context: Readonly<Record<string, string>>;
   },
 ): Promise<bigint | { readonly kind: 'throw'; readonly error: ChainBankError }> {
-  const reading = await dependencies.balanceReader.readBalance(address);
+  const reading = await dependencies.chainAdapters.balanceReader(chainId).readBalance({ chainId, address });
   if (reading.kind === 'observed') {
     return reading.balanceWei;
   }

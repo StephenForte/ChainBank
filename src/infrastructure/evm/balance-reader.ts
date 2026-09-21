@@ -1,5 +1,5 @@
 import { createPublicClient, http, isAddress, type PublicClient } from 'viem';
-import type { BalanceReader } from '../../app/ports.js';
+import type { BalanceReadRequest, BalanceReader } from '../../app/ports.js';
 import type { ChainConfig } from '../../config/index.js';
 import type { BalanceReading } from '../../domain/balance-reading.js';
 import { ChainBankError, describeUnknownError } from '../../domain/errors.js';
@@ -47,9 +47,19 @@ export function createBalanceReader(options: CreateBalanceReaderOptions): Balanc
   }
 
   return {
+    chainId: chain.chainId,
     verifyChainId,
 
-    async readBalance(address: string): Promise<BalanceReading> {
+    async readBalance(request: BalanceReadRequest): Promise<BalanceReading> {
+      if (request.chainId !== chain.chainId) {
+        throw new ChainBankError(
+          'INVALID_CONFIGURATION',
+          `Balance reader for chain ${String(chain.chainId)} was asked to read chain ${String(request.chainId)}`,
+          { publicMessage: 'The service is misconfigured.' },
+        );
+      }
+
+      const address = request.address;
       if (!isAddress(address, { strict: false })) {
         throw new ChainBankError('INVALID_ADDRESS', `"${address}" is not a valid EVM address`, {
           publicMessage: 'The supplied address is not a valid EVM address.',
