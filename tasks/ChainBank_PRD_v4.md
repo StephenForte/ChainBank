@@ -607,6 +607,8 @@ Acceptance criteria:
 
 ### Phase 10 Exit Criteria
 
+**Exited 2026-09-22** — evidence in `tasks/p10-plan.md`.
+
 - Hosted dashboard requires login; the paste-a-token control no longer exists.
 - A second operator account logs in and its session appears in the sessions table.
 - The chain filter shows both live chains and filters treasuries, wallets, funding history and reconciliation.
