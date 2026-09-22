@@ -69,7 +69,7 @@ resulting second enabled `external`. The genuine findings are recorded as D21 (a
   treasury observation and a clean two-chain reconciler run.
 - **C14 does not cover Base Public** (D22, EIP-7702). Unchanged and deliberate.
 
-## Phase 6 exit evidence pass (2026-09-22) — EXIT PENDING TWO TICKS (00:00 UTC scheduled run; token rotation confirmed)
+## Phase 6 exit evidence pass (2026-09-22) — EXIT PENDING ONE TICK (2026-09-23 00:00 UTC scheduled run)
 
 Same shape as the §20 Phase 4 pass in `worker-plan.md`: each PRD criterion needs evidence, not a
 merged PR. Everything below was read from Render logs or the repo on 2026-09-22; nothing was read off
@@ -184,8 +184,7 @@ Criterion 5 is therefore evidenced on both halves: a Base treasury observation (
 above) and a clean two-chain reconciler run (20:01 UTC). TX.30 is merged (#129). Two ticks remain
 before this section reads EXITED, both outside the repo: **(a)** the first _scheduled_ run after the
 TX.34 deploy — 2026-09-23 00:00 UTC — repeating the 20:01 shape (the 20:01 run was deploy-triggered);
-**(b)** the operator's confirmation that both QuickNode endpoint tokens were rotated after TX.30's
-finding. Nothing else is open.
+**(b)** ~~the operator's confirmation that both QuickNode endpoint tokens were rotated~~ — confirmed by the operator 2026-09-22. Only (a) remains.
 
 ---
 
