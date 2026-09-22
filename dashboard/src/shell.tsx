@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   IconAdmin,
   IconAlerts,
@@ -10,7 +10,9 @@ import {
   IconWallets,
 } from './icons';
 import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
-import { SessionPanel } from './pages/panels/session-panel';
+import { ChangePasswordForm } from './session/change-password-form';
+import { useHasPermission } from './session/permissions';
+import type { SessionUser } from './session/use-session';
 import type { DashboardRoute } from './use-hash-route';
 
 export const PAGE_TITLES: Record<DashboardRoute, string> = {
@@ -41,19 +43,19 @@ const NAV_ITEMS: readonly {
 
 export type SidebarProps = {
   readonly route: DashboardRoute;
-  readonly tokenInput: string;
-  readonly setTokenInput: (value: string) => void;
+  readonly user: SessionUser;
   readonly sessionBusy: boolean;
-  readonly onSaveToken: (event: FormEvent) => void;
+  readonly onLogout: () => Promise<void>;
 };
 
-export function Sidebar({ route, tokenInput, setTokenInput, sessionBusy, onSaveToken }: SidebarProps) {
+export function Sidebar({ route, user, sessionBusy, onLogout }: SidebarProps) {
+  const items = NAV_ITEMS.filter((item) => item.id !== 'admin' || user.role === 'admin');
   return (
     <aside className="sidebar">
       <p className="sidebar-brand">ChainBank</p>
       <nav className="sidebar-nav" aria-label="Pages">
         <ul>
-          {NAV_ITEMS.map((item) => {
+          {items.map((item) => {
             const Icon = item.Icon;
             return (
               <li key={item.id}>
@@ -74,12 +76,26 @@ export function Sidebar({ route, tokenInput, setTokenInput, sessionBusy, onSaveT
         <PanelErrorBoundary panelName="Session" severity="elevated">
           <PanelBody
             render={() => (
-              <SessionPanel
-                tokenInput={tokenInput}
-                setTokenInput={setTokenInput}
-                sessionBusy={sessionBusy}
-                onSaveToken={onSaveToken}
-              />
+              <div className="user-block">
+                <p className="user-name">{user.displayName}</p>
+                <p className="user-role">{user.role}</p>
+                {user.role === 'admin' ? null : (
+                  <details className="account-menu">
+                    <summary>Account</summary>
+                    <ChangePasswordForm />
+                  </details>
+                )}
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={sessionBusy}
+                  onClick={() => {
+                    void onLogout();
+                  }}
+                >
+                  Log out
+                </button>
+              </div>
             )}
           />
         </PanelErrorBoundary>
@@ -91,13 +107,13 @@ export function Sidebar({ route, tokenInput, setTokenInput, sessionBusy, onSaveT
 export type TopBarProps = {
   readonly title: string;
   readonly sessionBusy: boolean;
-  readonly token: string;
   readonly onRefresh: () => void;
   readonly onTestEmail: () => Promise<void>;
   readonly sessionError: string | undefined;
 };
 
-export function TopBar({ title, sessionBusy, token, onRefresh, onTestEmail, sessionError }: TopBarProps) {
+export function TopBar({ title, sessionBusy, onRefresh, onTestEmail, sessionError }: TopBarProps) {
+  const canTestEmail = useHasPermission('email:test');
   return (
     <header className="top-bar">
       <h1 className="page-title">{title}</h1>
@@ -105,16 +121,18 @@ export function TopBar({ title, sessionBusy, token, onRefresh, onTestEmail, sess
         <button type="button" className="secondary" disabled={sessionBusy} onClick={onRefresh}>
           Refresh
         </button>
-        <button
-          type="button"
-          className="secondary"
-          disabled={sessionBusy || token === ''}
-          onClick={() => {
-            void onTestEmail();
-          }}
-        >
-          Test email
-        </button>
+        {canTestEmail ? (
+          <button
+            type="button"
+            className="secondary"
+            disabled={sessionBusy}
+            onClick={() => {
+              void onTestEmail();
+            }}
+          >
+            Test email
+          </button>
+        ) : null}
         {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
       </div>
     </header>
@@ -127,12 +145,10 @@ export function Page(props: { readonly children: ReactNode }) {
 
 export type ShellProps = {
   readonly route: DashboardRoute;
-  readonly tokenInput: string;
-  readonly setTokenInput: (value: string) => void;
+  readonly user: SessionUser;
   readonly sessionBusy: boolean;
-  readonly onSaveToken: (event: FormEvent) => void;
+  readonly onLogout: () => Promise<void>;
   readonly sessionError: string | undefined;
-  readonly token: string;
   readonly onRefresh: () => void;
   readonly onTestEmail: () => Promise<void>;
   /**
@@ -147,12 +163,10 @@ export type ShellProps = {
 
 export function Shell({
   route,
-  tokenInput,
-  setTokenInput,
+  user,
   sessionBusy,
-  onSaveToken,
+  onLogout,
   sessionError,
-  token,
   onRefresh,
   onTestEmail,
   openFindingAlertCount,
@@ -168,18 +182,11 @@ export function Shell({
 
   return (
     <div className="app-shell">
-      <Sidebar
-        route={route}
-        tokenInput={tokenInput}
-        setTokenInput={setTokenInput}
-        sessionBusy={sessionBusy}
-        onSaveToken={onSaveToken}
-      />
+      <Sidebar route={route} user={user} sessionBusy={sessionBusy} onLogout={onLogout} />
       <div className="shell-main">
         <TopBar
           title={PAGE_TITLES[route]}
           sessionBusy={sessionBusy}
-          token={token}
           onRefresh={onRefresh}
           onTestEmail={onTestEmail}
           sessionError={sessionError}

@@ -34,15 +34,12 @@ import {
   listSpansMultipleChains,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
-  loadStoredToken,
   parseEtherInputToWei,
   partitionByEnabled,
   RECON_DETAIL_STORAGE_KEY,
   storeAcknowledgedFindingsExpanded,
   storeReconciliationDetailExpanded,
-  storeToken,
   toFindingViews,
-  TOKEN_STORAGE_KEY,
   treasuryCardToneClass,
   type FindingView,
 } from '../src/dashboard-shared';
@@ -493,14 +490,7 @@ describe('BALANCE_AUTO_LOAD_MAX', () => {
 });
 
 describe('storage helpers', () => {
-  it('round-trips token and expand flags through session/local storage', () => {
-    storeToken('  secret-token  ');
-    expect(sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBe('secret-token');
-    expect(loadStoredToken()).toBe('secret-token');
-    storeToken('');
-    expect(sessionStorage.getItem(TOKEN_STORAGE_KEY)).toBeNull();
-    expect(loadStoredToken()).toBe('');
-
+  it('round-trips expand flags through local storage', () => {
     storeReconciliationDetailExpanded(true);
     expect(localStorage.getItem(RECON_DETAIL_STORAGE_KEY)).toBe('true');
     expect(loadReconciliationDetailExpanded()).toBe(true);
@@ -531,8 +521,6 @@ describe('storage helpers', () => {
     vi.stubGlobal('sessionStorage', throwingStorage);
     vi.stubGlobal('localStorage', throwingStorage);
 
-    expect(loadStoredToken()).toBe('');
-    expect(() => storeToken('x')).not.toThrow();
     expect(loadReconciliationDetailExpanded()).toBe(false);
     expect(() => storeReconciliationDetailExpanded(true)).not.toThrow();
     expect(loadAcknowledgedFindingsExpanded()).toBe(false);

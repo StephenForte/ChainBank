@@ -1217,3 +1217,74 @@ button.linkish:focus-visible {
     margin-right: var(--s-md);
   }
 }
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--s-xl);
+  background: var(--page);
+}
+
+.login-card,
+.account-form,
+.admin-create {
+  display: grid;
+  gap: var(--s-xs);
+  width: min(420px, 100%);
+  padding: var(--s-xl);
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.login-card h1 {
+  margin: 0 0 var(--s-sm);
+}
+
+.user-block {
+  display: grid;
+  gap: var(--s-xxs);
+}
+
+.user-name {
+  margin: 0;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.user-role {
+  margin: 0 0 var(--s-xs);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.account-menu {
+  margin-bottom: var(--s-xs);
+}
+
+.account-menu summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.sidebar-user .account-form {
+  width: auto;
+  margin-top: var(--s-xs);
+  padding: var(--s-sm);
+  box-shadow: none;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-xs);
+  align-items: center;
+}
+
+.admin-create {
+  width: auto;
+  margin-top: var(--s-lg);
+  box-shadow: none;
+}

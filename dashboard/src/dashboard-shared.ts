@@ -6,7 +6,6 @@ import {
   type TreasuryResource,
 } from './api';
 
-export const TOKEN_STORAGE_KEY = 'chainbank.operatorToken';
 /** Collapsed/expanded for Reconciliation warnings + run history only (TX.18). */
 export const RECON_DETAIL_STORAGE_KEY = 'chainbank.reconciliationDetailExpanded';
 export const ACK_FINDINGS_STORAGE_KEY = 'chainbank.acknowledgedFindingsExpanded';
@@ -26,26 +25,6 @@ export type WalletBalanceView =
   | { readonly status: 'observed'; readonly wei: string; readonly ether: string; readonly observedAt: string }
   | { readonly status: 'unavailable'; readonly errorCode: string; readonly observedAt: string }
   | { readonly status: 'error'; readonly message: string };
-
-export function loadStoredToken(): string {
-  try {
-    return sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-export function storeToken(token: string): void {
-  try {
-    if (token.trim() === '') {
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      return;
-    }
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, token.trim());
-  } catch {
-    // sessionStorage may be unavailable; the in-memory token still works.
-  }
-}
 
 /** Default collapsed — quiet when there are no unacknowledged critical findings (TX.18 / TX.20). */
 export function loadReconciliationDetailExpanded(): boolean {

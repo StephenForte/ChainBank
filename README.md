@@ -200,9 +200,15 @@ The React console under `dashboard/` is built into `dist/dashboard` and served b
 the Fastify web process. Locally, run `npm run dev` plus `npm run dev:dashboard`
 (Vite proxies `/v1` and `/health` same-origin).
 
+Sign in with a dashboard user. The first admin is created with `npm run user:create`
+(password on stdin, at least 12 characters). The browser sends the session cookie
+with `X-ChainBank-Session: 1`. There is no token field. Admins manage users and
+existing API credentials on `#/admin`; new API credentials are still issued with
+`npm run credential:issue` on the server.
+
 MVP views (PRD §12.2 / P2-US1):
 
-- Session (operator bearer token in `sessionStorage` only), service readiness, treasuries, funding history
+- Signed-in session (display name, role, log out), service readiness, treasuries, funding history
 - Projects (list + enable/disable)
 - Environments (list for a selected project via `GET /v1/projects/:id/environments`, detail by id, enable/disable)
 - Managed wallets (filters, explorer links, enable/disable)

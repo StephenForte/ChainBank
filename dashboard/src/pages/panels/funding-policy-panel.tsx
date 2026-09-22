@@ -7,10 +7,10 @@ import {
   partitionByEnabled,
   type LoadState,
 } from '../../dashboard-shared';
+import { useHasPermission } from '../../session/permissions';
 
 export type FundingPolicyPanelProps = {
-  readonly loadPolicyPanel: (activeToken: string) => Promise<void>;
-  readonly token: string;
+  readonly loadPolicyPanel: () => Promise<void>;
   readonly selectedProjectId: string;
   readonly policyState: LoadState;
   readonly policyError: string | undefined;
@@ -42,7 +42,6 @@ export type FundingPolicyPanelProps = {
 
 export function FundingPolicyPanel({
   loadPolicyPanel,
-  token,
   selectedProjectId,
   policyState,
   policyError,
@@ -63,6 +62,7 @@ export function FundingPolicyPanel({
   setEditingWalletId,
   setPolicyPreviewError,
 }: FundingPolicyPanelProps) {
+  const canWrite = useHasPermission('wallet:write');
   const { enabled, disabled } = partitionByEnabled(policyWallets);
   const chainsMixed = listSpansMultipleChains(policyWallets);
 
@@ -119,11 +119,12 @@ export function FundingPolicyPanel({
             </dl>
           )}
         </CollapsibleSection>
-        {!isEditing ? (
+        {canWrite && !isEditing ? (
           <button type="button" className="secondary" onClick={() => beginEditPolicy(wallet)}>
             Edit policy
           </button>
-        ) : (
+        ) : null}
+        {canWrite && isEditing ? (
           <div className="policy-form">
             <div className="filters row">
               <label htmlFor={`min-${wallet.id}`}>Minimum (ETH)</label>
@@ -193,7 +194,7 @@ export function FundingPolicyPanel({
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </article>
     );
   }
@@ -202,37 +203,34 @@ export function FundingPolicyPanel({
     <section className="panel">
       <div className="panel-head">
         <h2 className="section-title">Funding policy</h2>
-        <button type="button" className="secondary" onClick={() => void loadPolicyPanel(token)}>
+        <button type="button" className="secondary" onClick={() => void loadPolicyPanel()}>
           Reload
         </button>
       </div>
-      {token === '' ? <p className="muted">Paste an operator token to load funding policies.</p> : null}
-      {token !== '' ? (
-        <>
-          <p className="hint">
-            Amounts are entered in ETH and converted once to exact decimal wei strings before submit. Confirm
-            shows the wei values the API will receive.
-            {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
-          </p>
-          {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
-          {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
-          {policyState === 'empty' ? (
-            <p className="muted">No wallets returned for policy view ({String(policyWalletsTotal)} total).</p>
-          ) : null}
-          {policyState === 'ready' ? (
-            <>
-              <div className="policy-list">{enabled.map(renderPolicyCard)}</div>
-              <CollapsibleSection
-                title="Disabled wallet policies"
-                count={disabled.length}
-                storageKey={COLLAPSE_STORAGE_KEYS.disabledWalletPolicies}
-              >
-                <div className="policy-list">{disabled.map(renderPolicyCard)}</div>
-              </CollapsibleSection>
-            </>
-          ) : null}
-        </>
-      ) : null}
+      <>
+        <p className="hint">
+          Amounts are entered in ETH and converted once to exact decimal wei strings before submit. Confirm
+          shows the wei values the API will receive.
+          {selectedProjectId !== '' ? ' Scoped to the selected project.' : ''}
+        </p>
+        {policyState === 'loading' ? <p className="muted">Loading…</p> : null}
+        {policyState === 'error' ? <p className="error-inline">{policyError}</p> : null}
+        {policyState === 'empty' ? (
+          <p className="muted">No wallets returned for policy view ({String(policyWalletsTotal)} total).</p>
+        ) : null}
+        {policyState === 'ready' ? (
+          <>
+            <div className="policy-list">{enabled.map(renderPolicyCard)}</div>
+            <CollapsibleSection
+              title="Disabled wallet policies"
+              count={disabled.length}
+              storageKey={COLLAPSE_STORAGE_KEYS.disabledWalletPolicies}
+            >
+              <div className="policy-list">{disabled.map(renderPolicyCard)}</div>
+            </CollapsibleSection>
+          </>
+        ) : null}
+      </>
     </section>
   );
 }

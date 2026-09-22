@@ -6,6 +6,7 @@ import { CollapsibleSection } from '../src/collapsible-section';
 import type { TreasuryResource } from '../src/api';
 import { ReconciliationPanel } from '../src/pages/panels/reconciliation-panel';
 import { TreasuriesPanel } from '../src/pages/panels/treasuries-panel';
+import { PermissionsProvider } from '../src/session/permissions';
 
 afterEach(() => {
   cleanup();
@@ -37,11 +38,12 @@ const NAV_LABELS = [
 ] as const;
 
 describe('dashboard shell (C32)', () => {
-  it('renders the wallets page for #/wallets, overview for an unknown hash, and updates on hashchange', () => {
+  it('renders the wallets page for #/wallets, overview for an unknown hash, and updates on hashchange', async () => {
+    stubSignedInAdmin();
     window.location.hash = '#/not-a-page';
     render(<App />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
     expect(screen.getByRole('heading', { level: 2, name: 'Service readiness' })).toBeTruthy();
 
     const nav = screen.getByRole('navigation', { name: 'Pages' });
@@ -98,19 +100,20 @@ describe('dashboard shell (C32)', () => {
 
   it('shows the compact treasury card until thresholds are expanded', () => {
     render(
-      <TreasuriesPanel
-        loadTreasuries={() => Promise.resolve()}
-        loadTreasuryFundingHistory={() => Promise.resolve()}
-        token="operator-token"
-        treasuriesState="ready"
-        treasuriesError={undefined}
-        treasuries={[treasuryFixture()]}
-        treasuryBusyId={undefined}
-        onCheck={() => Promise.resolve()}
-        treasuryFundingHistoryState="empty"
-        treasuryFundingHistoryError={undefined}
-        treasuryFundingHistory={[]}
-      />,
+      <PermissionsProvider permissions={['treasury:check']}>
+        <TreasuriesPanel
+          loadTreasuries={() => Promise.resolve()}
+          loadTreasuryFundingHistory={() => Promise.resolve()}
+          treasuriesState="ready"
+          treasuriesError={undefined}
+          treasuries={[treasuryFixture()]}
+          treasuryBusyId={undefined}
+          onCheck={() => Promise.resolve()}
+          treasuryFundingHistoryState="empty"
+          treasuryFundingHistoryError={undefined}
+          treasuryFundingHistory={[]}
+        />
+      </PermissionsProvider>,
     );
 
     expect(screen.getByRole('heading', { level: 3, name: /Public · Ethereum Sepolia/ })).toBeTruthy();
@@ -161,7 +164,6 @@ function renderCriticalFinding(): void {
     <ReconciliationPanel
       loadReconciliationRuns={() => Promise.resolve()}
       loadFindingAlerts={() => Promise.resolve()}
-      token="operator-token"
       findingAlertsState="ready"
       findingAlertsError={undefined}
       openFindingAlerts={[]}
@@ -220,4 +222,69 @@ function renderCriticalFinding(): void {
       onToggleReconciliationDetail={() => undefined}
     />,
   );
+}
+
+const ADMIN_PERMISSIONS = [
+  'treasury:read',
+  'treasury:check',
+  'treasury:write',
+  'email:test',
+  'wallet:write',
+  'project:write',
+  'alert:read',
+  'alert:acknowledge',
+  'user:manage',
+] as const;
+
+function stubSignedInAdmin(): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) => {
+      const url = requestUrl(input);
+      if (url.includes('/v1/auth/me')) {
+        return Promise.resolve(
+          jsonResponse(200, {
+            user: {
+              id: '11111111-1111-4111-8111-111111111111',
+              email: 'ada@example.com',
+              displayName: 'Ada Lovelace',
+              role: 'admin',
+            },
+            permissions: ADMIN_PERMISSIONS,
+          }),
+        );
+      }
+      if (url.includes('/health/ready')) {
+        return Promise.resolve(
+          jsonResponse(200, {
+            status: 'ok',
+            checkedAt: '2026-09-22T00:00:00.000Z',
+            components: [],
+            heartbeats: [],
+          }),
+        );
+      }
+      if (url.includes('/v1/treasuries')) {
+        return Promise.resolve(jsonResponse(200, { data: [] }));
+      }
+      return Promise.resolve(jsonResponse(200, { data: [], pagination: { limit: 50, offset: 0, total: 0 } }));
+    }),
+  );
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.href;
+  }
+  return input.url;
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
 }

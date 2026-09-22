@@ -2,11 +2,11 @@ import type { ManagedWalletResource } from '../../api';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
 import * as dash from '../../dashboard-shared';
 import type { LoadState, WalletBalanceView } from '../../dashboard-shared';
+import { useHasPermission } from '../../session/permissions';
 
 export type ManagedWalletsPanelProps = {
-  readonly checkListedWalletBalances: (activeToken: string) => Promise<void>;
-  readonly loadWalletsPanel: (activeToken: string) => Promise<void>;
-  readonly token: string;
+  readonly checkListedWalletBalances: () => Promise<void>;
+  readonly loadWalletsPanel: () => Promise<void>;
   readonly walletsState: LoadState;
   readonly balancesBusy: boolean;
   readonly walletProjectFilter: string;
@@ -20,7 +20,7 @@ export type ManagedWalletsPanelProps = {
   readonly walletsTotal: number;
   readonly wallets: readonly ManagedWalletResource[];
   readonly walletBalances: Readonly<Record<string, WalletBalanceView>>;
-  readonly fetchOneWalletBalance: (activeToken: string, walletId: string) => Promise<void>;
+  readonly fetchOneWalletBalance: (walletId: string) => Promise<void>;
   readonly walletBusyId: string | undefined;
   readonly onToggleWallet: (wallet: ManagedWalletResource) => Promise<void>;
   readonly onToggleWalletReconciliation: (wallet: ManagedWalletResource) => Promise<void>;
@@ -29,7 +29,6 @@ export type ManagedWalletsPanelProps = {
 export function ManagedWalletsPanel({
   checkListedWalletBalances,
   loadWalletsPanel,
-  token,
   walletsState,
   balancesBusy,
   walletProjectFilter,
@@ -48,6 +47,7 @@ export function ManagedWalletsPanel({
   onToggleWallet,
   onToggleWalletReconciliation,
 }: ManagedWalletsPanelProps) {
+  const canWrite = useHasPermission('wallet:write');
   const { enabled, disabled } = dash.partitionByEnabled(wallets);
   const showDisabledInline = walletEnabledFilter === 'false';
   const visibleWallets = showDisabledInline ? wallets : enabled;
@@ -76,7 +76,7 @@ export function ManagedWalletsPanel({
               type="button"
               className="secondary"
               disabled={balancesBusy}
-              onClick={() => void fetchOneWalletBalance(token, wallet.id)}
+              onClick={() => void fetchOneWalletBalance(wallet.id)}
             >
               Check
             </button>
@@ -117,22 +117,26 @@ export function ManagedWalletsPanel({
           <span className={dash.enabledBadge(wallet.enabled)}>{wallet.enabled ? 'enabled' : 'disabled'}</span>
         </td>
         <td>
-          <button
-            type="button"
-            className={wallet.enabled ? 'secondary' : undefined}
-            disabled={walletBusyId === wallet.id}
-            onClick={() => void onToggleWallet(wallet)}
-          >
-            {wallet.enabled ? 'Disable' : 'Enable'}
-          </button>{' '}
-          <button
-            type="button"
-            className={wallet.reconciliationEnabled ? 'secondary' : undefined}
-            disabled={walletBusyId === wallet.id}
-            onClick={() => void onToggleWalletReconciliation(wallet)}
-          >
-            {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
-          </button>
+          {canWrite ? (
+            <>
+              <button
+                type="button"
+                className={wallet.enabled ? 'secondary' : undefined}
+                disabled={walletBusyId === wallet.id}
+                onClick={() => void onToggleWallet(wallet)}
+              >
+                {wallet.enabled ? 'Disable' : 'Enable'}
+              </button>{' '}
+              <button
+                type="button"
+                className={wallet.reconciliationEnabled ? 'secondary' : undefined}
+                disabled={walletBusyId === wallet.id}
+                onClick={() => void onToggleWalletReconciliation(wallet)}
+              >
+                {wallet.reconciliationEnabled ? 'Disable reconcile' : 'Enable reconcile'}
+              </button>
+            </>
+          ) : null}
         </td>
       </tr>
     );
@@ -146,124 +150,121 @@ export function ManagedWalletsPanel({
           <button
             type="button"
             className="secondary"
-            disabled={token === '' || walletsState !== 'ready' || balancesBusy}
-            onClick={() => void checkListedWalletBalances(token)}
+            disabled={walletsState !== 'ready' || balancesBusy}
+            onClick={() => void checkListedWalletBalances()}
           >
             {balancesBusy ? 'Checking…' : 'Check balances'}
           </button>
-          <button type="button" className="secondary" onClick={() => void loadWalletsPanel(token)}>
+          <button type="button" className="secondary" onClick={() => void loadWalletsPanel()}>
             Reload
           </button>
         </div>
       </div>
-      {token === '' ? <p className="muted">Paste an operator token to load wallets.</p> : null}
-      {token !== '' ? (
-        <>
-          <div className="filters row">
-            <label htmlFor="wallet-project">Project ID</label>
-            <input
-              id="wallet-project"
-              name="wallet-project"
-              type="text"
-              spellCheck={false}
-              placeholder="UUID (optional)"
-              value={walletProjectFilter}
-              onChange={(event) => setWalletProjectFilter(event.target.value)}
-            />
-            <label htmlFor="wallet-environment">Environment ID</label>
-            <input
-              id="wallet-environment"
-              name="wallet-environment"
-              type="text"
-              spellCheck={false}
-              placeholder="UUID (optional)"
-              value={walletEnvironmentFilter}
-              onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
-            />
-            <label htmlFor="wallet-enabled">Enabled</label>
-            <select
-              id="wallet-enabled"
-              name="wallet-enabled"
-              value={walletEnabledFilter}
-              onChange={(event) => setWalletEnabledFilter(event.target.value)}
-            >
-              <option value="">All</option>
-              <option value="true">enabled</option>
-              <option value="false">disabled</option>
-            </select>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                if (selectedProjectId !== '') {
-                  setWalletProjectFilter(selectedProjectId);
-                }
-              }}
-            >
-              Use selected project
-            </button>
-          </div>
-          {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
-          {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
-          {walletsState === 'empty' ? (
-            <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
-          ) : null}
-          {walletsState === 'ready' ? (
-            <>
-              <p className="muted">
-                Showing {String(visibleWallets.length)} enabled of {String(walletsTotal)} wallets
-                {disabled.length > 0 && !showDisabledInline
-                  ? ` · ${String(disabled.length)} disabled hidden`
-                  : ''}
-                .
-                {wallets.length <= dash.BALANCE_AUTO_LOAD_MAX
-                  ? ' Balances load automatically for this list (one live RPC read each); Check balances refreshes.'
-                  : ` Balances are not auto-loaded above ${String(dash.BALANCE_AUTO_LOAD_MAX)} listed wallets (one live RPC read each). Use Check balances.`}
-              </p>
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Project / env</th>
-                      <th>Role</th>
-                      <th>Address</th>
-                      <th>Balance</th>
-                      <th>Flags</th>
-                      <th>Enabled</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>{visibleWallets.map(renderWalletRow)}</tbody>
-                </table>
-              </div>
-              {!showDisabledInline ? (
-                <CollapsibleSection
-                  title="Disabled wallets"
-                  count={disabled.length}
-                  storageKey={COLLAPSE_STORAGE_KEYS.disabledWallets}
-                >
-                  <div className="table-wrap">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Project / env</th>
-                          <th>Role</th>
-                          <th>Address</th>
-                          <th>Balance</th>
-                          <th>Flags</th>
-                          <th>Enabled</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>{disabled.map(renderWalletRow)}</tbody>
-                    </table>
-                  </div>
-                </CollapsibleSection>
-              ) : null}
-            </>
-          ) : null}
-        </>
-      ) : null}
+      <>
+        <div className="filters row">
+          <label htmlFor="wallet-project">Project ID</label>
+          <input
+            id="wallet-project"
+            name="wallet-project"
+            type="text"
+            spellCheck={false}
+            placeholder="UUID (optional)"
+            value={walletProjectFilter}
+            onChange={(event) => setWalletProjectFilter(event.target.value)}
+          />
+          <label htmlFor="wallet-environment">Environment ID</label>
+          <input
+            id="wallet-environment"
+            name="wallet-environment"
+            type="text"
+            spellCheck={false}
+            placeholder="UUID (optional)"
+            value={walletEnvironmentFilter}
+            onChange={(event) => setWalletEnvironmentFilter(event.target.value)}
+          />
+          <label htmlFor="wallet-enabled">Enabled</label>
+          <select
+            id="wallet-enabled"
+            name="wallet-enabled"
+            value={walletEnabledFilter}
+            onChange={(event) => setWalletEnabledFilter(event.target.value)}
+          >
+            <option value="">All</option>
+            <option value="true">enabled</option>
+            <option value="false">disabled</option>
+          </select>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              if (selectedProjectId !== '') {
+                setWalletProjectFilter(selectedProjectId);
+              }
+            }}
+          >
+            Use selected project
+          </button>
+        </div>
+        {walletsState === 'loading' ? <p className="muted">Loading…</p> : null}
+        {walletsState === 'error' ? <p className="error-inline">{walletsError}</p> : null}
+        {walletsState === 'empty' ? (
+          <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
+        ) : null}
+        {walletsState === 'ready' ? (
+          <>
+            <p className="muted">
+              Showing {String(visibleWallets.length)} enabled of {String(walletsTotal)} wallets
+              {disabled.length > 0 && !showDisabledInline
+                ? ` · ${String(disabled.length)} disabled hidden`
+                : ''}
+              .
+              {wallets.length <= dash.BALANCE_AUTO_LOAD_MAX
+                ? ' Balances load automatically for this list (one live RPC read each); Check balances refreshes.'
+                : ` Balances are not auto-loaded above ${String(dash.BALANCE_AUTO_LOAD_MAX)} listed wallets (one live RPC read each). Use Check balances.`}
+            </p>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Project / env</th>
+                    <th>Role</th>
+                    <th>Address</th>
+                    <th>Balance</th>
+                    <th>Flags</th>
+                    <th>Enabled</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>{visibleWallets.map(renderWalletRow)}</tbody>
+              </table>
+            </div>
+            {!showDisabledInline ? (
+              <CollapsibleSection
+                title="Disabled wallets"
+                count={disabled.length}
+                storageKey={COLLAPSE_STORAGE_KEYS.disabledWallets}
+              >
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Project / env</th>
+                        <th>Role</th>
+                        <th>Address</th>
+                        <th>Balance</th>
+                        <th>Flags</th>
+                        <th>Enabled</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>{disabled.map(renderWalletRow)}</tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+            ) : null}
+          </>
+        ) : null}
+      </>
     </section>
   );
 }

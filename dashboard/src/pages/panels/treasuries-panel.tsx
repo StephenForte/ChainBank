@@ -14,11 +14,11 @@ import {
   type LoadState,
 } from '../../dashboard-shared';
 import { DataTable } from '../../primitives';
+import { useHasPermission } from '../../session/permissions';
 
 export type TreasuriesPanelProps = {
-  readonly loadTreasuries: (activeToken: string) => Promise<void>;
-  readonly loadTreasuryFundingHistory: (activeToken: string) => Promise<void>;
-  readonly token: string;
+  readonly loadTreasuries: () => Promise<void>;
+  readonly loadTreasuryFundingHistory: () => Promise<void>;
   readonly treasuriesState: LoadState;
   readonly treasuriesError: string | undefined;
   readonly treasuries: readonly TreasuryResource[];
@@ -84,7 +84,6 @@ function ReplenishRows({ rows }: { readonly rows: readonly FundingTransactionRes
 export function TreasuriesPanel({
   loadTreasuries,
   loadTreasuryFundingHistory,
-  token,
   treasuriesState,
   treasuriesError,
   treasuries,
@@ -94,6 +93,7 @@ export function TreasuriesPanel({
   treasuryFundingHistoryError,
   treasuryFundingHistory,
 }: TreasuriesPanelProps) {
+  const canCheckTreasury = useHasPermission('treasury:check');
   const replenishRows = treasuryFundingHistory.filter(isTreasuryReplenish);
 
   return (
@@ -104,15 +104,14 @@ export function TreasuriesPanel({
           type="button"
           className="secondary"
           onClick={() => {
-            void loadTreasuries(token);
-            void loadTreasuryFundingHistory(token);
+            void loadTreasuries();
+            void loadTreasuryFundingHistory();
           }}
         >
           Reload
         </button>
       </div>
-      {token === '' ? <p className="muted">Paste an operator token to load treasuries.</p> : null}
-      {token !== '' && treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
+      {treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
       {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
       {treasuriesState === 'empty' ? <p className="muted">No enabled treasuries returned.</p> : null}
       {treasuriesState === 'ready' ? (
@@ -150,13 +149,15 @@ export function TreasuriesPanel({
                     </dd>
                   </div>
                 </dl>
-                <button
-                  type="button"
-                  disabled={treasuryBusyId === treasury.id}
-                  onClick={() => void onCheck(treasury.id)}
-                >
-                  Check now
-                </button>
+                {canCheckTreasury ? (
+                  <button
+                    type="button"
+                    disabled={treasuryBusyId === treasury.id}
+                    onClick={() => void onCheck(treasury.id)}
+                  >
+                    Check now
+                  </button>
+                ) : null}
                 <CollapsibleSection
                   title="Thresholds and last checked"
                   storageKey={treasuryDetailStorageKey(treasury.id)}
@@ -197,30 +198,25 @@ export function TreasuriesPanel({
         </div>
       ) : null}
 
-      {token !== '' ? (
-        <CollapsibleSection
-          title="Auto-funding history"
-          storageKey={COLLAPSE_STORAGE_KEYS.treasuryAutoFunding}
-        >
-          <div className="history-mini">
-            <p className="muted">
-              Public → Private replenish only. Wallet top-ups stay in Funding history. Deposits into Public
-              are expected human refills and are not listed here.
-            </p>
-            {treasuryFundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
-            {treasuryFundingHistoryState === 'error' ? (
-              <p className="error-inline">{treasuryFundingHistoryError}</p>
-            ) : null}
-            {treasuryFundingHistoryState === 'empty' ||
-            (treasuryFundingHistoryState === 'ready' && replenishRows.length === 0) ? (
-              <p className="muted">No Public → Private auto-funding transactions yet.</p>
-            ) : null}
-            {treasuryFundingHistoryState === 'ready' && replenishRows.length > 0 ? (
-              <ReplenishRows rows={replenishRows} />
-            ) : null}
-          </div>
-        </CollapsibleSection>
-      ) : null}
+      <CollapsibleSection title="Auto-funding history" storageKey={COLLAPSE_STORAGE_KEYS.treasuryAutoFunding}>
+        <div className="history-mini">
+          <p className="muted">
+            Public → Private replenish only. Wallet top-ups stay in Funding history. Deposits into Public are
+            expected human refills and are not listed here.
+          </p>
+          {treasuryFundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
+          {treasuryFundingHistoryState === 'error' ? (
+            <p className="error-inline">{treasuryFundingHistoryError}</p>
+          ) : null}
+          {treasuryFundingHistoryState === 'empty' ||
+          (treasuryFundingHistoryState === 'ready' && replenishRows.length === 0) ? (
+            <p className="muted">No Public → Private auto-funding transactions yet.</p>
+          ) : null}
+          {treasuryFundingHistoryState === 'ready' && replenishRows.length > 0 ? (
+            <ReplenishRows rows={replenishRows} />
+          ) : null}
+        </div>
+      </CollapsibleSection>
     </section>
   );
 }

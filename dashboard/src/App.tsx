@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   acknowledgeAlert,
   acknowledgeFinding,
@@ -34,18 +34,17 @@ import {
   fundingHistoryOperationType,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
-  loadStoredToken,
   parseEtherInputToWei,
   shortAddress,
   storeAcknowledgedFindingsExpanded,
   storeReconciliationDetailExpanded,
-  storeToken,
   BALANCE_AUTO_LOAD_MAX,
   type FindingView,
   type LoadState,
   type WalletBalanceView,
 } from './dashboard-shared';
-import { AdminPage } from './pages/admin';
+import { AdminPage, AdminUnavailable } from './pages/admin';
+import { LoginPage } from './pages/login';
 import { AlertsPage } from './pages/alerts';
 import { EmailPage } from './pages/email';
 import { FundingPage } from './pages/funding';
@@ -61,12 +60,14 @@ import type { TreasuriesPanelProps } from './pages/panels/treasuries-panel';
 import { ReconciliationPage } from './pages/reconciliation';
 import { TreasuriesPage } from './pages/treasuries';
 import { WalletsPage } from './pages/wallets';
+import { PermissionsProvider } from './session/permissions';
+import { useSession } from './session/use-session';
 import { Shell } from './shell';
 import { useHashRoute } from './use-hash-route';
 
 export function App() {
-  const [tokenInput, setTokenInput] = useState(loadStoredToken);
-  const [token, setToken] = useState(loadStoredToken);
+  const session = useSession();
+  const signedIn = session.status === 'signed-in';
   const [message, setMessage] = useState<string | undefined>();
   const [sessionError, setSessionError] = useState<string | undefined>();
   const [sessionBusy, setSessionBusy] = useState(false);
@@ -165,6 +166,38 @@ export function App() {
   const [maximumEtherInput, setMaximumEtherInput] = useState('');
   const [policyPreviewError, setPolicyPreviewError] = useState<string | undefined>();
 
+  // Drop the previous account's rows before paint when the signed-in user changes.
+  const activeUserId = session.user?.id;
+  const [dataUserId, setDataUserId] = useState<string | undefined>(undefined);
+  if (activeUserId !== dataUserId) {
+    setDataUserId(activeUserId);
+    setReadiness(undefined);
+    setReadinessState('idle');
+    setTreasuries([]);
+    setTreasuriesState('idle');
+    setFundingHistory([]);
+    setFundingHistoryState('idle');
+    setTreasuryFundingHistory([]);
+    setTreasuryFundingHistoryState('idle');
+    setReconciliationRuns([]);
+    setReconciliationState('idle');
+    setOpenFindingAlerts([]);
+    setAcknowledgedFindingAlerts([]);
+    setFindingAlertsState('idle');
+    setProjects([]);
+    setProjectsState('idle');
+    setProjectEnvironments([]);
+    setEnvListState('idle');
+    setEnvironmentDetail(undefined);
+    setEnvironmentState('idle');
+    setWallets([]);
+    setWalletsState('idle');
+    setWalletBalances({});
+    setPolicyWallets([]);
+    setPolicyState('idle');
+    setMessage(undefined);
+  }
+
   async function loadReadiness(): Promise<void> {
     setReadinessState('loading');
     setReadinessError(undefined);
@@ -179,17 +212,11 @@ export function App() {
     }
   }
 
-  async function loadTreasuries(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setTreasuries([]);
-      setTreasuriesState('idle');
-      setTreasuriesError(undefined);
-      return;
-    }
+  async function loadTreasuries(): Promise<void> {
     setTreasuriesState('loading');
     setTreasuriesError(undefined);
     try {
-      const next = await listTreasuries(activeToken.trim());
+      const next = await listTreasuries();
       setTreasuries(next);
       setTreasuriesState(next.length === 0 ? 'empty' : 'ready');
     } catch (caught) {
@@ -199,20 +226,13 @@ export function App() {
     }
   }
 
-  async function loadFundingHistory(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setFundingHistory([]);
-      setFundingHistoryTotal(0);
-      setFundingHistoryState('idle');
-      setFundingHistoryError(undefined);
-      return;
-    }
+  async function loadFundingHistory(): Promise<void> {
     setFundingHistoryState('loading');
     setFundingHistoryError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const operationType = fundingHistoryOperationType(historyKindFilter);
-      const next = await listFundingTransactions(activeToken.trim(), {
+      const next = await listFundingTransactions({
         ...(historyProjectFilter.trim() === '' ? {} : { projectId: historyProjectFilter.trim() }),
         ...(historyStatusFilter === '' ? {} : { status: historyStatusFilter }),
         ...(operationType === undefined ? {} : { operationType }),
@@ -229,17 +249,11 @@ export function App() {
     }
   }
 
-  async function loadTreasuryFundingHistory(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setTreasuryFundingHistory([]);
-      setTreasuryFundingHistoryState('idle');
-      setTreasuryFundingHistoryError(undefined);
-      return;
-    }
+  async function loadTreasuryFundingHistory(): Promise<void> {
     setTreasuryFundingHistoryState('loading');
     setTreasuryFundingHistoryError(undefined);
     try {
-      const next = await listFundingTransactions(activeToken.trim(), {
+      const next = await listFundingTransactions({
         operationType: 'replenish_operational',
         limit: 50,
       });
@@ -252,19 +266,12 @@ export function App() {
     }
   }
 
-  async function loadReconciliationRuns(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setReconciliationRuns([]);
-      setReconciliationRunsTotal(0);
-      setReconciliationState('idle');
-      setReconciliationError(undefined);
-      return;
-    }
+  async function loadReconciliationRuns(): Promise<void> {
     setReconciliationState('loading');
     setReconciliationError(undefined);
     try {
       // Plain DB read — no RPC cost; load with the other panels (unlike C17 balances).
-      const next = await listReconciliationRuns(activeToken.trim(), { limit: 50, offset: 0 });
+      const next = await listReconciliationRuns({ limit: 50, offset: 0 });
       setReconciliationRuns(next.data);
       setReconciliationRunsTotal(next.pagination.total);
       setReconciliationState(next.data.length === 0 ? 'empty' : 'ready');
@@ -276,30 +283,21 @@ export function App() {
     }
   }
 
-  async function loadFindingAlerts(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setOpenFindingAlerts([]);
-      setAcknowledgedFindingAlerts([]);
-      setOpenFindingAlertsComplete(false);
-      setFindingAlertsState('idle');
-      setFindingAlertsError(undefined);
-      return;
-    }
+  async function loadFindingAlerts(): Promise<void> {
     setFindingAlertsState('loading');
     // While loading, refuse demotion even if a prior page looked complete.
     setOpenFindingAlertsComplete(false);
     setFindingAlertsError(undefined);
     try {
-      const trimmed = activeToken.trim();
       // Two filtered pages — standing banner must not depend on the runs window (C20).
       const [openPage, acknowledgedPage] = await Promise.all([
-        listAlerts(trimmed, {
+        listAlerts({
           alertType: 'treasury_finding',
           state: 'open',
           limit: 50,
           offset: 0,
         }),
-        listAlerts(trimmed, {
+        listAlerts({
           alertType: 'treasury_finding',
           state: 'acknowledged',
           limit: 50,
@@ -328,9 +326,6 @@ export function App() {
       setAckErrorByAlertId((prev) => ({ ...prev, [alertId]: 'Acknowledgement note is required.' }));
       return;
     }
-    if (token.trim() === '') {
-      return;
-    }
     setAckBusyId(alertId);
     setAckErrorByAlertId((prev) => {
       const next = { ...prev };
@@ -338,14 +333,14 @@ export function App() {
       return next;
     });
     try {
-      await acknowledgeAlert(token.trim(), alertId, note);
+      await acknowledgeAlert(alertId, note);
       setAckDraftByAlertId((prev) => {
         const next = { ...prev };
         delete next[alertId];
         return next;
       });
       setMessage('Finding alert acknowledged. The incident record stays visible.');
-      await loadFindingAlerts(token);
+      await loadFindingAlerts();
     } catch (caught) {
       setAckErrorByAlertId((prev) => ({ ...prev, [alertId]: formatError(caught) }));
     } finally {
@@ -362,9 +357,6 @@ export function App() {
       }));
       return;
     }
-    if (token.trim() === '') {
-      return;
-    }
     setAckBusyEntityId(entityId);
     setAckErrorByEntityId((prev) => {
       const next = { ...prev };
@@ -372,7 +364,7 @@ export function App() {
       return next;
     });
     try {
-      await acknowledgeFinding(token.trim(), {
+      await acknowledgeFinding({
         entityId,
         note,
         metadata: {
@@ -393,7 +385,7 @@ export function App() {
         return next;
       });
       setMessage('Finding acknowledged. The incident record stays visible.');
-      await loadFindingAlerts(token);
+      await loadFindingAlerts();
     } catch (caught) {
       setAckErrorByEntityId((prev) => ({ ...prev, [entityId]: formatError(caught) }));
     } finally {
@@ -401,18 +393,11 @@ export function App() {
     }
   }
 
-  async function loadProjectsPanel(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setProjects([]);
-      setProjectsTotal(0);
-      setProjectsState('idle');
-      setProjectsError(undefined);
-      return;
-    }
+  async function loadProjectsPanel(): Promise<void> {
     setProjectsState('loading');
     setProjectsError(undefined);
     try {
-      const next = await listProjects(activeToken.trim(), { limit: 50, offset: 0 });
+      const next = await listProjects({ limit: 50, offset: 0 });
       setProjects(next.data);
       setProjectsTotal(next.pagination.total);
       setProjectsState(next.data.length === 0 ? 'empty' : 'ready');
@@ -430,8 +415,8 @@ export function App() {
     }
   }
 
-  async function loadProjectEnvironments(activeToken: string, projectId: string): Promise<void> {
-    if (activeToken.trim() === '' || projectId.trim() === '') {
+  async function loadProjectEnvironments(projectId: string): Promise<void> {
+    if (projectId.trim() === '') {
       setProjectEnvironments([]);
       setEnvListState('idle');
       setEnvListError(undefined);
@@ -440,7 +425,7 @@ export function App() {
     setEnvListState('loading');
     setEnvListError(undefined);
     try {
-      const page = await listProjectEnvironments(activeToken.trim(), projectId.trim(), {
+      const page = await listProjectEnvironments(projectId.trim(), {
         limit: 100,
         offset: 0,
       });
@@ -453,8 +438,8 @@ export function App() {
     }
   }
 
-  async function loadEnvironmentDetail(activeToken: string, environmentId: string): Promise<void> {
-    if (activeToken.trim() === '' || environmentId.trim() === '') {
+  async function loadEnvironmentDetail(environmentId: string): Promise<void> {
+    if (environmentId.trim() === '') {
       setEnvironmentDetail(undefined);
       setEnvironmentState('idle');
       setEnvironmentError(undefined);
@@ -463,7 +448,7 @@ export function App() {
     setEnvironmentState('loading');
     setEnvironmentError(undefined);
     try {
-      const next = await getEnvironment(activeToken.trim(), environmentId.trim());
+      const next = await getEnvironment(environmentId.trim());
       setEnvironmentDetail(next);
       setEnvironmentState('ready');
       setEnvLookupId(next.id);
@@ -474,23 +459,14 @@ export function App() {
     }
   }
 
-  async function loadWalletsPanel(activeToken: string): Promise<void> {
+  async function loadWalletsPanel(): Promise<void> {
     // Supersede any in-flight balance burst before the list (and its filters) change.
     const generation = ++balanceFetchGenerationRef.current;
-    if (activeToken.trim() === '') {
-      setWallets([]);
-      setWalletsTotal(0);
-      setWalletsState('idle');
-      setWalletsError(undefined);
-      setWalletBalances({});
-      setBalancesBusy(false);
-      return;
-    }
     setWalletsState('loading');
     setWalletsError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
-      const next = await listWallets(activeToken.trim(), {
+      const next = await listWallets({
         ...(walletProjectFilter.trim() === '' ? {} : { projectId: walletProjectFilter.trim() }),
         ...(walletEnvironmentFilter.trim() === '' ? {} : { environmentId: walletEnvironmentFilter.trim() }),
         ...(walletEnabledFilter === 'true'
@@ -511,7 +487,7 @@ export function App() {
       setWalletBalances({});
       // Auto-load only for small listed pages — above the guard, button-only (C17 / TX.18).
       if (next.data.length > 0 && next.data.length <= BALANCE_AUTO_LOAD_MAX) {
-        void fetchListedWalletBalances(activeToken, next.data, generation);
+        void fetchListedWalletBalances(next.data, generation);
       } else {
         setBalancesBusy(false);
       }
@@ -529,7 +505,6 @@ export function App() {
   }
 
   async function fetchOneWalletBalance(
-    activeToken: string,
     walletId: string,
     generation: number = balanceFetchGenerationRef.current,
   ): Promise<void> {
@@ -538,7 +513,7 @@ export function App() {
     }
     setWalletBalances((previous) => ({ ...previous, [walletId]: { status: 'loading' } }));
     try {
-      const result = await getWalletBalance(activeToken.trim(), walletId);
+      const result = await getWalletBalance(walletId);
       if (generation !== balanceFetchGenerationRef.current) {
         return;
       }
@@ -570,11 +545,10 @@ export function App() {
   }
 
   async function fetchListedWalletBalances(
-    activeToken: string,
     listed: readonly ManagedWalletResource[],
     generation: number,
   ): Promise<void> {
-    if (activeToken.trim() === '' || listed.length === 0) {
+    if (listed.length === 0) {
       return;
     }
     if (generation !== balanceFetchGenerationRef.current) {
@@ -583,7 +557,7 @@ export function App() {
     setBalancesBusy(true);
     try {
       // Fan out one live RPC-backed request per currently listed wallet only.
-      await Promise.all(listed.map((wallet) => fetchOneWalletBalance(activeToken, wallet.id, generation)));
+      await Promise.all(listed.map((wallet) => fetchOneWalletBalance(wallet.id, generation)));
     } finally {
       if (generation === balanceFetchGenerationRef.current) {
         setBalancesBusy(false);
@@ -591,12 +565,12 @@ export function App() {
     }
   }
 
-  async function checkListedWalletBalances(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '' || wallets.length === 0) {
+  async function checkListedWalletBalances(): Promise<void> {
+    if (wallets.length === 0) {
       return;
     }
     const generation = ++balanceFetchGenerationRef.current;
-    await fetchListedWalletBalances(activeToken, wallets, generation);
+    await fetchListedWalletBalances(wallets, generation);
   }
 
   function onToggleAcknowledgedFindings(): void {
@@ -615,19 +589,12 @@ export function App() {
     });
   }
 
-  async function loadPolicyPanel(activeToken: string): Promise<void> {
-    if (activeToken.trim() === '') {
-      setPolicyWallets([]);
-      setPolicyWalletsTotal(0);
-      setPolicyState('idle');
-      setPolicyError(undefined);
-      return;
-    }
+  async function loadPolicyPanel(): Promise<void> {
     setPolicyState('loading');
     setPolicyError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
-      const next = await listWallets(activeToken.trim(), {
+      const next = await listWallets({
         ...(selectedProjectId.trim() === '' ? {} : { projectId: selectedProjectId.trim() }),
         limit: 50,
         offset: 0,
@@ -643,68 +610,70 @@ export function App() {
     }
   }
 
-  function refreshAll(activeToken: string): void {
+  function refreshAll(): void {
     // Each panel loads and fails independently — do not Promise.all across panels.
     void loadReadiness();
-    void loadTreasuries(activeToken);
-    void loadTreasuryFundingHistory(activeToken);
-    void loadReconciliationRuns(activeToken);
-    void loadFindingAlerts(activeToken);
-    void loadFundingHistory(activeToken);
-    void loadProjectsPanel(activeToken);
-    void loadWalletsPanel(activeToken);
-    void loadPolicyPanel(activeToken);
+    void loadTreasuries();
+    void loadTreasuryFundingHistory();
+    void loadReconciliationRuns();
+    void loadFindingAlerts();
+    void loadFundingHistory();
+    void loadProjectsPanel();
+    void loadWalletsPanel();
+    void loadPolicyPanel();
     if (selectedProjectId.trim() !== '') {
-      void loadProjectEnvironments(activeToken, selectedProjectId);
+      void loadProjectEnvironments(selectedProjectId);
     }
     if (envLookupId.trim() !== '') {
-      void loadEnvironmentDetail(activeToken, envLookupId);
+      void loadEnvironmentDetail(envLookupId);
     }
   }
 
   useEffect(() => {
+    if (!signedIn) {
+      return;
+    }
     void loadReadiness();
-  }, []);
+    void loadTreasuries();
+    void loadTreasuryFundingHistory();
+    void loadProjectsPanel();
+    void loadReconciliationRuns();
+    void loadFindingAlerts();
+  }, [signedIn]);
 
   useEffect(() => {
-    void loadTreasuries(token);
-    void loadTreasuryFundingHistory(token);
-    void loadProjectsPanel(token);
-    void loadReconciliationRuns(token);
-    void loadFindingAlerts(token);
-  }, [token]);
+    if (!signedIn) {
+      return;
+    }
+    void loadFundingHistory();
+  }, [signedIn, historyProjectFilter, historyStatusFilter, historyKindFilter]);
 
   useEffect(() => {
-    void loadFundingHistory(token);
-  }, [token, historyProjectFilter, historyStatusFilter, historyKindFilter]);
+    if (!signedIn) {
+      return;
+    }
+    void loadWalletsPanel();
+  }, [signedIn, walletProjectFilter, walletEnvironmentFilter, walletEnabledFilter]);
 
   useEffect(() => {
-    void loadWalletsPanel(token);
-  }, [token, walletProjectFilter, walletEnvironmentFilter, walletEnabledFilter]);
+    if (!signedIn) {
+      return;
+    }
+    void loadPolicyPanel();
+  }, [signedIn, selectedProjectId]);
 
   useEffect(() => {
-    void loadPolicyPanel(token);
-  }, [token, selectedProjectId]);
-
-  useEffect(() => {
-    void loadProjectEnvironments(token, selectedProjectId);
-  }, [token, selectedProjectId]);
-
-  function onSaveToken(event: FormEvent): void {
-    event.preventDefault();
-    const next = tokenInput.trim();
-    storeToken(next);
-    setToken(next);
-    setMessage(
-      next === '' ? 'Token cleared from this browser session.' : 'Token saved for this browser session.',
-    );
-  }
+    if (!signedIn) {
+      return;
+    }
+    void loadProjectEnvironments(selectedProjectId);
+  }, [signedIn, selectedProjectId]);
 
   async function onCheck(treasuryId: string): Promise<void> {
     setTreasuryBusyId(treasuryId);
     setMessage(undefined);
     try {
-      const result = await checkTreasury(token, treasuryId);
+      const result = await checkTreasury(treasuryId);
       setTreasuries((current) => current.map((item) => (item.id === treasuryId ? result.data : item)));
       setMessage(`Check ${result.check.outcome} for ${result.data.address}`);
       if (treasuriesState === 'empty' || treasuriesState === 'idle') {
@@ -723,7 +692,7 @@ export function App() {
     setMessage(undefined);
     setSessionError(undefined);
     try {
-      await sendTestEmail(token);
+      await sendTestEmail();
       setMessage('Test email requested. Check the operator inbox (or server logs if provider is log-only).');
     } catch (caught) {
       setSessionError(formatError(caught));
@@ -742,7 +711,7 @@ export function App() {
     setProjectsError(undefined);
     setMessage(undefined);
     try {
-      const updated = await setProjectEnabled(token, project.id, nextEnabled);
+      const updated = await setProjectEnabled(project.id, nextEnabled);
       setProjects((current) => current.map((item) => (item.id === project.id ? updated : item)));
       setMessage(`Project ${updated.slug} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
     } catch (caught) {
@@ -762,7 +731,7 @@ export function App() {
     setEnvironmentError(undefined);
     setMessage(undefined);
     try {
-      const updated = await setEnvironmentEnabled(token, environment.id, nextEnabled);
+      const updated = await setEnvironmentEnabled(environment.id, nextEnabled);
       setEnvironmentDetail(updated);
       setProjectEnvironments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setMessage(`Environment ${updated.slug} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
@@ -783,7 +752,7 @@ export function App() {
     setWalletsError(undefined);
     setMessage(undefined);
     try {
-      const updated = await setWalletEnabled(token, wallet.id, nextEnabled);
+      const updated = await setWalletEnabled(wallet.id, nextEnabled);
       setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setMessage(`Wallet ${updated.role} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
@@ -809,7 +778,7 @@ export function App() {
     setWalletsError(undefined);
     setMessage(undefined);
     try {
-      const updated = await setWalletReconciliationEnabled(token, wallet.id, nextEnabled);
+      const updated = await setWalletReconciliationEnabled(wallet.id, nextEnabled);
       setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
       setMessage(
@@ -887,7 +856,7 @@ export function App() {
     setPolicyPreviewError(undefined);
     setMessage(undefined);
     try {
-      const updated = await setWalletPolicy(token, wallet.id, {
+      const updated = await setWalletPolicy(wallet.id, {
         minimumBalanceWei: preview.minimumBalanceWei,
         targetBalanceWei: preview.targetBalanceWei,
         maximumTopUpWei: preview.maximumTopUpWei,
@@ -914,7 +883,6 @@ export function App() {
   const treasuriesPanel: TreasuriesPanelProps = {
     loadTreasuries,
     loadTreasuryFundingHistory,
-    token,
     treasuriesState,
     treasuriesError,
     treasuries,
@@ -926,7 +894,6 @@ export function App() {
   };
   const projectsPanel: ProjectsPanelProps = {
     loadProjectsPanel,
-    token,
     projectsState,
     projectsError,
     projectsTotal,
@@ -939,7 +906,6 @@ export function App() {
   const environmentsPanel: EnvironmentsPanelProps = {
     loadProjectEnvironments,
     loadEnvironmentDetail,
-    token,
     selectedProjectId,
     envLookupId,
     setEnvLookupId,
@@ -955,7 +921,6 @@ export function App() {
   const walletsPanel: ManagedWalletsPanelProps = {
     checkListedWalletBalances,
     loadWalletsPanel,
-    token,
     walletsState,
     balancesBusy,
     walletProjectFilter,
@@ -976,7 +941,6 @@ export function App() {
   };
   const policyPanel: FundingPolicyPanelProps = {
     loadPolicyPanel,
-    token,
     selectedProjectId,
     policyState,
     policyError,
@@ -999,7 +963,6 @@ export function App() {
   };
   const historyPanel: FundingHistoryPanelProps = {
     loadFundingHistory,
-    token,
     historyProjectFilter,
     setHistoryProjectFilter,
     historyStatusFilter,
@@ -1014,7 +977,6 @@ export function App() {
   const reconciliationPanel: ReconciliationPanelProps = {
     loadReconciliationRuns,
     loadFindingAlerts,
-    token,
     findingAlertsState,
     findingAlertsError,
     openFindingAlerts,
@@ -1043,39 +1005,59 @@ export function App() {
     onToggleReconciliationDetail,
   };
 
+  if (!signedIn || session.user === undefined) {
+    return (
+      <LoginPage
+        checking={session.status === 'unknown'}
+        notice={session.signedOutReason}
+        onLogin={session.login}
+      />
+    );
+  }
+
+  const user = session.user;
+
   return (
-    <Shell
-      route={route}
-      tokenInput={tokenInput}
-      setTokenInput={setTokenInput}
-      sessionBusy={sessionBusy}
-      onSaveToken={onSaveToken}
-      sessionError={sessionError}
-      token={token}
-      onRefresh={() => {
-        refreshAll(token);
-      }}
-      onTestEmail={onTestEmail}
-      openFindingAlertCount={openFindingAlerts.length}
-      findingAlertsError={findingAlertsError}
-      findingAlertsFailed={findingAlertsState === 'error'}
-    >
-      {route === 'overview' ? <OverviewPage readiness={readinessPanel} treasuries={treasuriesPanel} /> : null}
-      {route === 'treasuries' ? <TreasuriesPage treasuries={treasuriesPanel} /> : null}
-      {route === 'wallets' ? (
-        <WalletsPage
-          projects={projectsPanel}
-          environments={environmentsPanel}
-          wallets={walletsPanel}
-          policy={policyPanel}
-        />
-      ) : null}
-      {route === 'funding' ? <FundingPage history={historyPanel} /> : null}
-      {route === 'reconciliation' ? <ReconciliationPage panel={reconciliationPanel} /> : null}
-      {route === 'alerts' ? <AlertsPage panel={reconciliationPanel} /> : null}
-      {route === 'email' ? <EmailPage /> : null}
-      {route === 'admin' ? <AdminPage /> : null}
-      {message !== undefined ? <p className="toast ok">{message}</p> : null}
-    </Shell>
+    <PermissionsProvider permissions={session.permissions}>
+      <Shell
+        route={route}
+        user={user}
+        sessionBusy={sessionBusy}
+        onLogout={session.logout}
+        sessionError={sessionError}
+        onRefresh={() => {
+          refreshAll();
+        }}
+        onTestEmail={onTestEmail}
+        openFindingAlertCount={openFindingAlerts.length}
+        findingAlertsError={findingAlertsError}
+        findingAlertsFailed={findingAlertsState === 'error'}
+      >
+        {route === 'overview' ? (
+          <OverviewPage readiness={readinessPanel} treasuries={treasuriesPanel} />
+        ) : null}
+        {route === 'treasuries' ? <TreasuriesPage treasuries={treasuriesPanel} /> : null}
+        {route === 'wallets' ? (
+          <WalletsPage
+            projects={projectsPanel}
+            environments={environmentsPanel}
+            wallets={walletsPanel}
+            policy={policyPanel}
+          />
+        ) : null}
+        {route === 'funding' ? <FundingPage history={historyPanel} /> : null}
+        {route === 'reconciliation' ? <ReconciliationPage panel={reconciliationPanel} /> : null}
+        {route === 'alerts' ? <AlertsPage panel={reconciliationPanel} /> : null}
+        {route === 'email' ? <EmailPage /> : null}
+        {route === 'admin' ? (
+          user.role === 'admin' ? (
+            <AdminPage currentUserId={user.id} />
+          ) : (
+            <AdminUnavailable />
+          )
+        ) : null}
+        {message !== undefined ? <p className="toast ok">{message}</p> : null}
+      </Shell>
+    </PermissionsProvider>
   );
 }

@@ -353,6 +353,26 @@ describe.skipIf(!integrationEnabled)('dashboard users and sessions (integration)
     expect(adminStill.statusCode).toBe(200);
   });
 
+  it('logs in, reads me and treasuries with the cookie and session header, then logout rejects that cookie', async () => {
+    await insertUser('admin@example.com', 'Ada', 'admin');
+    const loggedIn = await login('admin@example.com', PASSWORD);
+    expect(loggedIn.statusCode).toBe(204);
+    const token = sessionToken(loggedIn);
+    const headers = { cookie: `chainbank_session=${token}`, ...SESSION_HEADER };
+
+    const me = await app.inject({ method: 'GET', url: '/v1/auth/me', headers });
+    expect(me.statusCode).toBe(200);
+
+    const treasuries = await app.inject({ method: 'GET', url: '/v1/treasuries', headers });
+    expect(treasuries.statusCode).toBe(200);
+
+    const loggedOut = await app.inject({ method: 'POST', url: '/v1/auth/logout', headers });
+    expect(loggedOut.statusCode).toBe(204);
+
+    const again = await app.inject({ method: 'GET', url: '/v1/treasuries', headers });
+    expect(again.statusCode).toBe(401);
+  });
+
   async function insertUser(
     email: string,
     displayName: string,

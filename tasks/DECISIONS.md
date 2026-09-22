@@ -1973,6 +1973,67 @@ Local design choices (T10.5, 2026-09-22):
   address, and `config.email.operatorRecipients`. Disabled treasuries are
   omitted. No new environment variable.
 
+### C33 — Dashboard login, session wiring, and Admin page (owner: T10.3)
+
+No migration. The dashboard no longer accepts a pasted API token. Session state
+lives in `useSession` (`unknown` → `signed-out` → `signed-in`). Pages read
+`permissions` from context; they do not receive the session object.
+
+```ts
+type SessionStatus = 'unknown' | 'signed-out' | 'signed-in';
+
+// unknown: GET /v1/auth/me is in flight. Login page only. No data fetches.
+// me 401 → signed-out. Login page. No "session ended" line.
+// me 200 → signed-in. Shell shows user.displayName and user.role.
+// POST /v1/auth/login 204, then me again, then the shell.
+// POST /v1/auth/logout 204 → signed-out login page, hash left as it was.
+// A later 401 on any other call → signed-out, hash unchanged,
+// "Your session ended, sign in again". The next login restores that hash.
+// Exception: POST /v1/auth/password 401 whose message is
+// "The current password is not valid." The cookie is still valid
+// (change-password.ts); the form shows the error and stays signed in.
+
+// Every fetch in dashboard/src/api.ts (authorizedJson):
+//   credentials: 'same-origin'
+//   header X-ChainBank-Session: 1
+//   no Authorization header
+
+// #/admin and the Admin nav item render only when role === 'admin'.
+// Any other role sees "Admin is available to administrators" and no nav item.
+// Account (POST /v1/auth/password: current, new, confirm; other sessions
+// signed out) is a section on the Admin page. Non-admins reach the same
+// form from the sidebar user menu.
+
+// permissions from GET /v1/auth/me hide actions the role lacks. The control
+// is absent from the DOM:
+//   treasury:check     Check now (POST /v1/treasuries/:id/check)
+//   wallet:write       wallet enable, reconcile toggle, edit policy
+//   project:write      project and environment enable
+//   alert:acknowledge  Acknowledge
+//   email:test         Test email
+//   user:manage        create user, disable, change role, reset password
+//   credential:write   credential enable, disable, revoke
+// treasury:write has no control on this page. Dashboard admin and operator
+// hold it together with treasury:check; viewer holds neither.
+// Own user row: no disable and no role change (CREDENTIAL_SELF_MUTATION_DENIED).
+// New API credentials are not issued here. The page says to run
+// `npm run credential:issue` on the server.
+```
+
+Local design choices (T10.3, 2026-09-22):
+
+- **One header site.** `authorizedJson` sets `X-ChainBank-Session: 1` and
+  `credentials: 'same-origin'`. A present `Authorization` header would make
+  C31 ignore the cookie, so the dashboard does not send one.
+- **Wrong current password is not a dead session.** That route returns 401
+  after the session has already authenticated. Treating it as expiry would
+  sign the operator out of the UI while the cookie remained valid.
+- **Check now follows `treasury:check`.** That is the permission
+  `checkTreasuryBalance` enforces. The brief's `treasury:write` list is the
+  enable-treasury capability; this UI has no such control.
+- **Deny by default.** A panel rendered without `PermissionsProvider` shows
+  no write action. Tests that still expect Check now pass `treasury:check`.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -2085,3 +2146,4 @@ Local design choices (T10.5, 2026-09-22):
 - 2026-09-22 — T10.2 published C32: dashboard hash routes, design tokens, shell primitives, and localStorage collapse keys; unacknowledged critical findings and dark-chain warnings stay outside collapse.
 - 2026-09-22 — **T10.5 published C35:** `email_deliveries` (migration `0012`) records each send after the provider answers; a recording failure cannot change the send result. `GET /v1/admin/email/deliveries` and `GET /v1/admin/email/triggers` are `alert:read`. No message body, no API key. C36 stays reserved for the email page.
 - 2026-09-22 — **TX.34 amended C14 in place:** a null `last_outgoing_scan_nonce` may skip the outgoing body scan when the transaction counts at `fromBlock - 1` and `toBlock` are equal, and a zero-finding completion writes that treasury's watermark before the next treasury. A scan that produced any finding still waits until after escalation. No contract, no migration. TX.32 and TX.33 remain reserved.
+- 2026-09-22 — **T10.3 published C33:** the dashboard signs in with a user session (`X-ChainBank-Session: 1`, no bearer token), and admins manage users and API credentials from `#/admin`.
