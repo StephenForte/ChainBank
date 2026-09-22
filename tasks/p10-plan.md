@@ -1,5 +1,7 @@
 # ChainBank Phase 10 Plan — Operator Console v2 (login, layout, chain filter, email visibility)
 
+**PHASE 10 EXITED 2026-09-22** — six tasks (#133, #134, #137, #141, #144, #146), contracts C31–C36, migrations 0011–0012, D24. Evidence in the exit table at the end of this file.
+
 Planner-owned. Goal: satisfy PRD Phase 10 — a dashboard an operator can live in now that there are
 two chains: user login instead of a pasted token, a sidebar layout with compact panels and collapsible
 detail, a chain filter (ALL / per chain), an Admin page, and an Email page that shows what can send
@@ -279,10 +281,10 @@ every time.
 | Criterion                                                                                            | Evidence expected                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Operators log in with email + password; no API token is pasted                                       | ✅ 2026-09-22: hosted `chainbank-web` serves only the sign-in form (email, password, no nav, no "Operator token" text — planner checked in a browser after #141 deployed); bundle greps `Authorization` 0 / `operatorToken` 0; first admin `81281471…` created with `npm run user:create` in the Render shell |
-| A second user can be created and can log in                                                          | ⏳ operator: create a viewer in Admin, sign in as that viewer in a private window, and read its **Last login** in the admin's Users table. The sessions row is written by `POST /v1/auth/login` (C31, integration-tested); the UI evidence is the last-login timestamp.                                       |
+| A second user can be created and can log in                                                          | ✅ 2026-09-22: operator created a viewer in Admin, signed in as that viewer in a private window, and saw its Last login in the Users table.                                                                                                                                                                   |
 | Sidebar layout, compact panels, +/− detail                                                           | ✅ screenshots in #133 and #144; planner's own 1280/800 px checks at T10.2 review; hosted bundle `index-BtfdFvei.js` serves the shell (contains `Delivery log`, no `Operator token`).                                                                                                                         |
-| Chain filter ALL / per chain, derived from registered chains                                         | ⏳ operator: after sign-in the top bar reads `ALL · Ethereum Sepolia · Base Sepolia`; select Base and confirm only Base treasuries render. (Derivation and C20 badge proven in review probes; hosted rendering needs a session.)                                                                              |
-| Email page shows triggers, recipients and a delivery log                                             | ⏳ operator: open `#/email`, confirm the triggers table lists both chains' treasuries and the recipients line, press **Send test email**, and confirm a `test_email` row with status `sent` appears. That row is the first real `email_deliveries` row on the hosted database.                                |
+| Chain filter ALL / per chain, derived from registered chains                                         | ✅ 2026-09-22: operator confirmed the top bar reads `ALL · Ethereum Sepolia · Base Sepolia` on the hosted instance and that selecting Base renders only Base treasuries.                                                                                                                                      |
+| Email page shows triggers, recipients and a delivery log                                             | ✅ 2026-09-22: operator pressed Send test email on `#/email` and a `test_email` row with status `sent` appeared — the first real `email_deliveries` row on the hosted database.                                                                                                                               |
 | Phase 10 is exited only with a §20-style evidence pass against the hosted instance, like Phase 4 and |
 | Phase 6.                                                                                             |
 
@@ -290,5 +292,4 @@ every time.
 T10.2 #133, T10.5 #137, T10.3 #141, T10.4 #144, T10.6 #146) and deployed. Verified by the planner
 without a session: the hosted bundle `index-BtfdFvei.js` has `Authorization` 0, `operatorToken` 0,
 `Operator token` 0, `X-ChainBank-Session` 1; the root URL serves the sign-in form only. Verified by the
-operator: the first admin signed in. **Three ticks need a signed-in operator** and are marked ⏳ in the
-table; when confirmed, this section reads EXITED.
+operator: the first admin signed in. **PHASE 10 IS EXITED (2026-09-22).** The operator confirmed the three signed-in criteria the same evening; every row in the table above is ✅.
