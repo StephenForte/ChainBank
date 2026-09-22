@@ -100,7 +100,7 @@ Both landed within ~36 s of a `0 */6 * * *` boundary, both moved exactly
 `target − balance`, both receipts `0x1`. Measured burn: 0.142 → 0.181 ETH/day, rising.
 
 **A real foreign transaction crossed the treasury mid-window, and the system absorbed
-it.** On 2026-08-05 17:48:12 UTC the operator sent **1 ETH to HARVEST by hand**
+it.** On 2026-08-05 17:48:12 UTC the operator sent **1 ETH by hand** to `0x5128…652d`
 (nonce 3, `0xb10c651e…`; confirmed by the operator 2026-08-06). This is exactly the class
 of event C14's crash-orphan scan exists to catch — a treasury transfer no
 `funding_transactions` row explains. Three consequences, all load-bearing:
@@ -111,12 +111,28 @@ of event C14's crash-orphan scan exists to catch — a treasury transfer no
 - ✅ **The detector fired — verified 2026-08-06.** The 2026-08-05 18:00:20 UTC run
   recorded `unexplained_transfer_count: 1` with
   `{kind: 'unexplained_outgoing_transfer', severity: 'critical', nonce: 3, valueWei:
-'1000000000000000000', toAddress: '0x5128…652d', blockNumber: '11425869',
-transactionHash: '0xb10c651e446f00a58b…'}` — twelve minutes after the operator's manual
+  '1000000000000000000', toAddress: '0x5128…652d', blockNumber: '11425869',
+
+> **Correction, 2026-09-22 (planner).** This entry previously named `0x5128…652d` as **HARVEST**, a
+> managed wallet. The operator confirms that address is the **Private (operational) treasury**
+> — `0x5128889F20Ec13e0Be38b2BeBC568594159B652d`, a plain EOA on both Ethereum Sepolia (1.0095 ETH,
+> nonce 8) and Base Sepolia (3.5446 ETH, nonce 69) as measured on 2026-09-22. The wallet roster on
+> the line above is left as written because it records the enrolment as of 2026-08-06 and has not
+> been re-confirmed; the operator's current roster is ADMIN, BATCHER, PROPOSER, SEQUENCER.
+>
+> **Open question this raises, not resolved here:** Phase 9 two-tier merged 2026-08-27, three weeks
+> _after_ this 2026-08-05 transfer, so there was no Private treasury when it happened. Either the
+> address was a managed wallet then and was later repurposed as the Private treasury, or the label
+> was wrong from the start. Which it is changes nothing about the detector firing — C14 flagged an
+> unexplained outgoing transfer and that remains verified — but it does change what the destination
+> was at the time, so do not cite this row as evidence about wallet funding until it is settled.
+
+transactionHash: '0xb10c651e446f00a58b…'}`— twelve minutes after the operator's manual
   send. **Live-fire proof of C14's crash-orphan scan against a transfer it had never
   seen.** Discrimination is sound: the five surrounding runs recorded zero unexplained
-  transfers, and the 06:00 run that funded BATCHER reported `unexplained 0` — it
-  recognised its _own_ transfer as explained while flagging the foreign one.
+  transfers, and the 06:00 run that funded BATCHER reported`unexplained 0` — it
+recognised its _own_ transfer as explained while flagging the foreign one.
+
 - **Soft spot this exposed, now measured rather than suspected:** that 18:00 run recorded
   `wallets_funded: 0`, no `error_code`, `outgoing_scan_status: 'complete'` — it classifies
   as a **success** under C15. The critical finding sat in `findings_json` for over a day
