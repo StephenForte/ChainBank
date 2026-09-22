@@ -1,0 +1,5 @@
+# TX.30 fixture. Gitleaks scans the whole pull-request range, so the original
+# `const TOKEN = '<sequential hex>'` assignment in e28572f still matches
+# generic-api-key after the variable was renamed. The value is 0123456789abcdef
+# repeated; it was never a deployed credential.
+e28572fd3591d717f8a078f66880a9b3244b71b3:test/unit/domain/describe-viem-error.test.ts:generic-api-key:6
