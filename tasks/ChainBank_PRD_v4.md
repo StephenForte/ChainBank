@@ -593,6 +593,25 @@ Acceptance criteria:
 - A `replenish_operational` transfer is recorded and explained by the outgoing scanner.
 - A subsequent `ensure-funded` debit is attributed to the Private treasury row.
 
+## Phase 10 - Operator Console v2
+
+**Goal:** Make the dashboard usable by several operators across several chains: login instead of a pasted token, a sidebar layout with compact panels, a chain filter, and visibility into email alerting.
+
+### User Stories and Acceptance Criteria
+
+- Operators log in with an email and password; credentials are stored in Postgres as hashes only, and API bearer tokens remain for machines (D24).
+- An admin can create, disable and reset other users, and issue or revoke API credentials, from an Admin page.
+- The dashboard uses a left sidebar layout with one page per concern (Overview, Treasuries, Wallets, Funding, Reconciliation, Alerts, Email, Admin), stat cards, and tables; secondary detail is hidden behind +/− controls. Unacknowledged critical findings are never hidden.
+- A chain filter offers ALL plus one entry per registered chain and applies across pages; it is derived from the registry, not hard-coded.
+- An Email page lists every trigger that can send mail, its thresholds and recipients, and a log of sent and failed deliveries.
+
+### Phase 10 Exit Criteria
+
+- Hosted dashboard requires login; the paste-a-token control no longer exists.
+- A second operator account logs in and its session appears in the sessions table.
+- The chain filter shows both live chains and filters treasuries, wallets, funding history and reconciliation.
+- The Email page shows at least one real delivery row from a hosted service.
+
 ## 12. Functional Requirements
 
 ### 12.1 API
