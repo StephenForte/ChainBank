@@ -24,6 +24,14 @@ export const SUPPORTED_CHAINS: readonly SupportedChain[] = [
     defaultExplorerBaseUrl: 'https://sepolia.etherscan.io',
     blockTimeMs: 12_000,
   },
+  {
+    slug: 'base-sepolia',
+    chainId: 84532,
+    displayName: 'Base Sepolia',
+    nativeSymbol: 'ETH',
+    defaultExplorerBaseUrl: 'https://sepolia.basescan.org',
+    blockTimeMs: 2_000,
+  },
 ];
 
 export function findSupportedChainById(chainId: number): SupportedChain | undefined {

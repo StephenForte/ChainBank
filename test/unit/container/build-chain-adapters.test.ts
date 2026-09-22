@@ -12,6 +12,7 @@ const recorded = vi.hoisted(() => {
   let next = 0;
   return {
     readers: [] as Array<{ chainId: number; rpcUrl: string }>,
+    reads: [] as Array<{ readerChainId: number; readerRpcUrl: string; requestChainId: number }>,
     signers: [] as Array<{
       chainId: number;
       rpcUrl: string;
@@ -37,7 +38,14 @@ vi.mock('../../../src/infrastructure/evm/balance-reader.js', () => ({
     return {
       chainId: options.chain.chainId,
       rpcUrl: options.chain.rpcUrl,
-      readBalance: () => Promise.reject(new Error('unused')),
+      readBalance: (request: { chainId: number }) => {
+        recorded.reads.push({
+          readerChainId: options.chain.chainId,
+          readerRpcUrl: options.chain.rpcUrl,
+          requestChainId: request.chainId,
+        });
+        return Promise.resolve({ kind: 'unavailable' as const, errorCode: 'RPC_UNAVAILABLE' });
+      },
       verifyChainId: () => Promise.resolve({ matches: true, observedChainId: options.chain.chainId }),
     };
   },
@@ -174,6 +182,7 @@ function twoChainConfig(
 describe('buildChainAdapters', () => {
   beforeEach(() => {
     recorded.readers.length = 0;
+    recorded.reads.length = 0;
     recorded.signers.length = 0;
   });
 
@@ -253,5 +262,89 @@ describe('buildChainAdapters', () => {
     expect(registry.externalSigner(11155111)?.chainId).toBe(11155111);
     expect(registry.externalSigner(424242)?.chainId).toBe(424242);
     expect(registry.externalSigner(11155111)).not.toBe(registry.externalSigner(424242));
+  });
+
+  it('sends a Base balance read to the Base reader and resolves one signer per chain for a shared address', async () => {
+    const externalKey = generatePrivateKey();
+    const operationalKey = generatePrivateKey();
+    const sharedExternal = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+    const sharedOperational = '0x0000000000000000000000000000000000000001';
+    const baseRpc = 'https://rpc.example.test/base-sepolia';
+    const env = validWebEnv({
+      FUNDING_ENABLED: 'true',
+      TREASURY_PRIVATE_KEY: externalKey,
+      TREASURY_OPERATIONAL_PRIVATE_KEY: operationalKey,
+    });
+    for (const key of [
+      'CHAIN_ID',
+      'CHAIN_RPC_URL',
+      'TREASURY_ADDRESS',
+      'TREASURY_WARNING_BALANCE_ETH',
+      'TREASURY_CRITICAL_BALANCE_ETH',
+      'TREASURY_RECOVERY_BALANCE_ETH',
+      'TREASURY_MINIMUM_RESERVE_ETH',
+    ]) {
+      delete env[key];
+    }
+    const config = loadConfig({
+      serviceRole: 'web',
+      env: {
+        ...env,
+        CHAINS: JSON.stringify([
+          {
+            chainId: 11155111,
+            rpcUrl: SEPOLIA_RPC,
+            treasury: treasury(sharedExternal),
+            operationalTreasury: operational(sharedOperational),
+          },
+          {
+            chainId: 84532,
+            rpcUrl: baseRpc,
+            treasury: treasury(sharedExternal),
+            operationalTreasury: operational(sharedOperational),
+          },
+        ]),
+      },
+    });
+    expect(config.chains.map((chain) => chain.treasury.address)).toEqual([sharedExternal, sharedExternal]);
+    expect(config.chains.map((chain) => chain.operationalTreasury?.address)).toEqual([
+      sharedOperational,
+      sharedOperational,
+    ]);
+
+    const registry = buildChainAdapters(
+      config,
+      { now: () => new Date('2026-09-22T00:00:00.000Z') },
+      createLogger({ level: 'silent', serviceRole: 'web', environment: 'test' }),
+    );
+    const sepoliaReader = registry.balanceReader(11155111) as BalanceReader & { rpcUrl: string };
+    const baseReader = registry.balanceReader(84532) as BalanceReader & { rpcUrl: string };
+    expect(baseReader.chainId).toBe(84532);
+    expect(baseReader.rpcUrl).toBe(baseRpc);
+    expect(sepoliaReader.rpcUrl).toBe(SEPOLIA_RPC);
+    expect(baseReader).not.toBe(sepoliaReader);
+
+    await baseReader.readBalance({ chainId: 84532, address: sharedExternal });
+    expect(recorded.reads).toEqual([{ readerChainId: 84532, readerRpcUrl: baseRpc, requestChainId: 84532 }]);
+
+    const signerAddress = recorded.addressFor(externalKey);
+    const sepoliaSigner = registry.getSignerForTreasury({
+      id: 'treasury-sepolia',
+      address: signerAddress,
+      chain: { chainId: 11155111 },
+    });
+    const baseSigner = registry.getSignerForTreasury({
+      id: 'treasury-base',
+      address: signerAddress,
+      chain: { chainId: 84532 },
+    });
+    expect(sepoliaSigner.chainId).toBe(11155111);
+    expect(baseSigner.chainId).toBe(84532);
+    expect(sepoliaSigner).not.toBe(baseSigner);
+    expect(registry.externalSigner(84532)?.chainId).toBe(84532);
+    expect(registry.externalSigner(84532)).not.toBe(registry.externalSigner(11155111));
+    expect(
+      recorded.signers.find((call) => call.chainId === 84532 && call.privateKey === externalKey)?.rpcUrl,
+    ).toBe(baseRpc);
   });
 });

@@ -332,11 +332,50 @@ describe('reconciliation decisions', () => {
 });
 
 describe('SupportedChain blockTimeMs', () => {
-  it('records Sepolia block time on the single supported chain descriptor', () => {
+  it('records Sepolia and Base Sepolia block times and no mainnet id', () => {
     const sepolia = findSupportedChainById(11_155_111);
-    expect(SUPPORTED_CHAINS).toHaveLength(1);
+    const base = findSupportedChainById(84_532);
+    expect(SUPPORTED_CHAINS).toHaveLength(2);
     expect(sepolia?.slug).toBe('ethereum-sepolia');
     expect(sepolia?.blockTimeMs).toBe(12_000);
+    expect(base?.slug).toBe('base-sepolia');
+    expect(base?.blockTimeMs).toBe(2_000);
     expect(RECONCILE_BLOCK_TIME_MS).toBe(sepolia?.blockTimeMs);
+    for (const mainnetId of [1, 8453, 137, 56]) {
+      expect(SUPPORTED_CHAINS.some((chain) => chain.chainId === mainnetId)).toBe(false);
+    }
+  });
+
+  it('covers six times as many blocks on Base as on Sepolia for the same age', () => {
+    const sepolia = findSupportedChainById(11_155_111);
+    const base = findSupportedChainById(84_532);
+    expect(sepolia).toBeDefined();
+    expect(base).toBeDefined();
+    if (sepolia === undefined || base === undefined) {
+      return;
+    }
+
+    const now = new Date('2026-09-22T00:00:00.000Z');
+    const ageMs = 100 * sepolia.blockTimeMs;
+    const createdAt = new Date(now.getTime() - ageMs);
+    const maxBlocks = 100_000n;
+    const sepoliaLookback = nonceSearchLookbackBlocks({
+      createdAt,
+      now,
+      maxBlocks,
+      blockTimeMs: sepolia.blockTimeMs,
+    });
+    const baseLookback = nonceSearchLookbackBlocks({
+      createdAt,
+      now,
+      maxBlocks,
+      blockTimeMs: base.blockTimeMs,
+    });
+    const sepoliaAgeBlocks = sepoliaLookback - NONCE_SEARCH_BLOCK_MARGIN;
+    const baseAgeBlocks = baseLookback - NONCE_SEARCH_BLOCK_MARGIN;
+
+    expect(sepoliaAgeBlocks).toBe(100n);
+    expect(baseAgeBlocks).toBe(sepoliaAgeBlocks * 6n);
+    expect(base.blockTimeMs * 6).toBe(sepolia.blockTimeMs);
   });
 });

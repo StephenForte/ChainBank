@@ -1527,6 +1527,53 @@ plus the operational address, thresholds, and policy when two-tier is on.
   adapter registry is populated from `config.chains` (one registration per
   chain) and is otherwise unchanged (C26).
 
+### C28 — Base Sepolia registration (owner: T6.3)
+
+`SUPPORTED_CHAINS` has two rows. The second is Base Sepolia: slug
+`base-sepolia`, chain id **84532**, display name Base Sepolia, native symbol
+ETH, explorer `https://sepolia.basescan.org`, `blockTimeMs` **2_000**.
+Ethereum Sepolia stays `blockTimeMs` 12_000. No mainnet id is in the catalog.
+`resolveViemChain(84532)` returns viem's `baseSepolia` (that object's id is
+84532). The map is an explicit lookup. Resolving an id with no entry throws
+`INVALID_CONFIGURATION`, including Base mainnet, so that id never reaches a
+signer. A viem upgrade that changes `baseSepolia.id` fails when this module
+loads, before any process accepts work.
+
+- **Boot-time chain-id proof.** After `buildContainer` and before the process
+  accepts work — web calls `proveConfiguredChainIds` before `listen`, and the
+  treasury-monitor and wallet-reconciler crons call it before their run
+  functions — each registered balance reader is asked for the RPC chain id. A
+  reported id other than the adapter's registration key throws
+  `INVALID_CONFIGURATION` (category `validation`). The process exits and no
+  signer is used. That code is not `CHAIN_ID_MISMATCH` or
+  `SIGNER_CHAIN_MISMATCH`, which are `dependency_unavailable` and read as
+  transient. A mismatch is not retried as a provider blip. An RPC that does
+  not answer (`observedChainId` undefined) is returned as `unreachable`,
+  logged, and does not throw. An outage is not stored as a wrong-chain
+  configuration. The existing send-time check still refuses to sign until a
+  later read confirms the id.
+- **Shared treasury addresses (D21).** The same external address, and when
+  two-tier is on the same operational address, is registered on every
+  configured chain. Re-running registration is idempotent and does not add a
+  second enabled row of the same kind: migration 0010's partial unique on
+  `(chain_id, kind) WHERE enabled` still holds, one enabled external and one
+  enabled operational per chain. This is safe because C26 keys signer lookup
+  by `(chain id, address)`, so a shared address cannot draw another chain's
+  signer. Thresholds and the operational policy are whatever configuration
+  names for that chain. Source has no Base-specific default ladder.
+- **D20.** Base Sepolia's RPC must be a dedicated endpoint. Measured
+  2026-09-22 against the public `https://sepolia.base.org`: HTTP 429 on 9 of
+  48 full-block calls in 1.4 s at `BLOCK_SCAN_CONCURRENCY` 8, while a 6-hour
+  window is about 10,800 blocks against `RECONCILE_OUTGOING_LOOKBACK_BLOCKS`
+  of 20,000. The URL is deployment configuration. `render.yaml` is unchanged,
+  and no RPC URL is committed here.
+- **Nonce hunts** use the descriptor's `blockTimeMs`. The same wall-clock age
+  covers six times as many blocks on Base (2_000 ms) as on Sepolia (12_000 ms).
+- `CHAINS` and the singular env form are unchanged (C27). A document naming
+  11155111 and 84532 loads both, each bound to its own `rpcUrl`. The singular
+  form still loads exactly one chain. `chain-adapter-registry.ts` is unchanged
+  (C26). No migration.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1622,3 +1669,4 @@ plus the operational address, thresholds, and policy when two-tier is on.
 - 2026-09-21 — **T6.2 published C27:** `config.chains` carries per-chain RPC and treasury configuration. The singular `CHAIN_ID` / `CHAIN_RPC_URL` / `TREASURY_*` form still loads as exactly one chain — `render.yaml` keeps that form, so a Blueprint sync cannot pair a new document with the live singular variables. `CHAINS` is the JSON multi form; both forms together throw `INVALID_CONFIGURATION`. D16 is enforced at load: a mix of hatch and two-tier chains is named and refused. One process-global key builds one signer per chain. `SUPPORTED_CHAINS` stays one row.
 - 2026-09-22 — **D20 / D21 (Base Sepolia prerequisites), and Phase 6 through T6.2.** T6.1 published **C26** (chain-keyed adapter registry, PR #115) and T6.2 published **C27** (multi-chain configuration, PR #116); both merged after independent planner verification — for C26, the same EOA registered on two chains resolves to each chain's own signer, and sabotaging the lookup back to address-only reproduces the wrong-chain send; for C27, the resolved config under the deployed Render env is byte-identical between `main` and the branch across six role/mode combinations. **D20:** Base Sepolia needs a dedicated QuickNode endpoint — the public `https://sepolia.base.org` returned HTTP 429 on 9 of 48 full-block calls at the scanner's own concurrency, and the C14 scan needs ~10,800 blocks per 6-hourly window there. **D21:** Base reuses the Sepolia EOA; one key, one signer per chain. Next free contract **C28** (T6.3), next free decision **D22**.
 - 2026-09-22 — **D22: Base Public treasury is a 7702 smart account and stays that way.** Found while verifying the funded Base treasuries: `eth_getCode` on `0xCD1f…9270` (Base Sepolia) returns `0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b` — a 23-byte EIP-7702 delegation indicator pointing at MetaMask's Delegator. Balances at the time: Base Public 1.3999 ETH / nonce 14, Base Private 3.5446 ETH / nonce 69 (plain EOA), Sepolia Public 1.0386 / nonce 34 (plain EOA), Sepolia Private 1.0095 / nonce 8. The operator declines to revoke pending an audit of delegations and session keys, and accepts that C14 crash-orphan detection does not cover that one account. Record the limitation wherever C14 coverage is described; do not quietly widen the claim when Base reconciliation goes live.
+- 2026-09-22 — **T6.3 published C28:** Base Sepolia (`base-sepolia`, chain id 84532, explorer `https://sepolia.basescan.org`, `blockTimeMs` 2_000, viem `baseSepolia`) is the second supported chain. Boot proves each configured RPC's chain id before the process accepts work; a reported mismatch throws `INVALID_CONFIGURATION` and is not treated as transient, and an unreachable RPC is a distinct non-throwing outcome. Treasury addresses are shared across chains (D21), which stays safe because C26 keys signers by `(chain id, address)`. Base RPC must be a dedicated endpoint (D20): the public endpoint returned HTTP 429 on 9 of 48 full-block calls. No migration. Next free contract **C29**.

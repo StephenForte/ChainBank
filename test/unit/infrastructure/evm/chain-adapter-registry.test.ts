@@ -10,7 +10,10 @@ import {
 } from '../../../support/funding-fakes.js';
 
 const SEPOLIA = 11_155_111;
-/** Fixture chain only. Not registered in SUPPORTED_CHAINS. */
+/**
+ * Base Sepolia's id. Tests that need a second registry entry register it
+ * explicitly. A catalog row does not insert an adapter.
+ */
 const FIXTURE_CHAIN = 84_532;
 const SHARED_ADDRESS = '0x1111111111111111111111111111111111111111';
 
@@ -25,9 +28,12 @@ function registration(chainId: number, signer?: TreasurySigner) {
 }
 
 describe('createChainAdapterRegistry', () => {
-  it('keeps the production chain catalog at one entry', () => {
-    expect(SUPPORTED_CHAINS).toHaveLength(1);
-    expect(SUPPORTED_CHAINS[0]?.chainId).toBe(SEPOLIA);
+  it('lists Sepolia and Base Sepolia in the production catalog and no mainnet id', () => {
+    expect(SUPPORTED_CHAINS.map((chain) => chain.chainId)).toEqual([SEPOLIA, FIXTURE_CHAIN]);
+    expect(SUPPORTED_CHAINS.map((chain) => chain.slug)).toEqual(['ethereum-sepolia', 'base-sepolia']);
+    for (const mainnetId of [1, 8453, 137, 56]) {
+      expect(SUPPORTED_CHAINS.some((chain) => chain.chainId === mainnetId)).toBe(false);
+    }
   });
 
   it('throws INVALID_CONFIGURATION for an unregistered chain and does not return the registered adapters', () => {

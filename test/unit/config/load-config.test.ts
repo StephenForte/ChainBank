@@ -24,7 +24,7 @@ describe('loadConfig', () => {
     expect(config.chain.chainId).toBe(11155111);
     expect(config.chains[0]?.chainId).toBe(11155111);
     expect(findSupportedChainById(config.chain.chainId)?.blockTimeMs).toBe(12_000);
-    expect(SUPPORTED_CHAINS).toHaveLength(1);
+    expect(SUPPORTED_CHAINS).toHaveLength(2);
     expect(config.treasury.warningBalanceWei).toBe(parseEtherToWei('1', 'w'));
     expect(config.email?.provider).toBe('log-only');
     expect(config.apiSecurity).toBeDefined();
@@ -435,7 +435,7 @@ describe('loadConfig', () => {
       }),
     });
 
-    expect(SUPPORTED_CHAINS).toHaveLength(1);
+    expect(SUPPORTED_CHAINS).toHaveLength(2);
     expect(config.chains).toHaveLength(1);
     expect(config.defaultChainId).toBe(11155111);
 
@@ -481,17 +481,51 @@ describe('loadConfig', () => {
     expect(config.operationalTreasury).toEqual(chain.operationalTreasury);
   });
 
-  it('rejects chain 84532 because SUPPORTED_CHAINS still has one row', () => {
-    expect(SUPPORTED_CHAINS).toHaveLength(1);
-    expect(() => loadConfig({ serviceRole: 'web', env: validWebEnv({ CHAIN_ID: '84532' }) })).toThrow(
-      /84532/,
-    );
-    expect(() =>
-      loadConfig({
-        serviceRole: 'web',
-        env: chainsEnv([{ ...sepoliaDocument(), chainId: 84532 }]),
+  it('loads Base Sepolia from the production catalog and still rejects mainnet ids', () => {
+    expect(SUPPORTED_CHAINS).toHaveLength(2);
+    const base = findSupportedChainById(84532);
+    expect(base?.slug).toBe('base-sepolia');
+    expect(base?.nativeSymbol).toBe('ETH');
+    expect(base?.defaultExplorerBaseUrl).toBe('https://sepolia.basescan.org');
+    expect(base?.blockTimeMs).toBe(2_000);
+
+    const singular = loadConfig({
+      serviceRole: 'web',
+      env: validWebEnv({
+        CHAIN_ID: '84532',
+        CHAIN_RPC_URL: 'https://rpc.example.test/base-sepolia',
       }),
-    ).toThrow(/84532/);
+    });
+    expect(singular.chains).toHaveLength(1);
+    expect(singular.defaultChainId).toBe(84532);
+    expect(singular.chains[0]?.slug).toBe('base-sepolia');
+    expect(singular.chains[0]?.chainId).toBe(84532);
+    expect(singular.chains[0]?.rpcUrl).toBe('https://rpc.example.test/base-sepolia');
+    expect(singular.chains[0]?.explorerBaseUrl).toBe('https://sepolia.basescan.org');
+
+    const both = loadConfig({
+      serviceRole: 'web',
+      env: chainsEnv([
+        sepoliaDocument(),
+        {
+          chainId: 84532,
+          rpcUrl: 'https://rpc.example.test/base-sepolia',
+          treasury: treasuryDocument(PUBLIC_ADDRESS),
+        },
+      ]),
+    });
+    expect(both.chains.map((chain) => chain.chainId)).toEqual([11155111, 84532]);
+    expect(both.chains[0]?.rpcUrl).toBe('https://rpc.example.test/sepolia');
+    expect(both.chains[1]?.rpcUrl).toBe('https://rpc.example.test/base-sepolia');
+    expect(both.chains[1]?.slug).toBe('base-sepolia');
+    expect(both.chains[0]?.treasury.address).toBe(both.chains[1]?.treasury.address);
+
+    expect(() => loadConfig({ serviceRole: 'web', env: validWebEnv({ CHAIN_ID: '8453' }) })).toThrow(
+      /CHAIN_ID 8453 is not supported/,
+    );
+    expect(() => loadConfig({ serviceRole: 'web', env: validWebEnv({ CHAIN_ID: '1' }) })).toThrow(
+      /CHAIN_ID 1 is not supported/,
+    );
   });
 
   it('loads two chains from CHAINS and points the default view at the first', () => {
