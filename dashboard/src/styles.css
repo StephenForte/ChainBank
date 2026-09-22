@@ -136,6 +136,73 @@ a:focus-visible {
   gap: var(--s-xs);
 }
 
+.chain-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--r-full);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.chain-filter > button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.chain-filter > button + button {
+  border-left: 1px solid var(--hairline);
+}
+
+.chain-filter > button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.chain-filter > button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.chain-filter > button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--primary-deep);
+  color: var(--on-accent);
+}
+
+.chain-filter-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--danger);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chain-filter-badge-dark {
+  min-width: 18px;
+  padding: 0;
+  background: var(--warning-strong);
+}
+
+.chain-filter-badge-dark::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--on-accent);
+}
+
 .page-title {
   margin: 0;
   font-size: 26px;
@@ -1139,7 +1206,7 @@ button.linkish:focus-visible {
 
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 240px));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--s-md);
 }
 
@@ -1151,6 +1218,34 @@ button.linkish:focus-visible {
   background: var(--card);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.stat-card:hover {
+  box-shadow: var(--e-2);
+}
+
+.stat-card-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.treasury-compact .treasury-card {
+  padding: 10px 12px;
+}
+
+.treasury-compact .treasury-head h3 {
+  font-size: 15px;
+}
+
+.treasury-compact .treasury-list {
+  gap: 10px;
 }
 
 .stat-card-icon {
@@ -1167,10 +1262,11 @@ button.linkish:focus-visible {
 
 .stat-card-value {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.25;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 .stat-card-label,
@@ -1215,6 +1311,10 @@ button.linkish:focus-visible {
   .shell-critical {
     margin-left: var(--s-md);
     margin-right: var(--s-md);
+  }
+
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

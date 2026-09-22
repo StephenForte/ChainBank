@@ -43,6 +43,8 @@ import {
   type LoadState,
   type WalletBalanceView,
 } from './dashboard-shared';
+import { attentionByChain, useChainFilter } from './chain-filter';
+import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 import { AdminPage, AdminUnavailable } from './pages/admin';
 import { LoginPage } from './pages/login';
 import { AlertsPage } from './pages/alerts';
@@ -55,7 +57,10 @@ import type { FundingPolicyPanelProps } from './pages/panels/funding-policy-pane
 import type { ManagedWalletsPanelProps } from './pages/panels/managed-wallets-panel';
 import type { ProjectsPanelProps } from './pages/panels/projects-panel';
 import type { ReconciliationPanelProps } from './pages/panels/reconciliation-panel';
-import type { ServiceReadinessPanelProps } from './pages/panels/service-readiness-panel';
+import {
+  ServiceReadinessPanel,
+  type ServiceReadinessPanelProps,
+} from './pages/panels/service-readiness-panel';
 import type { TreasuriesPanelProps } from './pages/panels/treasuries-panel';
 import { ReconciliationPage } from './pages/reconciliation';
 import { TreasuriesPage } from './pages/treasuries';
@@ -154,6 +159,9 @@ export function App() {
   /** Bumped to supersede in-flight balance reads when the listed set changes (TX.18). */
   const balanceFetchGenerationRef = useRef(0);
   const route = useHashRoute();
+  const treasuryListSettled =
+    treasuriesState === 'ready' || treasuriesState === 'empty' || treasuriesState === 'error';
+  const chainFilter = useChainFilter(treasuries, treasuryListSettled);
 
   const [policyWallets, setPolicyWallets] = useState<readonly ManagedWalletResource[]>([]);
   const [policyWalletsTotal, setPolicyWalletsTotal] = useState(0);
@@ -892,6 +900,8 @@ export function App() {
     readinessState,
     readinessError,
     readiness,
+    chains: chainFilter.segments,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const treasuriesPanel: TreasuriesPanelProps = {
     loadTreasuries,
@@ -904,6 +914,7 @@ export function App() {
     treasuryFundingHistoryState,
     treasuryFundingHistoryError,
     treasuryFundingHistory,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const projectsPanel: ProjectsPanelProps = {
     loadProjectsPanel,
@@ -951,6 +962,7 @@ export function App() {
     walletBusyId,
     onToggleWallet,
     onToggleWalletReconciliation,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const policyPanel: FundingPolicyPanelProps = {
     loadPolicyPanel,
@@ -986,6 +998,7 @@ export function App() {
     fundingHistoryError,
     fundingHistoryTotal,
     fundingHistory,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const reconciliationPanel: ReconciliationPanelProps = {
     loadReconciliationRuns,
@@ -1016,6 +1029,7 @@ export function App() {
     onAcknowledgeFindingByEntity,
     reconciliationDetailExpanded,
     onToggleReconciliationDetail,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
 
   if (!signedIn || session.user === undefined) {
@@ -1029,6 +1043,15 @@ export function App() {
   }
 
   const user = session.user;
+  const chainAttention = attentionByChain({
+    segments: chainFilter.segments,
+    treasuries,
+    runs: reconciliationRuns,
+    openFindingAlerts,
+    acknowledgedFindingAlerts,
+    findingAlertsState,
+    openFindingAlertsComplete,
+  });
 
   return (
     <PermissionsProvider permissions={session.permissions}>
@@ -1045,11 +1068,32 @@ export function App() {
         openFindingAlertCount={openFindingAlerts.length}
         findingAlertsError={findingAlertsError}
         findingAlertsFailed={findingAlertsState === 'error'}
+        chainSegments={chainFilter.segments}
+        chainSelection={chainFilter.selection}
+        chainAttention={chainAttention}
+        onSelectChain={chainFilter.selectChain}
       >
         {route === 'overview' ? (
-          <OverviewPage readiness={readinessPanel} treasuries={treasuriesPanel} />
+          <OverviewPage
+            treasuries={treasuriesPanel}
+            wallets={wallets}
+            walletsState={walletsState}
+            walletBalances={walletBalances}
+            openFindingAlerts={openFindingAlerts}
+            findingAlertsState={findingAlertsState}
+            reconciliationRuns={reconciliationRuns}
+            reconciliationState={reconciliationState}
+            visibleChainIds={chainFilter.visibleChainIds}
+          />
         ) : null}
-        {route === 'treasuries' ? <TreasuriesPage treasuries={treasuriesPanel} /> : null}
+        {route === 'treasuries' ? (
+          <>
+            <TreasuriesPage treasuries={treasuriesPanel} />
+            <PanelErrorBoundary panelName="Service readiness" severity="elevated">
+              <PanelBody render={() => <ServiceReadinessPanel {...readinessPanel} />} />
+            </PanelErrorBoundary>
+          </>
+        ) : null}
         {route === 'wallets' ? (
           <WalletsPage
             projects={projectsPanel}

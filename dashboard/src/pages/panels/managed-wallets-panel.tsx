@@ -1,4 +1,5 @@
 import type { ManagedWalletResource } from '../../api';
+import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
 import * as dash from '../../dashboard-shared';
 import type { LoadState, WalletBalanceView } from '../../dashboard-shared';
@@ -24,6 +25,8 @@ export type ManagedWalletsPanelProps = {
   readonly walletBusyId: string | undefined;
   readonly onToggleWallet: (wallet: ManagedWalletResource) => Promise<void>;
   readonly onToggleWalletReconciliation: (wallet: ManagedWalletResource) => Promise<void>;
+  /** Absent means every chain, so existing callers keep today's rows. */
+  readonly visibleChainIds?: VisibleChainIds;
 };
 
 export function ManagedWalletsPanel({
@@ -46,12 +49,14 @@ export function ManagedWalletsPanel({
   walletBusyId,
   onToggleWallet,
   onToggleWalletReconciliation,
+  visibleChainIds = 'ALL',
 }: ManagedWalletsPanelProps) {
   const canWrite = useHasPermission('wallet:write');
-  const { enabled, disabled } = dash.partitionByEnabled(wallets);
+  const listed = wallets.filter((wallet) => matchesChainFilter(wallet, visibleChainIds));
+  const { enabled, disabled } = dash.partitionByEnabled(listed);
   const showDisabledInline = walletEnabledFilter === 'false';
-  const visibleWallets = showDisabledInline ? wallets : enabled;
-  const chainsMixed = dash.listSpansMultipleChains(wallets);
+  const visibleWallets = showDisabledInline ? listed : enabled;
+  const chainsMixed = dash.listSpansMultipleChains(listed);
 
   function renderWalletRow(wallet: ManagedWalletResource) {
     const balanceView = walletBalances[wallet.id];
@@ -210,10 +215,14 @@ export function ManagedWalletsPanel({
         {walletsState === 'empty' ? (
           <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
         ) : null}
-        {walletsState === 'ready' ? (
+        {walletsState === 'ready' && wallets.length > 0 && listed.length === 0 ? (
+          <p className="muted">No managed wallets on this chain.</p>
+        ) : null}
+        {walletsState === 'ready' && listed.length > 0 ? (
           <>
             <p className="muted">
-              Showing {String(visibleWallets.length)} enabled of {String(walletsTotal)} wallets
+              Showing {String(visibleWallets.length)} enabled of {String(listed.length)} on this chain (
+              {String(walletsTotal)} total)
               {disabled.length > 0 && !showDisabledInline
                 ? ` · ${String(disabled.length)} disabled hidden`
                 : ''}

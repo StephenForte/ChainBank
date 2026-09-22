@@ -44,7 +44,8 @@ describe('dashboard shell (C32)', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 2, name: 'Service readiness' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Treasury health/ })).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Service readiness' })).toBeNull();
 
     const nav = screen.getByRole('navigation', { name: 'Pages' });
     expect(

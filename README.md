@@ -208,7 +208,7 @@ existing API credentials on `#/admin`; new API credentials are still issued with
 
 MVP views (PRD §12.2 / P2-US1):
 
-- Signed-in session (display name, role, log out), service readiness, treasuries, funding history
+- Signed-in session (display name, role, log out), treasury health, compact treasuries, funding history
 - Projects (list + enable/disable)
 - Environments (list for a selected project via `GET /v1/projects/:id/environments`, detail by id, enable/disable)
 - Managed wallets (filters, explorer links, enable/disable)
@@ -218,12 +218,21 @@ Panels load and fail independently. Mutations confirm before firing. The dashboa
 never renders private keys, seed phrases, or raw credential material.
 
 Pages are hash routes, written in the dashboard with no router dependency:
-`#/overview` (readiness and treasuries), `#/treasuries`, `#/wallets` (projects,
-environments, managed wallets, funding policy), `#/funding`, `#/reconciliation`,
-`#/alerts` (the same reconciliation findings — not a second feed), `#/email`, and
-`#/admin`. An unknown hash shows Overview. Detail that is not an unacknowledged
-critical finding or a dark-chain warning sits behind +/− and remembers its state
-in this browser.
+`#/overview` (chain health and compact treasuries), `#/treasuries` (treasuries and
+service readiness), `#/wallets` (projects, environments, managed wallets, funding
+policy), `#/funding`, `#/reconciliation`, `#/alerts` (the same reconciliation
+findings — not a second feed), `#/email`, and `#/admin`. An unknown hash shows
+Overview. Detail that is not an unacknowledged critical finding or a dark-chain
+warning sits behind +/− and remembers its state in this browser.
+
+The top bar filters treasuries, wallets, funding history, reconciliation rows, and
+chain-named readiness lines by the chains on the loaded treasuries. ALL is the
+default, the choice is remembered in this browser, and a chain that is not
+registered does not appear. Projects and environments are not filtered. An
+unacknowledged critical finding on a chain that is not selected stays badged on
+that chain's segment, and Alerts still lists every unacknowledged critical with
+its chain name. A chain whose reconciliation outcome was unavailable is badged
+the same way.
 
 ## Testing
 

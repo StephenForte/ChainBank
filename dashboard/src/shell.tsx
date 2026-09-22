@@ -1,5 +1,11 @@
 import type { ReactNode } from 'react';
 import {
+  ChainFilterControl,
+  type ChainSegment,
+  type ChainSegmentAttention,
+  type ChainFilterSelection,
+} from './chain-filter';
+import {
   IconAdmin,
   IconAlerts,
   IconEmail,
@@ -110,13 +116,33 @@ export type TopBarProps = {
   readonly onRefresh: () => void;
   readonly onTestEmail: () => Promise<void>;
   readonly sessionError: string | undefined;
+  readonly chainSegments: readonly ChainSegment[];
+  readonly chainSelection: ChainFilterSelection;
+  readonly chainAttention: readonly ChainSegmentAttention[];
+  readonly onSelectChain: (next: ChainFilterSelection) => void;
 };
 
-export function TopBar({ title, sessionBusy, onRefresh, onTestEmail, sessionError }: TopBarProps) {
+export function TopBar({
+  title,
+  sessionBusy,
+  onRefresh,
+  onTestEmail,
+  sessionError,
+  chainSegments,
+  chainSelection,
+  chainAttention,
+  onSelectChain,
+}: TopBarProps) {
   const canTestEmail = useHasPermission('email:test');
   return (
     <header className="top-bar">
       <h1 className="page-title">{title}</h1>
+      <ChainFilterControl
+        segments={chainSegments}
+        selection={chainSelection}
+        attention={chainAttention}
+        onSelect={onSelectChain}
+      />
       <div className="top-bar-actions">
         <button type="button" className="secondary" disabled={sessionBusy} onClick={onRefresh}>
           Refresh
@@ -158,6 +184,10 @@ export type ShellProps = {
   readonly openFindingAlertCount: number;
   readonly findingAlertsError: string | undefined;
   readonly findingAlertsFailed: boolean;
+  readonly chainSegments: readonly ChainSegment[];
+  readonly chainSelection: ChainFilterSelection;
+  readonly chainAttention: readonly ChainSegmentAttention[];
+  readonly onSelectChain: (next: ChainFilterSelection) => void;
   readonly children: ReactNode;
 };
 
@@ -172,6 +202,10 @@ export function Shell({
   openFindingAlertCount,
   findingAlertsError,
   findingAlertsFailed,
+  chainSegments,
+  chainSelection,
+  chainAttention,
+  onSelectChain,
   children,
 }: ShellProps) {
   const showsFindings = route === 'reconciliation' || route === 'alerts';
@@ -190,6 +224,10 @@ export function Shell({
           onRefresh={onRefresh}
           onTestEmail={onTestEmail}
           sessionError={sessionError}
+          chainSegments={chainSegments}
+          chainSelection={chainSelection}
+          chainAttention={chainAttention}
+          onSelectChain={onSelectChain}
         />
         {!showsFindings && openFindingAlertCount > 0 ? (
           <div className="shell-critical" role="alert">
