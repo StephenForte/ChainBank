@@ -234,6 +234,14 @@ that chain's segment, and Alerts still lists every unacknowledged critical with
 its chain name. A chain whose reconciliation outcome was unavailable is badged
 the same way.
 
+`#/email` shows what can send mail and a log of what was sent. Triggers,
+recipients, the from address, and the provider come from
+`GET /v1/admin/email/triggers`. Threshold amounts in a trigger condition are
+shown as ETH. The delivery log is `GET /v1/admin/email/deliveries`, newest
+first, with status and kind filters sent as query parameters. Send test email
+is on this page for a role that has `email:test`, and the top bar keeps
+Refresh only. The page does not follow the chain filter.
+
 ## Testing
 
 Every pull request and push to `main` runs the [CI workflow](.github/workflows/ci.yml) (format, lint, typecheck, unit tests, build, dependency audit, secret scan, migration validation, and integration tests).

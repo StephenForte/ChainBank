@@ -138,6 +138,12 @@ describe('dashboard session (C33)', () => {
     expect(await screen.findByText('unexplained_outgoing_transfer')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Acknowledge' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Acknowledging…' })).toBeNull();
+
+    window.location.hash = '#/email';
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    expect(await screen.findByRole('heading', { name: 'Delivery log' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Test email' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send test email' })).toBeNull();
   });
 
   it('logs out through the session endpoint and shows the login page', async () => {
@@ -201,6 +207,7 @@ describe('dashboard session (C33)', () => {
   });
 
   it('drops a previous account error when the next user signs in', async () => {
+    window.location.hash = '#/email';
     installFetch((url, init) => {
       if (url.includes('/v1/auth/login') && init?.method === 'POST') {
         return emptyResponse(204);
@@ -215,8 +222,9 @@ describe('dashboard session (C33)', () => {
     });
     render(<App />);
 
-    expect(await screen.findByRole('button', { name: 'Test email' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Test email' }));
+    expect(await screen.findByRole('button', { name: 'Send test email' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Test email' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Send test email' }));
     expect(await screen.findByText('INVALID_CREDENTIAL: inbox down (req-test)')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Log out' }));

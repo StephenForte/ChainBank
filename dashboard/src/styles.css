@@ -1388,3 +1388,98 @@ a.stat-card:hover {
   margin-top: var(--s-lg);
   box-shadow: none;
 }
+
+.email-summary {
+  margin: 0 0 var(--s-md);
+}
+
+.email-recipients,
+.email-when {
+  white-space: nowrap;
+}
+
+.email-send {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-sm);
+  align-items: center;
+  margin-bottom: var(--s-md);
+}
+
+.email-send .hint,
+.email-send .error-inline {
+  margin: 0;
+}
+
+.email-pager {
+  margin-top: var(--s-sm);
+}
+
+.delivery-log {
+  --delivery-columns: 7.5rem minmax(12rem, 1.15fr) minmax(7.5rem, 0.9fr) minmax(11rem, 1.5fr)
+    minmax(11rem, 1.2fr) 5.5rem 6.5rem;
+}
+
+.delivery-log .data-table thead,
+.delivery-log .data-table tbody {
+  display: block;
+}
+
+.delivery-log .data-table thead tr,
+.delivery-summary {
+  display: grid;
+  grid-template-columns: var(--delivery-columns);
+  column-gap: var(--s-sm);
+  align-items: center;
+  width: 100%;
+}
+
+.delivery-log .data-table tbody tr {
+  display: block;
+}
+
+.delivery-log .data-table th,
+.delivery-log .data-table td {
+  border-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.delivery-summary {
+  row-gap: var(--s-xs);
+  padding-top: var(--s-xs);
+  border-top: 1px solid var(--hairline);
+}
+
+.delivery-summary .collapse-block {
+  display: contents;
+  margin-top: 0;
+}
+
+.delivery-summary .collapse-toggle {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+}
+
+.delivery-summary .collapse-body {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.delivery-detail {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--s-xxs) var(--s-sm);
+  margin: var(--s-xs) 0 0;
+}
+
+.delivery-detail dt {
+  color: var(--steel);
+  font-size: 12px;
+}
+
+.delivery-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
