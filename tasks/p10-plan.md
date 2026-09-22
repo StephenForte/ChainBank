@@ -183,6 +183,16 @@ Owns: `dashboard/src/pages/{login,admin}*.tsx` (new), `dashboard/src/session/*` 
 
 ### T10.4 🟢 Chain filter and compact overview — **C34** `[T10.2]` (parallel with T10.3)
 
+**Status 2026-09-22: ✅ reviewed and approved in
+[#144](https://github.com/StephenForte/ChainBank/pull/144); operator merges.** Ran after T10.3, not in
+parallel. Planner verification: scratch-clone gate 687 unit / 68 dashboard / 143 integration; probe
+from a stored chain selection at first paint — the other chain's critical still badges, the global
+banner renders, Alerts lists it by chain name, switching to ALL issues no fetch. Segments are ordered
+by **descending** chainId (Ethereum Sepolia before Base Sepolia), a deliberate deviation from the
+brief's "ordered by chainId", kept. Wallets and funding history filter the one loaded page (no chain
+query on those routes); the empty copy says so. `.env` in the main checkout verified untouched after
+the worker's hand check.
+
 Owns: `dashboard/src/chain-filter.tsx` (new), `dashboard/src/pages/overview.tsx`, the panel bodies
 for treasuries, wallets, funding history and reconciliation (filter plumbing only).
 
