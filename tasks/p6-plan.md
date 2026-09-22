@@ -15,7 +15,7 @@ Baseline at plan write: `origin/main` **`3a3fbcd`** (merge of PR #112, merged 20
 ## Phase 6 is code-complete and Base Sepolia is LIVE (2026-09-22)
 
 All five tasks merged: T6.1/**C26**, T6.2/**C27**, T6.3/**C28**, T6.4/**C29**, T6.5/**C30**. `main` at
-`44fae7c`. Next free contract **C31**, decision **D23**, task **TX.28**; migrations through `0010`
+`f3b0e63`. Next free contract **C31**, decision **D24**, task **TX.29**; migrations through `0010`
 and Phase 6 consumed none.
 
 **Base Sepolia (84532) is registered and running.** `chainbank-web` went live with both chains at
@@ -42,11 +42,24 @@ Two deploys failed before the third succeeded. **Neither was a code defect** —
 `CHAINS` value naming the wrong Sepolia Public address, and migration `0010` correctly refused the
 resulting second enabled `external`. The genuine findings are recorded as D21 (amended), D23, and:
 
-- **TX.28 — `withDatabaseErrors` discards the Postgres constraint.** `client.ts:185` wraps the driver
-  error and logs only `Database operation "treasuries.upsert" failed`. The real message —
-  `constraint: treasuries_one_enabled_kind_per_chain`, `Key (chain_id, kind)=(19ec925a…, external)
-already exists` — is two levels down the cause chain and never reaches a log. This turned a
-  one-line config error into two hours and four wrong planner hypotheses. **Next dispatch.**
+- **TX.28 — `withDatabaseErrors` discards the Postgres constraint.** ✅ landed in
+  [#124](https://github.com/StephenForte/ChainBank/pull/124) (2026-09-22). `client.ts:185` wrapped the
+  driver error and the startup line logged only `Database operation "treasuries.upsert" failed`; the
+  constraint sat at `error.cause.cause` because drizzle-orm wraps every driver error in
+  `DrizzleQueryError`, whose message carries the SQL **and the bound parameters**. Fix: a shared
+  `describeErrorChain` in `src/domain/errors.ts` walks ≤5 causes, renders a pg error as
+  `code/constraint/table/schema/detail/hint` (never its message), renders the drizzle wrapper by name
+  only, and feeds the startup, cron, migrate, dispatch, nonce-probe and unhandled-error log lines plus
+  `withDatabaseErrors` `context.detail`. `describeUnknownError` is untouched, so `/health/ready` still
+  returns the top-level message only. Worker found that `error-handler.ts` already logged `context`
+  for typed failures, so the parameter leak was live on API logs before this PR, not latent.
+  Reviewed in a scratch clone: format/lint/typecheck/build green, **73 files / 638 unit**, **27 files /
+  132 integration** on `f3b0e63`; probes with the real `pg.DatabaseError` and `DrizzleQueryError`
+  classes confirmed the rendered line carries `23505` + constraint + detail and neither SQL nor
+  parameter, a Node `ECONNREFUSED` (string `code`, no `severity`) is not mistaken for a pg error, and
+  the readiness body for the same failure is unchanged. Known limit, by design: a pg error with no
+  `detail` renders as its SQLSTATE alone (`code=28P01` for a bad password), since pg messages can
+  embed input values.
 - **~1.4 ETH is stranded** in `0xCD1f…9270` on Base Sepolia, outside ChainBank's view, from funding
   the pre-unification Public address. `0x16caE6…8B2B` holds ~0.86 on Base — above the 0.75 warning
   line but not by much. Operator action, no code.
