@@ -341,6 +341,9 @@ async function sendFindingEmail(
     subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,
+    kind: 'treasury_finding',
+    relatedEntity: { type: TREASURY_FINDING_ENTITY_TYPE, id: alert.entityId },
+    correlationId: input.operationId,
   });
 
   if (result.kind === 'failed') {

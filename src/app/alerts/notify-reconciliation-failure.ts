@@ -382,6 +382,9 @@ async function sendFailureEmail(
     subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,
+    kind: 'reconciliation_failure',
+    relatedEntity: { type: TREASURY_ALERT_ENTITY_TYPE, id: input.treasury.id },
+    correlationId: input.operationId,
   });
 
   if (result.kind === 'failed') {

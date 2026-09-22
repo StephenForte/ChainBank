@@ -529,6 +529,39 @@ export const reconciliationRuns = pgTable('reconciliation_runs', {
   errorSummary: text('error_summary'),
 });
 
+/** Outcome of one email send attempt (C35). The body is intentionally absent. */
+export const emailDeliveryStatusEnum = pgEnum('email_delivery_status', ['sent', 'failed']);
+
+/**
+ * One row per send attempt (C35). Written after the provider answers.
+ * Text and html are not columns: they embed addresses and balances, and the
+ * operator already has the subject, recipients, and error summary.
+ */
+export const emailDeliveries = pgTable(
+  'email_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** When the attempt started, not when the provider confirmed. */
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
+    kind: text('kind').notNull(),
+    recipients: text('recipients').array().notNull(),
+    subject: text('subject').notNull(),
+    status: emailDeliveryStatusEnum('status').notNull(),
+    providerMessageId: text('provider_message_id'),
+    errorCode: text('error_code'),
+    errorSummary: text('error_summary'),
+    relatedEntityType: text('related_entity_type'),
+    relatedEntityId: text('related_entity_id'),
+    correlationId: text('correlation_id'),
+    serviceRole: text('service_role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('email_deliveries_sent_at_idx').on(table.sentAt.desc()),
+    index('email_deliveries_related_entity_idx').on(table.relatedEntityType, table.relatedEntityId),
+  ],
+);
+
 export const chainsRelations = relations(chains, ({ many }) => ({
   treasuries: many(treasuries),
   balanceObservations: many(balanceObservations),
@@ -646,3 +679,4 @@ export type FundingOperationRow = typeof fundingOperations.$inferSelect;
 export type FundingTransactionRow = typeof fundingTransactions.$inferSelect;
 export type AlertRow = typeof alerts.$inferSelect;
 export type ReconciliationRunRow = typeof reconciliationRuns.$inferSelect;
+export type EmailDeliveryRow = typeof emailDeliveries.$inferSelect;

@@ -12,13 +12,14 @@ import { renderTreasuryCriticalEmail } from '../email/treasury-critical-template
 import { renderTreasuryRecoveryEmail } from '../email/treasury-recovery-template.js';
 import { renderTreasuryUnresolvedReminderEmail } from '../email/treasury-unresolved-reminder-template.js';
 import { renderTreasuryWarningEmail } from '../email/treasury-warning-template.js';
-import type {
-  AlertRepository,
-  AuditEventRepository,
-  EmailSender,
-  PendingAlertEmail,
-  StoredOpenAlert,
-  Treasury,
+import {
+  emailKindForPendingAlert,
+  type AlertRepository,
+  type AuditEventRepository,
+  type EmailSender,
+  type PendingAlertEmail,
+  type StoredOpenAlert,
+  type Treasury,
 } from '../ports.js';
 
 export const TREASURY_BALANCE_ALERT_TYPE = 'treasury_balance';
@@ -444,6 +445,9 @@ async function sendTransitionEmail(
     subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,
+    kind: emailKindForPendingAlert(pendingEmail),
+    relatedEntity: { type: TREASURY_ALERT_ENTITY_TYPE, id: input.treasury.id },
+    correlationId: input.operationId,
   });
 
   if (result.kind === 'failed') {

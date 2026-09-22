@@ -38,7 +38,10 @@ export function createResendEmailSender(options: CreateResendEmailSenderOptions)
           return {
             kind: 'failed',
             errorCode: 'EMAIL_PROVIDER_REJECTED',
-            reason: response.error.name,
+            // The SDK types `name` as present. A 5xx body of `{ message }` omits it,
+            // and an undefined reason must not become a throw on the alert path.
+            reason:
+              response.error.name ?? response.error.message ?? 'The email provider rejected the message.',
           };
         }
 
