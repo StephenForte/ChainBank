@@ -182,6 +182,21 @@ for treasuries, wallets, funding history and reconciliation (filter plumbing onl
 
 ### T10.5 🔴 Email deliveries log and triggers API — **C35**, migration **0012** `[T10.1 merged first, for the migration number]`
 
+**Status 2026-09-22: ✅ approved in
+[#137](https://github.com/StephenForte/ChainBank/pull/137) at `381dfee` after one round; operator merges.**
+Round one was changes-requested for one blocking defect, fix proven in the planner's clone and
+adopted verbatim by the worker, plus a total Resend sender and a regression test; re-review gate
+677 unit / 52 dashboard / 140 integration, and the failing provider shape passes through the real
+sender for all four bodies. Original finding: The decorator evaluated the delivery row outside its own guard, and the
+pre-existing Resend sender returns `reason: undefined` on a 5xx whose body lacks `name`, so a handled
+`failed` result became a thrown `TypeError` on the alert path — the trap the brief named. Everything
+else verified: scratch-clone gate 676 unit / 52 dashboard / 140 integration; 0012 proven forward on
+a populated 0011 database (rows intact, 12 → 13 migrations); ordering, rejecting-repository and
+API-key probes held. Approval follows the fix push. **Also found:** T10.2's worker reported its
+worktree deleted, but `.claude/worktrees/t10.2` (37 MB, mostly node_modules) is still on disk in the
+main checkout; it is git-excluded and unregistered, and breaks local `npm run lint` for anyone
+working there. Operator removes it.
+
 Owns: `src/infrastructure/email/recording-email-sender.ts` (new), `src/infrastructure/db/repositories/email-delivery-repository.ts`
 (new), `src/app/email/list-email-deliveries.ts`, `src/app/email/describe-email-triggers.ts` (new),
 `src/api/routes/admin-email.ts` (new), tests. Additive on `schema.ts`, `ports.ts`, `container.ts`, `app.ts`.
