@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { loadConfig, type ServiceRole } from '../../../src/config/index.js';
 import { DEFAULT_TRUSTED_PROXY_CIDRS } from '../../../src/config/trusted-proxy.js';
 import { assertValidTreasuryThresholds } from '../../../src/domain/treasury/treasury-status.js';
 import { parseEtherToWei } from '../../../src/domain/wei.js';
@@ -44,6 +45,20 @@ function serviceBlocks(): ReadonlyMap<string, string> {
 function declaredValue(block: string, key: ThresholdKey): string | undefined {
   const pattern = new RegExp(`- key:\\s*${key}\\s*\\n\\s*value:\\s*'?([^'\\n]+)'?`);
   return pattern.exec(block)?.[1]?.trim();
+}
+
+/** Every literal `key` / `value` pair in a service block. `sync: false` entries are absent. */
+function literalEnv(block: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  const pattern = /- key:\s*([A-Z0-9_]+)\s*\n\s*value:\s*'?([^'\n]+)'?/g;
+  for (const match of block.matchAll(pattern)) {
+    const key = match[1];
+    const value = match[2];
+    if (key !== undefined && value !== undefined) {
+      env[key] = value.trim();
+    }
+  }
+  return env;
 }
 
 /** Services that upsert the shared treasury row and must declare the D3 ladder. */
@@ -168,6 +183,63 @@ describe('render.yaml treasury thresholds', () => {
     const retiredHopCountKey = ['TRUSTED', 'PROXY', 'HOPS'].join('_');
     expect(blueprint).not.toContain(retiredHopCountKey);
   });
+
+  const ROLE_BY_SERVICE: Readonly<Record<(typeof THRESHOLD_SERVICES)[number], ServiceRole>> = {
+    'chainbank-web': 'web',
+    'chainbank-treasury-monitor': 'treasury-monitor',
+    'chainbank-wallet-reconciler': 'cron-reconciler',
+  };
+
+  /**
+   * Values the Blueprint deliberately does not literalize (`sync: false` or
+   * `fromDatabase`). They are stand-ins so `loadConfig` can run; the assertions
+   * below check that the literals the file does declare survive that load.
+   */
+  const SYNC_FALSE_STAND_INS: Record<string, string> = {
+    DATABASE_URL: 'postgres://localhost:5432/chainbank_blueprint',
+    DATABASE_SSL_CA: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+    CHAIN_RPC_URL: 'https://rpc.example.test/sepolia',
+    TREASURY_ADDRESS: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+    EMAIL_FROM_ADDRESS: 'chainbank@example.com',
+    EMAIL_OPERATOR_RECIPIENTS: 'operator@example.com',
+    RESEND_API_KEY: 're_blueprint_test',
+    PUBLIC_BASE_URL: 'https://chainbank.example',
+  };
+
+  it.each(THRESHOLD_SERVICES)(
+    'loads %s as one Sepolia chain from the singular env the blueprint still declares',
+    (serviceName) => {
+      const block = services.get(serviceName) ?? '';
+      expect(block, `${serviceName} must not declare CHAINS beside the singular keys`).not.toMatch(
+        /- key:\s*CHAINS\b/,
+      );
+
+      const declared = literalEnv(block);
+      expect(declared.CHAIN_ID).toBe('11155111');
+      const config = loadConfig({
+        serviceRole: ROLE_BY_SERVICE[serviceName],
+        env: { ...SYNC_FALSE_STAND_INS, ...declared },
+      });
+
+      expect(config.chains).toHaveLength(1);
+      expect(config.defaultChainId).toBe(11155111);
+      const chain = config.chains[0];
+      expect(chain?.slug).toBe('ethereum-sepolia');
+      expect(chain?.chainId).toBe(11155111);
+      expect(chain?.displayName).toBe('Ethereum Sepolia');
+      expect(chain?.nativeSymbol).toBe('ETH');
+      expect(chain?.rpcUrl).toBe(SYNC_FALSE_STAND_INS.CHAIN_RPC_URL);
+      expect(chain?.explorerBaseUrl).toBe('https://sepolia.etherscan.io');
+      expect(chain?.treasury.address).toBe(SYNC_FALSE_STAND_INS.TREASURY_ADDRESS);
+      expect(chain?.treasury.warningBalanceWei).toBe(parseEtherToWei('0.75', 'warning'));
+      expect(chain?.treasury.criticalBalanceWei).toBe(parseEtherToWei('0.3', 'critical'));
+      expect(chain?.treasury.recoveryBalanceWei).toBe(parseEtherToWei('1.5', 'recovery'));
+      expect(chain?.treasury.minimumReserveWei).toBe(parseEtherToWei('0.1', 'reserve'));
+      expect(chain?.operationalTreasury).toBeUndefined();
+      expect(config.chain.chainId).toBe(chain?.chainId);
+      expect(config.treasury.warningBalanceWei).toBe(chain?.treasury.warningBalanceWei);
+    },
+  );
 
   it('schedules the wallet reconciler every six hours', () => {
     const block = services.get('chainbank-wallet-reconciler') ?? '';

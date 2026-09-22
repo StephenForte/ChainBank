@@ -27,6 +27,7 @@ import {
   getTreasuryPrivateKey,
   isSigningCapableRole,
   type ChainBankConfig,
+  type ConfiguredChain,
 } from './config/index.js';
 import type { Clock, IdGenerator } from './domain/ports.js';
 import { createDatabase, type DatabaseHandle } from './infrastructure/db/client.js';
@@ -68,10 +69,10 @@ import { systemClock, uuidGenerator } from './shared/system-ports.js';
  *
  * Chain adapters are exposed only through {@link ChainAdapterRegistry}. There
  * is no process-global reader or signer: every lookup names a chain id, and an
- * unregistered id throws. Today the registry is filled from the singular
- * `config.chain` (T6.2 makes that list plural). A field that returned "the"
- * reader without a chain id would still be the wrong-chain send on the day a
- * second chain is registered, so none is kept.
+ * unregistered id throws. The registry is filled from `config.chains`, one
+ * registration per chain, each bound to that chain's RPC. One process-global
+ * key produces one signer per chain (C27). A field that returned "the" reader
+ * without a chain id would still be the wrong-chain send, so none is kept.
  */
 export interface Container {
   readonly config: ChainBankConfig;
@@ -99,8 +100,8 @@ export interface Container {
     readonly fundingHealth: FundingHealthQuery;
   };
   /**
-   * Chain-keyed adapters (C26). Populated from `config.chain` only — one chain
-   * until T6.2. Signing entries are absent for read-only roles.
+   * Chain-keyed adapters (C26). One registration per `config.chains` entry.
+   * Signing entries are absent for read-only roles.
    */
   readonly chainAdapters: ChainAdapterRegistry;
   /** Per-treasury/chain advisory lock for funding dispatch (D7). */
@@ -170,37 +171,38 @@ export function buildContainer(options: BuildContainerOptions): Container {
 }
 
 /**
- * One registration, from today's singular `config.chain`. T6.2 replaces the
- * argument list; this function must not grow a second chain on its own (D18).
+ * One registration per configured chain. Each reader and signer is constructed
+ * against that chain's own RPC and viem chain. The same process-global key is
+ * reused: an EOA is valid on every EVM chain, so the secret surface stays one
+ * key (C27), not a key per chain.
  */
-function buildChainAdapters(config: ChainBankConfig, clock: Clock, logger: Logger) {
-  const balanceReader = createBalanceReader({ chain: config.chain, clock, logger });
-  const receiptTracker = createTransactionReceiptTracker({
-    chain: config.chain,
-    clock,
-    logger,
-  });
-  const outgoingScanner = createTreasuryOutgoingScanner({ chain: config.chain, logger });
-  const signers = buildChainSigners(config, logger);
+export function buildChainAdapters(config: ChainBankConfig, clock: Clock, logger: Logger) {
+  return createChainAdapterRegistry(
+    config.chains.map((chain) => {
+      const balanceReader = createBalanceReader({ chain, clock, logger });
+      const receiptTracker = createTransactionReceiptTracker({ chain, clock, logger });
+      const outgoingScanner = createTreasuryOutgoingScanner({ chain, logger });
+      const signers = buildChainSigners(config, chain, logger);
 
-  return createChainAdapterRegistry([
-    {
-      chainId: config.chain.chainId,
-      balanceReader,
-      receiptTracker,
-      outgoingScanner,
-      ...(signers === undefined
-        ? {}
-        : {
-            signers: signers.signers,
-            ...(signers.externalSigner === undefined ? {} : { externalSigner: signers.externalSigner }),
-          }),
-    },
-  ]);
+      return {
+        chainId: chain.chainId,
+        balanceReader,
+        receiptTracker,
+        outgoingScanner,
+        ...(signers === undefined
+          ? {}
+          : {
+              signers: signers.signers,
+              ...(signers.externalSigner === undefined ? {} : { externalSigner: signers.externalSigner }),
+            }),
+      };
+    }),
+  );
 }
 
 function buildChainSigners(
   config: ChainBankConfig,
+  chain: ConfiguredChain,
   logger: Logger,
 ):
   | {
@@ -219,20 +221,20 @@ function buildChainSigners(
     externalKey === undefined
       ? undefined
       : createTreasurySigner({
-          chain: config.chain,
+          chain,
           privateKey: externalKey,
           isKillSwitchActive: config.isFundingKillSwitchActive,
           logger,
-          ...(config.operationalTreasury === undefined
+          ...(chain.operationalTreasury === undefined
             ? {}
-            : { allowedDestinationAddresses: [config.operationalTreasury.address] }),
+            : { allowedDestinationAddresses: [chain.operationalTreasury.address] }),
         });
 
   const operationalSigner =
     operationalKey === undefined
       ? undefined
       : createTreasurySigner({
-          chain: config.chain,
+          chain,
           privateKey: operationalKey,
           isKillSwitchActive: config.isFundingKillSwitchActive,
           logger,

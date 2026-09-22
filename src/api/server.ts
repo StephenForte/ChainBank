@@ -1,7 +1,11 @@
 import { loadConfig } from '../config/index.js';
 import { loadDotEnvFile } from '../config/load-dotenv.js';
 import { buildContainer } from '../container.js';
-import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
+import {
+  registerConfiguredTreasuries,
+  requireRegisteredChain,
+  summarizeRegisteredTreasuries,
+} from '../app/bootstrap/register-configured-treasury.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { describeUnknownError, isChainBankError } from '../domain/errors.js';
 import { buildApp } from './app.js';
@@ -20,13 +24,20 @@ async function main(): Promise<void> {
       { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
       config,
     );
+    const registeredChains = summarizeRegisteredTreasuries(treasuries);
+    const defaultChain = requireRegisteredChain(treasuries, config.defaultChainId);
 
     await recordHeartbeat(
       { serviceHeartbeats: container.repositories.serviceHeartbeats, clock: container.clock },
       {
         serviceRole: 'web',
         operationId: container.idGenerator.next(),
-        detail: { event: 'startup', chainId: config.chain.chainId },
+        detail: {
+          event: 'startup',
+          chainId: config.defaultChainId,
+          chainIds: config.chains.map((chain) => chain.chainId),
+          chains: registeredChains,
+        },
       },
     );
 
@@ -43,9 +54,11 @@ async function main(): Promise<void> {
     logger.info(
       {
         port: config.app.port,
-        chainId: config.chain.chainId,
-        treasuryId: treasuries.external.id,
-        operationalTreasuryId: treasuries.operational?.id,
+        chainId: config.defaultChainId,
+        chainIds: config.chains.map((chain) => chain.chainId),
+        treasuryId: defaultChain.external.id,
+        operationalTreasuryId: defaultChain.operational?.id,
+        chains: registeredChains,
         fundingEnabled: config.isFundingEnabled,
       },
       'ChainBank web service started',
