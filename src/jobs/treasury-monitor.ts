@@ -1,5 +1,9 @@
 import { evaluateTreasuryAlerts } from '../app/alerts/evaluate-treasury-alerts.js';
-import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
+import {
+  registerConfiguredTreasuries,
+  requireRegisteredChain,
+  summarizeRegisteredTreasuries,
+} from '../app/bootstrap/register-configured-treasury.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { checkTreasuryBalance } from '../app/treasury/check-treasury-balance.js';
 import { loadConfig } from '../config/index.js';
@@ -31,8 +35,8 @@ async function run(container: Container, operationId: string): Promise<void> {
     { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
     config,
   );
-  const toCheck = [registered.external, registered.operational].filter(
-    (row): row is NonNullable<typeof row> => row !== undefined,
+  const toCheck = registered.chains.flatMap((entry) =>
+    entry.operational === undefined ? [entry.external] : [entry.external, entry.operational],
   );
 
   let anyUnavailable = false;
@@ -108,6 +112,7 @@ async function run(container: Container, operationId: string): Promise<void> {
     }
   }
 
+  const defaultChain = requireRegisteredChain(registered, config.defaultChainId);
   await recordHeartbeat(
     { serviceHeartbeats: container.repositories.serviceHeartbeats, clock: container.clock },
     {
@@ -115,8 +120,9 @@ async function run(container: Container, operationId: string): Promise<void> {
       operationId,
       detail: {
         event: 'run',
-        treasuryId: registered.external.id,
-        operationalTreasuryId: registered.operational?.id,
+        treasuryId: defaultChain.external.id,
+        operationalTreasuryId: defaultChain.operational?.id,
+        chains: summarizeRegisteredTreasuries(registered),
         outcome: anyUnavailable ? 'unavailable' : 'observed',
       },
     },

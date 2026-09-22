@@ -1474,6 +1474,56 @@ outgoing scanner, or treasury signer only through `ChainAdapterRegistry`.
 - The registry is populated from the singular `config.chain` until T6.2.
   `SUPPORTED_CHAINS` stays one row (Ethereum Sepolia).
 
+### C27 — Multi-chain configuration (owner: T6.2)
+
+`config.chains` is the list of chains a process serves. Each entry carries the
+chain identity (`slug`, `chainId`, `displayName`, `nativeSymbol`, `rpcUrl`,
+`explorerBaseUrl`) and that chain's external treasury address and thresholds,
+plus the operational address, thresholds, and policy when two-tier is on.
+
+- **Singular env form stays.** `CHAIN_ID`, `CHAIN_RPC_URL`, optional
+  `CHAIN_EXPLORER_BASE_URL`, `TREASURY_ADDRESS`, the four `TREASURY_*` amounts,
+  and optional `TREASURY_OPERATIONAL_*` still load, and they load as exactly one
+  chain. That is the form `render.yaml` still declares. A deploy against today's
+  unchanged environment resolves the same chain identity, treasury address,
+  thresholds, and operational policy it did before this contract. There is no
+  deprecation warning on that path: the live service would log it on every boot.
+- **Multi form is `CHAINS`**, a JSON array of chain objects. Amounts are decimal
+  strings, not JSON numbers. Unknown keys are rejected, so a private key pasted
+  into the document fails at load. The document is one env value, so it can be
+  copied across the three Render service blocks. `render.yaml` is not switched
+  to it in this task: `CHAIN_RPC_URL` and `TREASURY_ADDRESS` are `sync: false`
+  dashboard values, and any edit to the file re-syncs the whole Blueprint
+  (CB-04). Adding `CHAINS` next to the singular keys would make both forms
+  present and the live process would refuse to boot (D17).
+- **Both forms together throw `INVALID_CONFIGURATION`**, naming the singular
+  variables that are set. There is no precedence and no "whichever was read
+  last". A blank `CHAINS` is treated as unset, so it does not collide.
+- **Signing keys stay process-global.** `TREASURY_PRIVATE_KEY` and
+  `TREASURY_OPERATIONAL_PRIVATE_KEY` are not per chain and are not inside
+  `CHAINS`. One key builds one signer per configured chain, each bound to that
+  chain's RPC. The external signer's destination allowlist is that chain's
+  operational address (C25). Whether Base reuses the Sepolia EOA or gets a
+  distinct key is still an open operator decision (T6.3); both work with this
+  shape.
+- **D16 is enforced at load.** After the list is resolved, either every chain
+  has an operational treasury or none do. A mix throws `INVALID_CONFIGURATION`
+  naming the two-tier chains and the hatch chains. The process does not boot.
+- **Fail closed.** Unknown chain id (absent from `SUPPORTED_CHAINS`), duplicate
+  chain id, missing RPC URL, operational address without its amounts, and an
+  empty chain list each throw `INVALID_CONFIGURATION`. No chain is skipped and
+  none of these fall back to a default.
+- **`defaultChainId`** is the only chain in the singular form, and the first
+  `CHAINS` element otherwise. `config.chain`, `config.treasury`, and
+  `config.operationalTreasury` are that chain's views, so single-chain readers
+  keep today's values. Registration and heartbeats walk every chain; the
+  heartbeat detail includes each chain's treasury id and does not collapse to
+  the default chain alone.
+- **`SUPPORTED_CHAINS` stays one row** (Ethereum Sepolia). A config naming any
+  other id, including 84532, fails at load. T6.3 adds the second row. The
+  adapter registry is populated from `config.chains` (one registration per
+  chain) and is otherwise unchanged (C26).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1496,6 +1546,7 @@ outgoing scanner, or treasury signer only through `ChainAdapterRegistry`.
 | `TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH`  | all                            | when operational address set | — (policy min)                                   | Phase 9                                   |
 | `TREASURY_OPERATIONAL_TARGET_BALANCE_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
 | `TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
+| `CHAINS`                                    | all                            | no (singular form remains)   | — (JSON array; exclusive of singular env)        | T6.2                                      |
 
 ## 4. Decision log (append-only)
 
@@ -1565,3 +1616,4 @@ outgoing scanner, or treasury signer only through `ChainAdapterRegistry`.
 - 2026-09-21 — **`main` was red on two security gates before Phase 6 started; tracked as TX.26.** PR #113 (five Markdown files, no source) failed `dependency audit` and `Trivy Dependency & Misconfig Scan`. Reproduced on the unmodified `3a3fbcd` checkout with the workflow's own command (`npm audit --omit=dev --audit-level=high` → 5 vulnerabilities, 1 moderate / 4 high, exit 1), so the failure is pre-existing and not PR-introduced. Root cause is `fast-uri` 3.1.5 and 4.1.2 (CVE-2026-75899, -75931, -75975, -76172; SSRF and host confusion; fixed in 3.1.6 / 4.1.3) reached transitively through `ajv`, `fast-json-stringify` and `@fastify/ajv-compiler` — the same four CVEs are the whole of Trivy's `Total: 8 (HIGH: 8)` — plus `fastify <= 5.12.0` (GHSA-w2qp-rph6-63g4 schema-validation bypass, GHSA-3m5p-2c4r-xxw2 `X-Forwarded-*` spoofing under `trustProxy`). PR #112 was green on 2026-09-01; the advisories published in the 21 days since. **Contrast with 2026-08-06**, when a Trivy red was a setup failure and was wrongly generalised into "Actions is down": this one carries CVE rows and reproduces locally, so it is signal. Dispatched before T6.1 so the Phase 6 gate means what it says, and so no worker following the standing `/goal keep this PR merge-ready` line reaches for `npm audit fix --force` inside a money-path refactor.
 - 2026-09-21 — **CVE-2026-16732: ChainBank was running the vulnerable `trustProxy` hop-count form in production; tracked as TX.27, decided as D19.** Surfaced by TX.26: bumping fastify to 5.12.5 broke `typecheck` and `build` because 5.12.1+ **removes `number` from the `trustProxy` type** (`boolean | string | string[] | TrustProxyFunction`). That removal _is_ the security fix. Per GHSA-3m5p-2c4r-xxw2, the hop-count form "compiles to a predicate that structurally ignores the address argument, so the guard reduces to `0 < tp`, always true for any `tp >= 1`" — so a caller with a direct network path to the origin can forge `X-Forwarded-For` and therefore `request.ip`. `src/api/app.ts:54` passed `config.app.isHosted ? security.trustedProxyHops : false` and `render.yaml` sets `TRUSTED_PROXY_HOPS: '1'`, so the hosted service was in the affected range (5.8.3–5.12.0). **The comment above that line documents the hop count as the mitigation chosen specifically to stop `request.ip` forgery — the mitigation was itself the vulnerability.** Blast radius is exactly what that comment predicted: `request.ip` keys the rate limiter (`src/api/app.ts:135`) and populates audit `sourceIp` across the projects, environments and admin routes. Residual exposure depends on whether the Render origin is reachable without traversing the proxy — **not established in this session**. The type error must not be silenced with a cast: the runtime no longer honours a number, so a cast yields undefined proxy behaviour on the authorization boundary, which is worse than the bug.
 - 2026-09-21 — **T6.1 published C26:** chain-keyed adapter registry. Lookups fail closed on an unregistered chain id. Treasury signer resolution is `(chain, address)`, because address-only matching would hand a Sepolia-bound signer to a same-EOA treasury row on another chain. Populated from the singular `config.chain` until T6.2. Whether Base reuses the Sepolia EOA remains an open operator decision (T6.3).
+- 2026-09-21 — **T6.2 published C27:** `config.chains` carries per-chain RPC and treasury configuration. The singular `CHAIN_ID` / `CHAIN_RPC_URL` / `TREASURY_*` form still loads as exactly one chain — `render.yaml` keeps that form, so a Blueprint sync cannot pair a new document with the live singular variables. `CHAINS` is the JSON multi form; both forms together throw `INVALID_CONFIGURATION`. D16 is enforced at load: a mix of hatch and two-tier chains is named and refused. One process-global key builds one signer per chain. `SUPPORTED_CHAINS` stays one row.

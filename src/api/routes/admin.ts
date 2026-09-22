@@ -171,7 +171,7 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
           sourceIp: request.ip,
           recipients: config.email.operatorRecipients,
           environment: config.app.environment,
-          chainDisplayName: config.chain.displayName,
+          chainDisplayName: config.chains.map((chain) => chain.displayName).join(', '),
           treasuryAddressDisplay: config.treasury.address,
           dashboardUrl: config.app.publicBaseUrl,
         },

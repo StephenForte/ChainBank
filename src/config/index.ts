@@ -3,8 +3,15 @@ import { ChainBankError } from '../domain/errors.js';
 import { validatePolicy } from '../domain/funding/funding-math.js';
 import { assertValidTreasuryThresholds } from '../domain/treasury/treasury-status.js';
 import { parseEtherToWei } from '../domain/wei.js';
-import { environmentSchema, type RawEnvironment } from './schema.js';
-import { findSupportedChainById, supportedChainIds, type SupportedChain } from './supported-chains.js';
+import {
+  chainDocumentSchema,
+  environmentSchema,
+  REQUIRED_SINGULAR_CHAIN_ENV_KEYS,
+  SINGULAR_CHAIN_ENV_KEYS,
+  type ChainDocument,
+  type RawEnvironment,
+} from './schema.js';
+import { SUPPORTED_CHAINS, type SupportedChain } from './supported-chains.js';
 import { parseTrustedProxyCidrs } from './trusted-proxy.js';
 
 /**
@@ -47,6 +54,15 @@ export interface ChainConfig {
   readonly nativeSymbol: string;
   readonly rpcUrl: string;
   readonly explorerBaseUrl: string;
+}
+
+/**
+ * One configured chain plus the treasury rows that chain funds from.
+ * Identity fields match {@link ChainConfig}. Treasury amounts are per chain.
+ */
+export interface ConfiguredChain extends ChainConfig {
+  readonly treasury: TreasuryConfig;
+  readonly operationalTreasury: OperationalTreasuryConfig | undefined;
 }
 
 export interface TreasuryConfig {
@@ -134,9 +150,26 @@ export interface ReconciliationConfig {
 export interface ChainBankConfig {
   readonly app: AppConfig;
   readonly database: DatabaseConfig;
+  /**
+   * Every chain this process serves. One entry for the singular env form.
+   * Adapters, treasury registration, and heartbeats walk this list.
+   */
+  readonly chains: readonly ConfiguredChain[];
+  /**
+   * Chain described by the singular `chain` / `treasury` / `operationalTreasury`
+   * views. The singular env has one chain, so this is that chain. A `CHAINS`
+   * document uses its first element. Callers that must cover every chain read
+   * `chains`, not this id.
+   */
+  readonly defaultChainId: number;
+  /** Default chain identity. Equal to `chains` for that `defaultChainId`. */
   readonly chain: ChainConfig;
+  /** External treasury of the default chain. */
   readonly treasury: TreasuryConfig;
-  /** Present when TREASURY_OPERATIONAL_ADDRESS is set (C23 two-tier mode). */
+  /**
+   * Operational treasury of the default chain. Present when that chain is
+   * two-tier. D16 requires every chain to match this mode.
+   */
   readonly operationalTreasury: OperationalTreasuryConfig | undefined;
   /**
    * Present for web, treasury-monitor, and cron-reconciler; absent for roles
@@ -177,6 +210,13 @@ const SIGNING_ROLE_MIN_POOL_MAX = 2;
 export interface LoadConfigOptions {
   readonly serviceRole: ServiceRole;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Chain ids this load may accept. Production entry points omit it and get
+   * {@link SUPPORTED_CHAINS}. Tests pass a wider catalog to exercise N-chain
+   * rules before a second chain is registered; a deployed process that omits
+   * this still rejects every id outside that list.
+   */
+  readonly supportedChains?: readonly SupportedChain[];
 }
 
 /**
@@ -205,7 +245,13 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
   // Parsed for every role. A malformed allowlist must fail the process that
   // loaded it, including roles that never honour X-Forwarded-*.
   const trustedProxyCidrs = parseTrustedProxyCidrs(env.TRUSTED_PROXY_CIDRS);
-  const funding = buildFundingConfig(env, options.serviceRole);
+  const chains = buildConfiguredChains(env, options.supportedChains ?? SUPPORTED_CHAINS);
+  const defaultChain = chains[0];
+  const funding = buildFundingConfig(
+    env,
+    options.serviceRole,
+    defaultChain.operationalTreasury !== undefined,
+  );
 
   return {
     app: {
@@ -219,9 +265,18 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
       isHosted,
     },
     database: buildDatabaseConfig(env, options.serviceRole, isHosted),
-    chain: buildChainConfig(env),
-    treasury: buildTreasuryConfig(env),
-    operationalTreasury: buildOperationalTreasuryConfig(env),
+    chains,
+    defaultChainId: defaultChain.chainId,
+    chain: {
+      slug: defaultChain.slug,
+      chainId: defaultChain.chainId,
+      displayName: defaultChain.displayName,
+      nativeSymbol: defaultChain.nativeSymbol,
+      rpcUrl: defaultChain.rpcUrl,
+      explorerBaseUrl: defaultChain.explorerBaseUrl,
+    },
+    treasury: defaultChain.treasury,
+    operationalTreasury: defaultChain.operationalTreasury,
     email: requiresEmailConfig(options.serviceRole) ? buildEmailConfig(env, options.serviceRole) : undefined,
     apiSecurity:
       options.serviceRole === 'web' ? buildApiSecurityConfig(env, isHosted, trustedProxyCidrs) : undefined,
@@ -262,7 +317,11 @@ export function getOperationalTreasuryPrivateKey(config: ChainBankConfig): `0x${
   return config.funding.operationalPrivateKey;
 }
 
-function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): FundingConfig {
+function buildFundingConfig(
+  env: RawEnvironment,
+  serviceRole: ServiceRole,
+  isTwoTier: boolean,
+): FundingConfig {
   const killSwitch = env.FUNDING_KILL_SWITCH;
   const confirmations = env.FUNDING_CONFIRMATIONS;
   const confirmationTimeoutMs = env.FUNDING_CONFIRMATION_TIMEOUT_MS;
@@ -302,14 +361,10 @@ function buildFundingConfig(env: RawEnvironment, serviceRole: ServiceRole): Fund
       ? undefined
       : parseTreasuryPrivateKey(rawOperationalKey, env.FUNDING_ENABLED, 'TREASURY_OPERATIONAL_PRIVATE_KEY');
 
-  if (
-    env.FUNDING_ENABLED &&
-    env.TREASURY_OPERATIONAL_ADDRESS !== undefined &&
-    operationalPrivateKey === undefined
-  ) {
+  if (env.FUNDING_ENABLED && isTwoTier && operationalPrivateKey === undefined) {
     throw new ChainBankError(
       'INVALID_CONFIGURATION',
-      'FUNDING_ENABLED=true with TREASURY_OPERATIONAL_ADDRESS requires a structurally valid ' +
+      'FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid ' +
         'TREASURY_OPERATIONAL_PRIVATE_KEY for this signing-capable service role.',
       { publicMessage: 'The service is misconfigured.' },
     );
@@ -444,128 +499,365 @@ function assertSigningPoolCapacity(serviceRole: ServiceRole, poolMax: number): v
   }
 }
 
-function buildChainConfig(env: RawEnvironment): ChainConfig {
-  const chain: SupportedChain | undefined = findSupportedChainById(env.CHAIN_ID);
-  if (chain === undefined) {
-    throw new ChainBankError(
-      'INVALID_CONFIGURATION',
-      `CHAIN_ID ${String(env.CHAIN_ID)} is not supported. Supported chain IDs: ` +
-        supportedChainIds().join(', '),
-      { publicMessage: 'The service is misconfigured.' },
+/**
+ * Resolves `config.chains`. The singular env variables and the `CHAINS`
+ * document are mutually exclusive: both present is a startup error, not a
+ * precedence. An empty list, an unknown chain id, a duplicate chain id, a
+ * missing RPC URL, or a mixed hatch/two-tier set (D16) fails closed.
+ */
+function buildConfiguredChains(
+  env: RawEnvironment,
+  catalog: readonly SupportedChain[],
+): readonly [ConfiguredChain, ...ConfiguredChain[]] {
+  const chainsDocument = env.CHAINS;
+  const singularPresent = SINGULAR_CHAIN_ENV_KEYS.filter((key) => env[key] !== undefined);
+
+  if (chainsDocument !== undefined && singularPresent.length > 0) {
+    throw invalidConfiguration(
+      `CHAINS cannot be combined with the singular chain configuration (${singularPresent.join(', ')}). ` +
+        'Remove one form. The two are mutually exclusive so a deploy cannot silently prefer whichever was parsed last.',
     );
   }
 
-  return {
-    slug: chain.slug,
-    chainId: chain.chainId,
-    displayName: chain.displayName,
-    nativeSymbol: chain.nativeSymbol,
-    rpcUrl: env.CHAIN_RPC_URL,
-    explorerBaseUrl: stripTrailingSlash(env.CHAIN_EXPLORER_BASE_URL ?? chain.defaultExplorerBaseUrl),
-  };
+  const chains =
+    chainsDocument === undefined
+      ? [configuredChainFromSingular(env, catalog)]
+      : configuredChainsFromDocument(chainsDocument, catalog);
+
+  return assertChainList(chains);
 }
 
-function buildTreasuryConfig(env: RawEnvironment): TreasuryConfig {
-  if (!isAddress(env.TREASURY_ADDRESS, { strict: false })) {
-    throw new ChainBankError('INVALID_CONFIGURATION', 'TREASURY_ADDRESS is not a valid EVM address', {
-      publicMessage: 'The service is misconfigured.',
-    });
+function configuredChainFromSingular(
+  env: RawEnvironment,
+  catalog: readonly SupportedChain[],
+): ConfiguredChain {
+  const missing = REQUIRED_SINGULAR_CHAIN_ENV_KEYS.filter((key) => env[key] === undefined);
+  if (missing.length > 0) {
+    throw invalidConfiguration(
+      `Singular chain configuration is incomplete. Missing: ${missing.join(', ')}. ` +
+        'Set these, or set CHAINS and omit the singular chain variables.',
+    );
   }
 
-  const thresholds = {
-    warningBalanceWei: parseEtherToWei(env.TREASURY_WARNING_BALANCE_ETH, 'TREASURY_WARNING_BALANCE_ETH'),
-    criticalBalanceWei: parseEtherToWei(env.TREASURY_CRITICAL_BALANCE_ETH, 'TREASURY_CRITICAL_BALANCE_ETH'),
-    recoveryBalanceWei: parseEtherToWei(env.TREASURY_RECOVERY_BALANCE_ETH, 'TREASURY_RECOVERY_BALANCE_ETH'),
-    minimumReserveWei: parseEtherToWei(env.TREASURY_MINIMUM_RESERVE_ETH, 'TREASURY_MINIMUM_RESERVE_ETH'),
-  };
-  assertValidTreasuryThresholds(thresholds);
+  const chainId = requirePresent(env.CHAIN_ID, 'CHAIN_ID');
+  const rpcUrl = requirePresent(env.CHAIN_RPC_URL, 'CHAIN_RPC_URL');
+  const treasuryAddress = requirePresent(env.TREASURY_ADDRESS, 'TREASURY_ADDRESS');
+  const supported = requireSupportedChain(chainId, catalog, `CHAIN_ID ${String(chainId)}`);
+  const externalAddress = parseConfiguredAddress(treasuryAddress, 'TREASURY_ADDRESS');
 
-  return { address: getAddress(env.TREASURY_ADDRESS), ...thresholds };
+  return toConfiguredChain({
+    supported,
+    rpcUrl,
+    explorerBaseUrl: env.CHAIN_EXPLORER_BASE_URL,
+    treasury: {
+      address: externalAddress,
+      ...treasuryThresholdsFromEth(
+        {
+          warningBalanceEth: requirePresent(env.TREASURY_WARNING_BALANCE_ETH, 'TREASURY_WARNING_BALANCE_ETH'),
+          criticalBalanceEth: requirePresent(
+            env.TREASURY_CRITICAL_BALANCE_ETH,
+            'TREASURY_CRITICAL_BALANCE_ETH',
+          ),
+          recoveryBalanceEth: requirePresent(
+            env.TREASURY_RECOVERY_BALANCE_ETH,
+            'TREASURY_RECOVERY_BALANCE_ETH',
+          ),
+          minimumReserveEth: requirePresent(env.TREASURY_MINIMUM_RESERVE_ETH, 'TREASURY_MINIMUM_RESERVE_ETH'),
+        },
+        {
+          warning: 'TREASURY_WARNING_BALANCE_ETH',
+          critical: 'TREASURY_CRITICAL_BALANCE_ETH',
+          recovery: 'TREASURY_RECOVERY_BALANCE_ETH',
+          reserve: 'TREASURY_MINIMUM_RESERVE_ETH',
+        },
+      ),
+    },
+    operationalTreasury: buildOperationalTreasury({
+      rawAddress: env.TREASURY_OPERATIONAL_ADDRESS,
+      externalAddress,
+      addressLabel: 'TREASURY_OPERATIONAL_ADDRESS',
+      differLabel: 'TREASURY_OPERATIONAL_ADDRESS must differ from TREASURY_ADDRESS',
+      amounts: {
+        warningBalanceEth: env.TREASURY_OPERATIONAL_WARNING_BALANCE_ETH,
+        criticalBalanceEth: env.TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH,
+        recoveryBalanceEth: env.TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH,
+        minimumReserveEth: env.TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH,
+        minimumBalanceEth: env.TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH,
+        targetBalanceEth: env.TREASURY_OPERATIONAL_TARGET_BALANCE_ETH,
+        maximumTopUpEth: env.TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH,
+      },
+      amountLabels: {
+        warning: 'TREASURY_OPERATIONAL_WARNING_BALANCE_ETH',
+        critical: 'TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH',
+        recovery: 'TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH',
+        reserve: 'TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH',
+        minimum: 'TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH',
+        target: 'TREASURY_OPERATIONAL_TARGET_BALANCE_ETH',
+        maximum: 'TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH',
+      },
+    }),
+  });
 }
 
-function buildOperationalTreasuryConfig(env: RawEnvironment): OperationalTreasuryConfig | undefined {
-  const rawAddress = env.TREASURY_OPERATIONAL_ADDRESS;
-  if (rawAddress === undefined) {
+function configuredChainsFromDocument(
+  raw: string,
+  catalog: readonly SupportedChain[],
+): readonly ConfiguredChain[] {
+  const entries = readChainsDocument(raw);
+  return entries.map((entry) => {
+    const supported = requireSupportedChain(entry.chainId, catalog, `Chain id ${String(entry.chainId)}`);
+    const chainLabel = `${supported.slug} (${String(supported.chainId)})`;
+    const externalAddress = parseConfiguredAddress(
+      entry.treasury.address,
+      `treasury address on ${chainLabel}`,
+    );
+    const operational = entry.operationalTreasury;
+
+    return toConfiguredChain({
+      supported,
+      rpcUrl: entry.rpcUrl,
+      explorerBaseUrl: entry.explorerBaseUrl,
+      treasury: {
+        address: externalAddress,
+        ...treasuryThresholdsFromEth(entry.treasury, {
+          warning: `warningBalanceEth on ${chainLabel}`,
+          critical: `criticalBalanceEth on ${chainLabel}`,
+          recovery: `recoveryBalanceEth on ${chainLabel}`,
+          reserve: `minimumReserveEth on ${chainLabel}`,
+        }),
+      },
+      operationalTreasury:
+        operational === undefined
+          ? undefined
+          : buildOperationalTreasury({
+              rawAddress: operational.address,
+              externalAddress,
+              addressLabel: `operational treasury address on ${chainLabel}`,
+              differLabel: `Operational treasury address must differ from the external treasury address on ${chainLabel}`,
+              amounts: operational,
+              amountLabels: {
+                warning: `operationalTreasury.warningBalanceEth on ${chainLabel}`,
+                critical: `operationalTreasury.criticalBalanceEth on ${chainLabel}`,
+                recovery: `operationalTreasury.recoveryBalanceEth on ${chainLabel}`,
+                reserve: `operationalTreasury.minimumReserveEth on ${chainLabel}`,
+                minimum: `operationalTreasury.minimumBalanceEth on ${chainLabel}`,
+                target: `operationalTreasury.targetBalanceEth on ${chainLabel}`,
+                maximum: `operationalTreasury.maximumTopUpEth on ${chainLabel}`,
+              },
+            }),
+    });
+  });
+}
+
+function readChainsDocument(raw: string): readonly ChainDocument[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw invalidConfiguration('CHAINS is not valid JSON. Expected a JSON array of chain objects.');
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw invalidConfiguration('CHAINS must be a JSON array of chain objects.');
+  }
+  if (parsed.length === 0) {
+    throw invalidConfiguration('CHAINS is empty. At least one chain is required.');
+  }
+
+  return parsed.map((entry, index) => {
+    const result = chainDocumentSchema.safeParse(entry);
+    if (!result.success) {
+      const details = result.error.issues
+        .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+        .join('; ');
+      throw invalidConfiguration(
+        `CHAINS[${String(index)}] (${chainDocumentLabel(entry, index)}) is invalid: ${details}`,
+      );
+    }
+    return result.data;
+  });
+}
+
+function chainDocumentLabel(entry: unknown, index: number): string {
+  if (typeof entry !== 'object' || entry === null || !('chainId' in entry)) {
+    return `index ${String(index)}`;
+  }
+  const chainId = entry.chainId;
+  if (typeof chainId === 'number' && Number.isSafeInteger(chainId)) {
+    return `chain ${String(chainId)}`;
+  }
+  return `index ${String(index)}`;
+}
+
+function assertChainList(
+  chains: readonly ConfiguredChain[],
+): readonly [ConfiguredChain, ...ConfiguredChain[]] {
+  const first = chains[0];
+  if (first === undefined) {
+    throw invalidConfiguration('No chains are configured. At least one chain is required.');
+  }
+
+  const seen = new Set<number>();
+  for (const chain of chains) {
+    if (seen.has(chain.chainId)) {
+      throw invalidConfiguration(`Chain id ${String(chain.chainId)} is configured more than once.`);
+    }
+    seen.add(chain.chainId);
+  }
+
+  const twoTier = chains.filter((chain) => chain.operationalTreasury !== undefined);
+  const hatch = chains.filter((chain) => chain.operationalTreasury === undefined);
+  if (twoTier.length > 0 && hatch.length > 0) {
+    const format = (chain: ConfiguredChain): string => `${chain.slug} (${String(chain.chainId)})`;
+    throw invalidConfiguration(
+      `Treasury mode is process-global (D16). Two-tier: ${twoTier.map(format).join(', ')}. ` +
+        `Hatch: ${hatch.map(format).join(', ')}. ` +
+        'Every configured chain must set an operational treasury, or none may.',
+    );
+  }
+
+  return [first, ...chains.slice(1)];
+}
+
+function requireSupportedChain(
+  chainId: number,
+  catalog: readonly SupportedChain[],
+  source: string,
+): SupportedChain {
+  const chain = catalog.find((entry) => entry.chainId === chainId);
+  if (chain === undefined) {
+    throw invalidConfiguration(
+      `${source} is not supported. Supported chain IDs: ${catalog.map((entry) => String(entry.chainId)).join(', ')}`,
+    );
+  }
+  return chain;
+}
+
+function toConfiguredChain(input: {
+  readonly supported: SupportedChain;
+  readonly rpcUrl: string;
+  readonly explorerBaseUrl: string | undefined;
+  readonly treasury: TreasuryConfig;
+  readonly operationalTreasury: OperationalTreasuryConfig | undefined;
+}): ConfiguredChain {
+  return {
+    slug: input.supported.slug,
+    chainId: input.supported.chainId,
+    displayName: input.supported.displayName,
+    nativeSymbol: input.supported.nativeSymbol,
+    rpcUrl: input.rpcUrl,
+    explorerBaseUrl: stripTrailingSlash(input.explorerBaseUrl ?? input.supported.defaultExplorerBaseUrl),
+    treasury: input.treasury,
+    operationalTreasury: input.operationalTreasury,
+  };
+}
+
+function treasuryThresholdsFromEth(
+  amounts: {
+    readonly warningBalanceEth: string;
+    readonly criticalBalanceEth: string;
+    readonly recoveryBalanceEth: string;
+    readonly minimumReserveEth: string;
+  },
+  labels: {
+    readonly warning: string;
+    readonly critical: string;
+    readonly recovery: string;
+    readonly reserve: string;
+  },
+): Omit<TreasuryConfig, 'address'> {
+  const thresholds = {
+    warningBalanceWei: parseEtherToWei(amounts.warningBalanceEth, labels.warning),
+    criticalBalanceWei: parseEtherToWei(amounts.criticalBalanceEth, labels.critical),
+    recoveryBalanceWei: parseEtherToWei(amounts.recoveryBalanceEth, labels.recovery),
+    minimumReserveWei: parseEtherToWei(amounts.minimumReserveEth, labels.reserve),
+  };
+  assertValidTreasuryThresholds(thresholds);
+  return thresholds;
+}
+
+function buildOperationalTreasury(input: {
+  readonly rawAddress: string | undefined;
+  readonly externalAddress: `0x${string}`;
+  readonly addressLabel: string;
+  readonly differLabel: string;
+  readonly amounts: {
+    readonly warningBalanceEth: string | undefined;
+    readonly criticalBalanceEth: string | undefined;
+    readonly recoveryBalanceEth: string | undefined;
+    readonly minimumReserveEth: string | undefined;
+    readonly minimumBalanceEth: string | undefined;
+    readonly targetBalanceEth: string | undefined;
+    readonly maximumTopUpEth: string | undefined;
+  };
+  readonly amountLabels: {
+    readonly warning: string;
+    readonly critical: string;
+    readonly recovery: string;
+    readonly reserve: string;
+    readonly minimum: string;
+    readonly target: string;
+    readonly maximum: string;
+  };
+}): OperationalTreasuryConfig | undefined {
+  if (input.rawAddress === undefined) {
     return undefined;
   }
 
-  if (!isAddress(rawAddress, { strict: false })) {
-    throw new ChainBankError(
-      'INVALID_CONFIGURATION',
-      'TREASURY_OPERATIONAL_ADDRESS is not a valid EVM address',
-      { publicMessage: 'The service is misconfigured.' },
-    );
-  }
+  const address = parseConfiguredAddress(input.rawAddress, input.addressLabel);
+  const required = [
+    [input.amountLabels.warning, input.amounts.warningBalanceEth],
+    [input.amountLabels.critical, input.amounts.criticalBalanceEth],
+    [input.amountLabels.recovery, input.amounts.recoveryBalanceEth],
+    [input.amountLabels.reserve, input.amounts.minimumReserveEth],
+    [input.amountLabels.minimum, input.amounts.minimumBalanceEth],
+    [input.amountLabels.target, input.amounts.targetBalanceEth],
+    [input.amountLabels.maximum, input.amounts.maximumTopUpEth],
+  ] as const;
 
-  const required = {
-    TREASURY_OPERATIONAL_WARNING_BALANCE_ETH: env.TREASURY_OPERATIONAL_WARNING_BALANCE_ETH,
-    TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH: env.TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH,
-    TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH: env.TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH,
-    TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH: env.TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH,
-    TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH: env.TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH,
-    TREASURY_OPERATIONAL_TARGET_BALANCE_ETH: env.TREASURY_OPERATIONAL_TARGET_BALANCE_ETH,
-    TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH: env.TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH,
-  } as const;
-
-  for (const [name, value] of Object.entries(required)) {
+  for (const [name, value] of required) {
     if (value === undefined) {
-      throw new ChainBankError(
-        'INVALID_CONFIGURATION',
-        `${name} is required when TREASURY_OPERATIONAL_ADDRESS is set`,
-        { publicMessage: 'The service is misconfigured.' },
-      );
+      throw invalidConfiguration(`${name} is required when ${input.addressLabel} is set`);
     }
   }
 
-  const thresholds = {
-    warningBalanceWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_WARNING_BALANCE_ETH ?? '',
-      'TREASURY_OPERATIONAL_WARNING_BALANCE_ETH',
-    ),
-    criticalBalanceWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH ?? '',
-      'TREASURY_OPERATIONAL_CRITICAL_BALANCE_ETH',
-    ),
-    recoveryBalanceWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH ?? '',
-      'TREASURY_OPERATIONAL_RECOVERY_BALANCE_ETH',
-    ),
-    minimumReserveWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH ?? '',
-      'TREASURY_OPERATIONAL_MINIMUM_RESERVE_ETH',
-    ),
-  };
-  assertValidTreasuryThresholds(thresholds);
+  const warningBalanceEth = requirePresent(input.amounts.warningBalanceEth, input.amountLabels.warning);
+  const criticalBalanceEth = requirePresent(input.amounts.criticalBalanceEth, input.amountLabels.critical);
+  const recoveryBalanceEth = requirePresent(input.amounts.recoveryBalanceEth, input.amountLabels.recovery);
+  const minimumReserveEth = requirePresent(input.amounts.minimumReserveEth, input.amountLabels.reserve);
+  const minimumBalanceEth = requirePresent(input.amounts.minimumBalanceEth, input.amountLabels.minimum);
+  const targetBalanceEth = requirePresent(input.amounts.targetBalanceEth, input.amountLabels.target);
+  const maximumTopUpEth = requirePresent(input.amounts.maximumTopUpEth, input.amountLabels.maximum);
 
-  const policyInput = {
-    minimumBalanceWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH ?? '',
-      'TREASURY_OPERATIONAL_MINIMUM_BALANCE_ETH',
-    ),
-    targetBalanceWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_TARGET_BALANCE_ETH ?? '',
-      'TREASURY_OPERATIONAL_TARGET_BALANCE_ETH',
-    ),
-    maximumTopUpWei: parseEtherToWei(
-      env.TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH ?? '',
-      'TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH',
-    ),
+  const thresholds = treasuryThresholdsFromEth(
+    {
+      warningBalanceEth,
+      criticalBalanceEth,
+      recoveryBalanceEth,
+      minimumReserveEth,
+    },
+    {
+      warning: input.amountLabels.warning,
+      critical: input.amountLabels.critical,
+      recovery: input.amountLabels.recovery,
+      reserve: input.amountLabels.reserve,
+    },
+  );
+
+  const policy = validatePolicy({
+    minimumBalanceWei: parseEtherToWei(minimumBalanceEth, input.amountLabels.minimum),
+    targetBalanceWei: parseEtherToWei(targetBalanceEth, input.amountLabels.target),
+    maximumTopUpWei: parseEtherToWei(maximumTopUpEth, input.amountLabels.maximum),
     isEnabled: true,
-  };
-  const policy = validatePolicy(policyInput);
+  });
   if (!policy.ok) {
     throw new ChainBankError(policy.code, policy.message, {
       publicMessage: 'The service is misconfigured.',
     });
   }
 
-  const address = getAddress(rawAddress);
-  if (address.toLowerCase() === getAddress(env.TREASURY_ADDRESS).toLowerCase()) {
-    throw new ChainBankError(
-      'INVALID_CONFIGURATION',
-      'TREASURY_OPERATIONAL_ADDRESS must differ from TREASURY_ADDRESS',
-      { publicMessage: 'The service is misconfigured.' },
-    );
+  if (address.toLowerCase() === input.externalAddress.toLowerCase()) {
+    throw invalidConfiguration(input.differLabel);
   }
 
   return {
@@ -577,6 +869,26 @@ function buildOperationalTreasuryConfig(env: RawEnvironment): OperationalTreasur
       maximumTopUpWei: policy.policy.maximumTopUpWei,
     },
   };
+}
+
+function parseConfiguredAddress(raw: string, label: string): `0x${string}` {
+  if (!isAddress(raw, { strict: false })) {
+    throw invalidConfiguration(`${label} is not a valid EVM address`);
+  }
+  return getAddress(raw);
+}
+
+function requirePresent<T>(value: T | undefined, name: string): T {
+  if (value === undefined) {
+    throw invalidConfiguration(`${name} is required`);
+  }
+  return value;
+}
+
+function invalidConfiguration(message: string): ChainBankError {
+  return new ChainBankError('INVALID_CONFIGURATION', message, {
+    publicMessage: 'The service is misconfigured.',
+  });
 }
 
 function buildEmailConfig(env: RawEnvironment, serviceRole: ServiceRole): EmailConfig {
