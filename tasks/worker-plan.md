@@ -10,7 +10,7 @@ follow the **[commit and merge contract](#commit-and-merge-contract)** below —
 governs the branch to work in, which files may be touched, the commit convention, and
 the report handed back on completion.
 
-## Status (updated 2026-09-21 — **Phase 4 exited**; Phase 9 merged; P6-PREP complete; **Phase 6 open**)
+## Status (updated 2026-09-22 — **Phase 6 through T6.2 merged**; T6.3 next)
 
 `main` at **`3a3fbcd`** (PR #112). Latest migration **`0010`** (next free **`0011`**, and Phase 6
 is not expected to consume it). Contracts through **C25**; **C26–C30 are reserved by
@@ -19,6 +19,8 @@ through **D18**. Verified 2026-09-21: `npm run test:unit` → 62 files / **572 t
 #112 green on all eleven checks. Integration tests run inside the CI job named **`migration
 validation`** — there is no separately named integration job, so its absence from a check list is
 not a missing gate.
+
+**Phase 6 is three tasks in** (`main` **`a5554a2`**): TX.26 + TX.27 (PR #114), T6.1/**C26** (PR #115), T6.2/**C27** (PR #116). Contracts through **C27**, next free **C31** (C28–C30 reserved for T6.3–T6.5). Decisions through **D21**, next free **D22**. Migrations through `0010`, next `0011` — Phase 6 is not expected to consume it. Verified 2026-09-22: 67 files / **613 unit**, 41 dashboard, 25 files / **126 integration**, 0 skipped, audit clean. Dispatch Phase 6 from [`tasks/p6-plan.md`](./p6-plan.md).
 
 **Phase 9 two-tier treasury merged** (PRs #103, #104; migration `0009`; contracts C23–C25;
 decisions D11–D14) and **live on Render (D17)**. **Phase 4 remains exited** with live evidence
