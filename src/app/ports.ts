@@ -1060,6 +1060,20 @@ export type ReconciliationFinding =
       readonly severity: 'warning';
       readonly walletId: string;
       readonly reason: string;
+    }
+  | {
+      /**
+       * One configured chain's outcome for this run (C29). Persisted in
+       * `findings_json` so a later C15 streak recount can see it. `chainId` is
+       * the EVM chain id, not the `chains` row uuid. Warning severity: a
+       * healthy chain must not open a C18 critical alert.
+       */
+      readonly kind: 'chain_outcome';
+      readonly severity: 'warning';
+      readonly chainId: number;
+      readonly status: 'processed' | 'processed-with-failures' | 'unavailable';
+      readonly errorCode: string | undefined;
+      readonly reason: string | undefined;
     };
 
 export interface InsertReconciliationRunInput {

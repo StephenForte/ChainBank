@@ -11,6 +11,13 @@ import { assertNever } from '../../domain/funding/statuses.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import { isUniqueViolation } from '../../shared/postgres-error.js';
+import {
+  chainOutcomesForDetail,
+  deriveChainProcessingStatus,
+  isIsolatedChainRpcFailure,
+  toChainOutcomeFinding,
+  type ChainRunOutcome,
+} from '../alerts/chain-run-outcome.js';
 import { maybeNotifyReconciliationFailure } from '../alerts/notify-reconciliation-failure.js';
 import {
   isCriticalReconciliationFinding,
@@ -135,9 +142,12 @@ export interface ReconcileWalletsResult {
  * Order:
  * 1. Authorize `reconciliation:run` (cron-reconciler only).
  * 2. Persist a run-summary row.
- * 3. Per enabled treasury: resolve `submission_unknown` on positive evidence;
- *    scan for crash-orphan outgoing transfers (never silently adopt).
- * 4. Paginate eligible wallets to completion; fund below-minimum only, serial.
+ * 3. Per configured chain, isolated from the others (C29): resolve
+ *    `submission_unknown` on positive evidence; scan for crash-orphan outgoing
+ *    transfers (never silently adopt); replenish; fund below-minimum wallets.
+ *    An RPC failure on one chain is recorded and does not skip the rest.
+ * 4. Paginate eligible wallets to completion within each chain; fund
+ *    below-minimum only, serial.
  * 5. On reserve block: notify once per treasury (C10), then continue assessing
  *    remaining wallets without submitting.
  * 6. After the run is marked finished: evaluate reconciliation-failure alerting
@@ -195,29 +205,270 @@ export async function reconcileWallets(
     const treasuries = await dependencies.treasuries.listEnabled();
     const reserveStoppedByTreasury = new Map<string, boolean>();
     let anyScanIncomplete = false;
+    const wallets = await listAllEligibleWallets(dependencies.managedWallets);
+    const chains = groupWorkByChain(treasuries, wallets);
+    const chainOutcomes: ChainRunOutcome[] = [];
+    let thrownChainFailure: ChainBankError | undefined;
 
-    for (const treasury of treasuries) {
-      const resolution = await resolveSubmissionUnknownForTreasury(dependencies, {
-        treasury,
-        maxLookbackBlocks: lookbackBlocks,
-        correlationId: input.correlationId,
-      });
-      submissionUnknownResolved += resolution.resolved;
-      submissionUnknownLeftPending += resolution.leftPending;
-      findings.push(...resolution.findings);
+    for (const chain of chains) {
+      let anyScanReachedChain = false;
+      let anyScanRpcUnavailable = false;
+      let anyWalletObserved = false;
+      let anyItemFailure = false;
+      let rpcBlockedFunding = false;
+      let chainErrorCode: string | undefined;
+      let chainReason: string | undefined;
 
-      const orphanScan = await detectCrashOrphansForTreasury(dependencies, {
-        treasury,
-        maxBlocksPerRun: lookbackBlocks,
-        correlationId: input.correlationId,
-      });
-      if (orphanScan.scanStatus === 'incomplete') {
-        anyScanIncomplete = true;
+      try {
+        for (const treasury of chain.treasuries) {
+          const resolution = await resolveSubmissionUnknownForTreasury(dependencies, {
+            treasury,
+            maxLookbackBlocks: lookbackBlocks,
+            correlationId: input.correlationId,
+          });
+          submissionUnknownResolved += resolution.resolved;
+          submissionUnknownLeftPending += resolution.leftPending;
+          findings.push(...resolution.findings);
+
+          const orphanScan = await detectCrashOrphansForTreasury(dependencies, {
+            treasury,
+            maxBlocksPerRun: lookbackBlocks,
+            correlationId: input.correlationId,
+          });
+          if (orphanScan.scanStatus === 'incomplete') {
+            anyScanIncomplete = true;
+          }
+          if (orphanScan.chainReachable) {
+            anyScanReachedChain = true;
+          } else {
+            anyScanRpcUnavailable = true;
+          }
+          unexplainedTransferCount += orphanScan.unexplained.length;
+          findings.push(...orphanScan.findings);
+          if (orphanScan.pendingAdvance !== undefined) {
+            pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+          }
+        }
+
+        if (dependencies.chainAdapters.externalSigner(chain.chainId) !== undefined) {
+          await replenishOperationalPrelude(
+            {
+              treasuries: dependencies.treasuries,
+              balanceObservations: dependencies.balanceObservations,
+              chainAdapters: dependencies.chainAdapters,
+              auditEvents: dependencies.auditEvents,
+              alerts: dependencies.alerts,
+              emailSender: dependencies.emailSender,
+              operations: dependencies.operations,
+              transactions: dependencies.transactions,
+              managedWallets: dependencies.managedWallets,
+              lock: dependencies.lock,
+              clock: dependencies.clock,
+              idGenerator: dependencies.idGenerator,
+              logger: dependencies.logger,
+              isFundingEnabled: dependencies.isFundingEnabled,
+              isFundingKillSwitchActive: dependencies.isFundingKillSwitchActive,
+              confirmations: dependencies.confirmations,
+              confirmationTimeoutMs: dependencies.confirmationTimeoutMs,
+              operatorRecipients: dependencies.operatorRecipients,
+              dashboardBaseUrl: dependencies.dashboardBaseUrl,
+              environment: dependencies.environment,
+            },
+            {
+              evmChainId: chain.chainId,
+              role: input.role,
+              credentialId: input.credentialId,
+              correlationId: input.correlationId,
+              sourceIp: undefined,
+              idempotencyKey: `reconcile:${runId}:chain:${String(chain.chainId)}`,
+            },
+          );
+        }
+
+        for (const wallet of chain.wallets) {
+          const treasury = resolveTreasuryForWallet(treasuries, wallet);
+          if (treasury === undefined) {
+            counters = addSweepOutcome(counters, 'failed');
+            const reason = treasuryResolutionFailureReason(treasuries, wallet);
+            findings.push({
+              kind: 'wallet_assessment_failed',
+              severity: 'warning',
+              walletId: wallet.id,
+              reason,
+            });
+            await recordReconcileWalletAttemptIfAbsent(dependencies, {
+              wallet,
+              runId,
+              credentialId: input.credentialId,
+              correlationId: input.correlationId,
+              errorCode: 'INVALID_CONFIGURATION',
+              errorSummary: reason,
+            });
+            logWalletFundingAttribution(dependencies.logger, {
+              outcome: 'failed',
+              correlationId: input.correlationId,
+              runId,
+              wallet,
+              amountWei: 0n,
+              balanceWei: undefined,
+              transactionHash: undefined,
+              reason,
+            });
+            anyItemFailure = true;
+            continue;
+          }
+
+          const reserveStopped = reserveStoppedByTreasury.get(treasury.id) === true;
+
+          try {
+            const walletSigner = dependencies.chainAdapters.getSignerForTreasury(treasury);
+            assertSignerMatchesTreasury(walletSigner, treasury);
+            const outcome = await assessAndMaybeFundWallet(dependencies, {
+              wallet,
+              treasury,
+              signer: walletSigner,
+              runId,
+              credentialId: input.credentialId,
+              correlationId: input.correlationId,
+              reserveStopped,
+            });
+
+            counters = addSweepOutcome(counters, outcome.counter, outcome.transferredWei);
+            anyWalletObserved = true;
+
+            if (
+              outcome.counter === 'blocked' &&
+              (outcome.reason === 'reserve-stop' || outcome.reason === 'missing-policy')
+            ) {
+              // Pre-dispatch blocks never reach dispatchFunding — write the durable
+              // attempt row here. Dispatch-owned blocked/failed rows already exist.
+              await recordReconcileWalletAttemptIfAbsent(dependencies, {
+                wallet,
+                runId,
+                credentialId: input.credentialId,
+                correlationId: input.correlationId,
+                errorCode: reconcileAttemptErrorCode(outcome.reason),
+                errorSummary: outcome.reason,
+              });
+            }
+
+            if (
+              outcome.counter === 'funded' ||
+              outcome.counter === 'blocked' ||
+              outcome.counter === 'failed'
+            ) {
+              logWalletFundingAttribution(dependencies.logger, {
+                outcome: outcome.counter,
+                correlationId: input.correlationId,
+                runId,
+                wallet,
+                amountWei: outcome.transferredWei,
+                balanceWei: outcome.resultingBalanceWei,
+                transactionHash: outcome.transactionHash,
+                reason: outcome.reason,
+              });
+            }
+
+            if (outcome.reserveBlocked) {
+              reserveStoppedByTreasury.set(treasury.id, true);
+            }
+          } catch (error) {
+            counters = addSweepOutcome(counters, 'failed');
+            anyItemFailure = true;
+            const reason = error instanceof Error ? error.message : describeUnknownError(error);
+            const errorCode = isChainBankError(error) ? error.code : 'INTERNAL_ERROR';
+            dependencies.logger.error(
+              {
+                event: 'reconciliation.wallet_failed',
+                correlationId: input.correlationId,
+                runId,
+                walletId: wallet.id,
+                err:
+                  error instanceof Error
+                    ? { message: error.message, name: error.name }
+                    : { message: String(error) },
+              },
+              'Reconciliation wallet assessment failed; continuing sweep',
+            );
+            await recordReconcileWalletAttemptIfAbsent(dependencies, {
+              wallet,
+              runId,
+              credentialId: input.credentialId,
+              correlationId: input.correlationId,
+              errorCode,
+              errorSummary: reason,
+            });
+            logWalletFundingAttribution(dependencies.logger, {
+              outcome: 'failed',
+              correlationId: input.correlationId,
+              runId,
+              wallet,
+              amountWei: 0n,
+              balanceWei: undefined,
+              transactionHash: undefined,
+              reason,
+            });
+          }
+        }
+      } catch (error) {
+        if (!isIsolatedChainRpcFailure(error)) {
+          throw error;
+        }
+        rpcBlockedFunding = true;
+        chainErrorCode = error.code;
+        chainReason = error.message;
+        if (thrownChainFailure === undefined) {
+          thrownChainFailure = error;
+        }
+        // C14: a chain whose scan never ran must not look like a clean empty
+        // report. A scan that already reached the chain keeps its own finding.
+        if (!anyScanReachedChain) {
+          for (const treasury of chain.treasuries) {
+            const alreadyRecorded = findings.some(
+              (finding) => finding.kind === 'outgoing_scan_incomplete' && finding.treasuryId === treasury.id,
+            );
+            if (alreadyRecorded) {
+              continue;
+            }
+            anyScanIncomplete = true;
+            anyScanRpcUnavailable = true;
+            findings.push({
+              kind: 'outgoing_scan_incomplete',
+              severity: 'critical',
+              treasuryId: treasury.id,
+              errorCode: error.code,
+              reason: error.message,
+            });
+          }
+        }
       }
-      unexplainedTransferCount += orphanScan.unexplained.length;
-      findings.push(...orphanScan.findings);
-      if (orphanScan.pendingAdvance !== undefined) {
-        pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+
+      const status = deriveChainProcessingStatus({
+        rpcBlockedFunding,
+        anyWalletObserved,
+        anyItemFailure,
+        anyScanReachedChain,
+        anyScanRpcUnavailable,
+      });
+      const chainOutcome: ChainRunOutcome = {
+        chainId: chain.chainId,
+        status,
+        errorCode: chainErrorCode,
+        reason: chainReason,
+      };
+      chainOutcomes.push(chainOutcome);
+      findings.push(toChainOutcomeFinding(chainOutcome));
+      if (status === 'unavailable') {
+        dependencies.logger.error(
+          {
+            event: 'reconciliation.chain_unavailable',
+            correlationId: input.correlationId,
+            runId,
+            chainId: chain.chainId,
+            errorCode: chainErrorCode,
+          },
+          'Chain could not be processed; continuing other chains',
+        );
       }
     }
 
@@ -229,187 +480,51 @@ export async function reconcileWallets(
       outgoingScanStatus = anyScanIncomplete ? 'incomplete' : 'complete';
     }
 
-    const wallets = await listAllEligibleWallets(dependencies.managedWallets);
-
-    const chainIds = new Set(wallets.map((wallet) => wallet.chain.chainId));
-    for (const evmChainId of chainIds) {
-      if (dependencies.chainAdapters.externalSigner(evmChainId) !== undefined) {
-        await replenishOperationalPrelude(
-          {
-            treasuries: dependencies.treasuries,
-            balanceObservations: dependencies.balanceObservations,
-            chainAdapters: dependencies.chainAdapters,
-            auditEvents: dependencies.auditEvents,
-            alerts: dependencies.alerts,
-            emailSender: dependencies.emailSender,
-            operations: dependencies.operations,
-            transactions: dependencies.transactions,
-            managedWallets: dependencies.managedWallets,
-            lock: dependencies.lock,
-            clock: dependencies.clock,
-            idGenerator: dependencies.idGenerator,
-            logger: dependencies.logger,
-            isFundingEnabled: dependencies.isFundingEnabled,
-            isFundingKillSwitchActive: dependencies.isFundingKillSwitchActive,
-            confirmations: dependencies.confirmations,
-            confirmationTimeoutMs: dependencies.confirmationTimeoutMs,
-            operatorRecipients: dependencies.operatorRecipients,
-            dashboardBaseUrl: dependencies.dashboardBaseUrl,
-            environment: dependencies.environment,
-          },
-          {
-            evmChainId,
-            role: input.role,
-            credentialId: input.credentialId,
-            correlationId: input.correlationId,
-            sourceIp: undefined,
-            idempotencyKey: `reconcile:${runId}:chain:${String(evmChainId)}`,
-          },
-        );
-      }
+    const everyChainUnavailable =
+      chainOutcomes.length > 0 && chainOutcomes.every((outcome) => outcome.status === 'unavailable');
+    if (everyChainUnavailable && thrownChainFailure !== undefined) {
+      // Single-chain and all-chains RPC throws keep today's run-level error
+      // code, so the exit stays malfunction. A partial outage leaves
+      // error_code unset and is classified from chain outcomes instead (C29).
+      runErrorCode = thrownChainFailure.code;
+      runErrorSummary = thrownChainFailure.publicMessage;
+      dependencies.logger.error(
+        {
+          event: 'reconciliation.run.failed',
+          correlationId: input.correlationId,
+          runId,
+          errorCode: runErrorCode,
+          err: { message: thrownChainFailure.message, name: thrownChainFailure.name },
+        },
+        'Reconciliation run failed',
+      );
     }
 
-    for (const wallet of wallets) {
-      const treasury = resolveTreasuryForWallet(treasuries, wallet);
-      if (treasury === undefined) {
-        counters = addSweepOutcome(counters, 'failed');
-        const reason = treasuryResolutionFailureReason(treasuries, wallet);
-        findings.push({
-          kind: 'wallet_assessment_failed',
-          severity: 'warning',
-          walletId: wallet.id,
-          reason,
-        });
-        await recordReconcileWalletAttemptIfAbsent(dependencies, {
-          wallet,
+    if (runErrorCode === undefined) {
+      await dependencies.auditEvents.record({
+        actorType: 'cron',
+        actorId: input.credentialId,
+        action: 'reconciliation.run.completed',
+        entityType: 'reconciliation_run',
+        entityId: started.id,
+        requestId: input.correlationId,
+        sourceIp: undefined,
+        metadata: {
           runId,
-          credentialId: input.credentialId,
-          correlationId: input.correlationId,
-          errorCode: 'INVALID_CONFIGURATION',
-          errorSummary: reason,
-        });
-        logWalletFundingAttribution(dependencies.logger, {
-          outcome: 'failed',
-          correlationId: input.correlationId,
-          runId,
-          wallet,
-          amountWei: 0n,
-          balanceWei: undefined,
-          transactionHash: undefined,
-          reason,
-        });
-        continue;
-      }
-
-      const reserveStopped = reserveStoppedByTreasury.get(treasury.id) === true;
-
-      try {
-        const walletSigner = dependencies.chainAdapters.getSignerForTreasury(treasury);
-        assertSignerMatchesTreasury(walletSigner, treasury);
-        const outcome = await assessAndMaybeFundWallet(dependencies, {
-          wallet,
-          treasury,
-          signer: walletSigner,
-          runId,
-          credentialId: input.credentialId,
-          correlationId: input.correlationId,
-          reserveStopped,
-        });
-
-        counters = addSweepOutcome(counters, outcome.counter, outcome.transferredWei);
-
-        if (
-          outcome.counter === 'blocked' &&
-          (outcome.reason === 'reserve-stop' || outcome.reason === 'missing-policy')
-        ) {
-          // Pre-dispatch blocks never reach dispatchFunding — write the durable
-          // attempt row here. Dispatch-owned blocked/failed rows already exist.
-          await recordReconcileWalletAttemptIfAbsent(dependencies, {
-            wallet,
-            runId,
-            credentialId: input.credentialId,
-            correlationId: input.correlationId,
-            errorCode: reconcileAttemptErrorCode(outcome.reason),
-            errorSummary: outcome.reason,
-          });
-        }
-
-        if (outcome.counter === 'funded' || outcome.counter === 'blocked' || outcome.counter === 'failed') {
-          logWalletFundingAttribution(dependencies.logger, {
-            outcome: outcome.counter,
-            correlationId: input.correlationId,
-            runId,
-            wallet,
-            amountWei: outcome.transferredWei,
-            balanceWei: outcome.resultingBalanceWei,
-            transactionHash: outcome.transactionHash,
-            reason: outcome.reason,
-          });
-        }
-
-        if (outcome.reserveBlocked) {
-          reserveStoppedByTreasury.set(treasury.id, true);
-        }
-      } catch (error) {
-        counters = addSweepOutcome(counters, 'failed');
-        const reason = error instanceof Error ? error.message : describeUnknownError(error);
-        const errorCode = isChainBankError(error) ? error.code : 'INTERNAL_ERROR';
-        dependencies.logger.error(
-          {
-            event: 'reconciliation.wallet_failed',
-            correlationId: input.correlationId,
-            runId,
-            walletId: wallet.id,
-            err:
-              error instanceof Error
-                ? { message: error.message, name: error.name }
-                : { message: String(error) },
-          },
-          'Reconciliation wallet assessment failed; continuing sweep',
-        );
-        await recordReconcileWalletAttemptIfAbsent(dependencies, {
-          wallet,
-          runId,
-          credentialId: input.credentialId,
-          correlationId: input.correlationId,
-          errorCode,
-          errorSummary: reason,
-        });
-        logWalletFundingAttribution(dependencies.logger, {
-          outcome: 'failed',
-          correlationId: input.correlationId,
-          runId,
-          wallet,
-          amountWei: 0n,
-          balanceWei: undefined,
-          transactionHash: undefined,
-          reason,
-        });
-      }
+          walletsAssessed: counters.assessed,
+          walletsFunded: counters.funded,
+          walletsNoop: counters.noop,
+          walletsBlocked: counters.blocked,
+          walletsFailed: counters.failed,
+          weiTransferred: counters.weiTransferred.toString(),
+          submissionUnknownResolved,
+          submissionUnknownLeftPending,
+          unexplainedTransferCount,
+          outgoingScanStatus,
+          chainOutcomes: chainOutcomesForDetail(chainOutcomes),
+        },
+      });
     }
-
-    await dependencies.auditEvents.record({
-      actorType: 'cron',
-      actorId: input.credentialId,
-      action: 'reconciliation.run.completed',
-      entityType: 'reconciliation_run',
-      entityId: started.id,
-      requestId: input.correlationId,
-      sourceIp: undefined,
-      metadata: {
-        runId,
-        walletsAssessed: counters.assessed,
-        walletsFunded: counters.funded,
-        walletsNoop: counters.noop,
-        walletsBlocked: counters.blocked,
-        walletsFailed: counters.failed,
-        weiTransferred: counters.weiTransferred.toString(),
-        submissionUnknownResolved,
-        submissionUnknownLeftPending,
-        unexplainedTransferCount,
-        outgoingScanStatus,
-      },
-    });
   } catch (error) {
     runErrorCode = isChainBankError(error) ? error.code : 'INTERNAL_ERROR';
     runErrorSummary = isChainBankError(error) ? error.publicMessage : 'Reconciliation run failed.';
@@ -700,6 +815,37 @@ async function listAllEligibleWallets(
     }
   }
   return eligible;
+}
+
+function groupWorkByChain(
+  treasuries: readonly Treasury[],
+  wallets: readonly ManagedWallet[],
+): readonly {
+  readonly chainId: number;
+  readonly treasuries: readonly Treasury[];
+  readonly wallets: readonly ManagedWallet[];
+}[] {
+  const byChain = new Map<number, { treasuries: Treasury[]; wallets: ManagedWallet[] }>();
+  const bucketFor = (chainId: number): { treasuries: Treasury[]; wallets: ManagedWallet[] } => {
+    const existing = byChain.get(chainId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = { treasuries: [], wallets: [] };
+    byChain.set(chainId, created);
+    return created;
+  };
+  for (const treasury of treasuries) {
+    bucketFor(treasury.chain.chainId).treasuries.push(treasury);
+  }
+  for (const wallet of wallets) {
+    bucketFor(wallet.chain.chainId).wallets.push(wallet);
+  }
+  return [...byChain.entries()].map(([chainId, group]) => ({
+    chainId,
+    treasuries: group.treasuries,
+    wallets: group.wallets,
+  }));
 }
 
 function resolveTreasuryForWallet(
@@ -1348,6 +1494,7 @@ async function detectCrashOrphansForTreasury(
   },
 ): Promise<{
   readonly scanStatus: 'complete' | 'incomplete';
+  readonly chainReachable: boolean;
   readonly unexplained: readonly ReconciliationFinding[];
   readonly findings: readonly ReconciliationFinding[];
   readonly pendingAdvance:
@@ -1371,7 +1518,13 @@ async function detectCrashOrphansForTreasury(
       reason: tipResult.reason,
     };
     // Positive-evidence discipline: leave the watermark unchanged.
-    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
+    return {
+      scanStatus: 'incomplete',
+      chainReachable: false,
+      unexplained: [],
+      findings: [finding],
+      pendingAdvance: undefined,
+    };
   }
 
   const plan = planOutgoingScanWindow({
@@ -1383,6 +1536,7 @@ async function detectCrashOrphansForTreasury(
   if (plan.kind === 'empty') {
     return {
       scanStatus: 'complete',
+      chainReachable: true,
       unexplained: [],
       findings: [],
       pendingAdvance: undefined,
@@ -1440,6 +1594,7 @@ async function detectCrashOrphansForTreasury(
         // reports incomplete while tip coverage remains behind (TX.9).
         return {
           scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+          chainReachable: true,
           unexplained: [],
           findings,
           pendingAdvance: {
@@ -1468,7 +1623,14 @@ async function detectCrashOrphansForTreasury(
       reason: scan.reason,
     };
     // Partial / failed scan must not advance the marker (C14 / TX.9).
-    return { scanStatus: 'incomplete', unexplained: [], findings: [finding], pendingAdvance: undefined };
+    // The tip was readable; the body scan failed. The chain was reached.
+    return {
+      scanStatus: 'incomplete',
+      chainReachable: true,
+      unexplained: [],
+      findings: [finding],
+      pendingAdvance: undefined,
+    };
   }
 
   const findings: ReconciliationFinding[] = [];
@@ -1533,6 +1695,7 @@ async function detectCrashOrphansForTreasury(
       });
       return {
         scanStatus: 'incomplete',
+        chainReachable: true,
         unexplained,
         findings,
         pendingAdvance: undefined,
@@ -1552,6 +1715,7 @@ async function detectCrashOrphansForTreasury(
   // is behind. C15 does not page on incomplete alone.
   return {
     scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+    chainReachable: true,
     unexplained,
     findings,
     pendingAdvance,

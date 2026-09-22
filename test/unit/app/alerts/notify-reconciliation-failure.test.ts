@@ -394,6 +394,60 @@ describe('classifyReconciliationRun / countConsecutiveFailures', () => {
     ).toBe('success');
   });
 
+  it('does not treat a partial chain outage as success when another chain was funded', () => {
+    expect(
+      classifyReconciliationRun(
+        makeRun({
+          id: '1',
+          runId: 'r1',
+          walletsAssessed: 2,
+          walletsFunded: 1,
+          walletsFailed: 0,
+          findings: [
+            {
+              kind: 'chain_outcome',
+              severity: 'warning',
+              chainId: 11_155_111,
+              status: 'processed',
+              errorCode: undefined,
+              reason: undefined,
+            },
+            {
+              kind: 'chain_outcome',
+              severity: 'warning',
+              chainId: 84_532,
+              status: 'unavailable',
+              errorCode: 'RPC_UNAVAILABLE',
+              reason: 'base rpc down',
+            },
+          ],
+        }),
+      ),
+    ).toBe('failure');
+  });
+
+  it('keeps a single unavailable chain on the pre-C29 rules', () => {
+    expect(
+      classifyReconciliationRun(
+        makeRun({
+          id: '1',
+          runId: 'r1',
+          walletsAssessed: 0,
+          findings: [
+            {
+              kind: 'chain_outcome',
+              severity: 'warning',
+              chainId: 11_155_111,
+              status: 'unavailable',
+              errorCode: 'RPC_UNAVAILABLE',
+              reason: 'rpc down',
+            },
+          ],
+        }),
+      ),
+    ).toBe('success');
+  });
+
   it('treats a clean sweep with nothing to do as success', () => {
     expect(classifyReconciliationRun(makeRun({ id: '1', runId: 'r1', walletsAssessed: 0 }))).toBe('success');
   });

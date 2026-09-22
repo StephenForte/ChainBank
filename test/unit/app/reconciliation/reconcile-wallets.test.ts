@@ -1,6 +1,7 @@
 import { Writable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reconcileWallets } from '../../../../src/app/reconciliation/reconcile-wallets.js';
+import { ChainBankError } from '../../../../src/domain/errors.js';
 
 const replenishPrelude = vi.hoisted(() => ({
   replenishOperationalPrelude: vi.fn<
@@ -1601,3 +1602,239 @@ function buildDeps(
       : { outgoingLookbackBlocks: overrides.outgoingLookbackBlocks }),
   };
 }
+
+describe('reconcileWallets per-chain isolation (C29)', () => {
+  const BASE_CHAIN_ID = 84_532;
+  const BASE_TREASURY = '0x9999999999999999999999999999999999999999';
+
+  function baseChain() {
+    return {
+      id: 'chain-base',
+      slug: 'base-sepolia',
+      chainId: BASE_CHAIN_ID,
+      displayName: 'Base Sepolia',
+      nativeSymbol: 'ETH',
+      explorerBaseUrl: 'https://sepolia.basescan.org',
+    };
+  }
+
+  beforeEach(() => {
+    replenishPrelude.replenishOperationalPrelude.mockReset();
+    replenishPrelude.replenishOperationalPrelude.mockImplementation((_dependencies, input) => {
+      if (input.evmChainId === BASE_CHAIN_ID) {
+        return Promise.reject(
+          new ChainBankError('RPC_UNAVAILABLE', 'base rpc down', {
+            publicMessage: 'The chain is unavailable.',
+          }),
+        );
+      }
+      return Promise.resolve();
+    });
+  });
+
+  it('funds the healthy chain when another chain RPC fails and does not classify success', async () => {
+    const sepoliaWallet = buildWallet('w-sepolia', WALLET_A);
+    const baseWallet = buildWallet('w-base', WALLET_B, { chain: baseChain() });
+    const sepoliaTreasury = buildTreasury({ id: 'treasury-sepolia' });
+    const baseTreasury = buildTreasury({
+      id: 'treasury-base',
+      address: BASE_TREASURY.toLowerCase(),
+      addressDisplay: BASE_TREASURY,
+      chain: baseChain(),
+    });
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const balanceReader = createFakeBalanceReader({
+      balances: {
+        [TREASURY_ADDRESS]: 20n * ONE_ETH,
+        [WALLET_A]: ONE_ETH / 10n,
+      },
+    });
+    const resolveAlert = vi.fn();
+    const deps = buildDeps(stores, [sepoliaWallet, baseWallet], sepoliaTreasury, {
+      signer,
+      balanceReader,
+      externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+    });
+    const isolated = {
+      ...deps,
+      treasuries: {
+        ...deps.treasuries,
+        listEnabled: () => Promise.resolve([sepoliaTreasury, baseTreasury]),
+      },
+      alerts: {
+        ...deps.alerts,
+        findOpenByEntity: (entityType: string, entityId: string) =>
+          Promise.resolve(
+            entityId === baseTreasury.id
+              ? {
+                  id: 'alert-base',
+                  alertType: 'reconciliation_failure',
+                  severity: 'critical' as const,
+                  entityType,
+                  entityId,
+                  firstTriggeredAt: now,
+                  lastEvaluatedAt: now,
+                  lastSentAt: now,
+                  pendingEmail: undefined,
+                  metadata: {},
+                }
+              : undefined,
+          ),
+        resolve: resolveAlert,
+      },
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader,
+        signer,
+        outgoingScanner: createFakeOutgoingScanner(),
+        externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+        extraChains: [
+          {
+            chainId: BASE_CHAIN_ID,
+            balanceReader: createFakeBalanceReader({
+              chainId: BASE_CHAIN_ID,
+              unavailable: {
+                [BASE_TREASURY]: 'RPC_UNAVAILABLE',
+                [WALLET_B]: 'RPC_UNAVAILABLE',
+              },
+            }),
+            outgoingScanner: createFakeOutgoingScanner({
+              latestBlockUnavailable: { errorCode: 'RPC_UNAVAILABLE', reason: 'base tip down' },
+            }),
+            signer: createFakeSigner({ chainId: BASE_CHAIN_ID, address: BASE_TREASURY }),
+            externalSigner: createFakeSigner({ chainId: BASE_CHAIN_ID, address: BASE_TREASURY }),
+          },
+        ],
+      }),
+    };
+
+    const result = await reconcileWallets(isolated, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-isolate',
+      runId: 'run-isolate',
+    });
+
+    expect(signer.sendCalls).toBe(1);
+    expect(result.counters.funded).toBe(1);
+    expect(result.counters.assessed).toBe(1);
+    expect(result.run.errorCode).toBeUndefined();
+    const outcomes = result.run.findings.filter((finding) => finding.kind === 'chain_outcome');
+    expect(outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ chainId: 11_155_111, status: 'processed' }),
+        expect.objectContaining({ chainId: BASE_CHAIN_ID, status: 'unavailable' }),
+      ]),
+    );
+    expect(classifyReconciliationRun(result.run)).toBe('failure');
+    expect(
+      classifyReconcilerExit(
+        result.run.errorCode,
+        outcomes.flatMap((finding) =>
+          finding.kind === 'chain_outcome'
+            ? [
+                {
+                  chainId: finding.chainId,
+                  status: finding.status,
+                  errorCode: finding.errorCode,
+                  reason: finding.reason,
+                },
+              ]
+            : [],
+        ),
+      ),
+    ).toBe('malfunction');
+    expect(reconcilerExitCode('malfunction')).toBe(1);
+    expect(resolveAlert).not.toHaveBeenCalled();
+  });
+
+  it('keeps a single-chain RPC throw as a run-level error', async () => {
+    replenishPrelude.replenishOperationalPrelude.mockReset();
+    replenishPrelude.replenishOperationalPrelude.mockRejectedValue(
+      new ChainBankError('RPC_UNAVAILABLE', 'rpc down', { publicMessage: 'The chain is unavailable.' }),
+    );
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const deps = buildDeps(stores, [buildWallet('w-only', WALLET_A)], buildTreasury(), {
+      signer,
+      balanceReader: createFakeBalanceReader({
+        balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A]: 0n },
+      }),
+      externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+    });
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-single-down',
+      runId: 'run-single-down',
+    });
+
+    expect(signer.sendCalls).toBe(0);
+    expect(result.run.errorCode).toBe('RPC_UNAVAILABLE');
+    expect(classifyReconciliationRun(result.run)).toBe('failure');
+    expect(classifyReconcilerExit(result.run.errorCode)).toBe('malfunction');
+  });
+
+  it('keeps a run-level error when every configured chain is unavailable', async () => {
+    replenishPrelude.replenishOperationalPrelude.mockReset();
+    replenishPrelude.replenishOperationalPrelude.mockRejectedValue(
+      new ChainBankError('RPC_UNAVAILABLE', 'rpc down', { publicMessage: 'The chain is unavailable.' }),
+    );
+    const sepoliaWallet = buildWallet('w-sepolia', WALLET_A);
+    const baseWallet = buildWallet('w-base', WALLET_B, { chain: baseChain() });
+    const sepoliaTreasury = buildTreasury({ id: 'treasury-sepolia' });
+    const baseTreasury = buildTreasury({
+      id: 'treasury-base',
+      address: BASE_TREASURY.toLowerCase(),
+      addressDisplay: BASE_TREASURY,
+      chain: baseChain(),
+    });
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const deps = buildDeps(stores, [sepoliaWallet, baseWallet], sepoliaTreasury, {
+      signer,
+      balanceReader: createFakeBalanceReader({
+        balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A]: 0n },
+      }),
+      externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+    });
+    const bothDown = {
+      ...deps,
+      treasuries: {
+        ...deps.treasuries,
+        listEnabled: () => Promise.resolve([sepoliaTreasury, baseTreasury]),
+      },
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader: createFakeBalanceReader({
+          balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A]: 0n },
+        }),
+        signer,
+        outgoingScanner: createFakeOutgoingScanner(),
+        externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+        extraChains: [
+          {
+            chainId: BASE_CHAIN_ID,
+            balanceReader: createFakeBalanceReader({ chainId: BASE_CHAIN_ID }),
+            outgoingScanner: createFakeOutgoingScanner(),
+            externalSigner: createFakeSigner({ chainId: BASE_CHAIN_ID, address: BASE_TREASURY }),
+          },
+        ],
+      }),
+    };
+
+    const result = await reconcileWallets(bothDown, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-all-down',
+      runId: 'run-all-down',
+    });
+
+    expect(replenishPrelude.replenishOperationalPrelude).toHaveBeenCalledTimes(2);
+    expect(signer.sendCalls).toBe(0);
+    expect(result.run.errorCode).toBe('RPC_UNAVAILABLE');
+    expect(classifyReconciliationRun(result.run)).toBe('failure');
+    expect(classifyReconcilerExit(result.run.errorCode)).toBe('malfunction');
+    expect(reconcilerExitCode('malfunction')).toBe(1);
+  });
+});

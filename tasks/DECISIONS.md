@@ -910,6 +910,15 @@ Local design choices (T4.3, 2026-08-01):
   either: it degrades crash-orphan detection without meaning the sweep failed
   to fund. (TX.9 addresses scan reliability separately.) Unfinished rows
   (`finished_at` null) are neutral.
+- **A chain that was not processed is not partial progress** (amended T6.4 /
+  C29): when the persisted run records `chain_outcome` findings for more than
+  one chain and at least one status is `unavailable` while another chain was
+  processed, the run classifies as `failure` even if `wallets_funded > 0` and
+  `error_code` is unset. Funding wallets on a healthy chain is not evidence
+  that an unprocessable chain recovered, and a success would resolve the open
+  alert. A single configured chain, and any historical row with no
+  `chain_outcome` findings, keeps the rules above — the live one-chain
+  deployment does not change.
 - **Consecutive count:** derived from `ReconciliationRunRepository.listRecent`
   (newest-first). Neutrals are skipped (transparent in the streak); a success ends
   it. No new counter column and no migration.
@@ -1574,6 +1583,56 @@ loads, before any process accepts work.
   form still loads exactly one chain. `chain-adapter-registry.ts` is unchanged
   (C26). No migration.
 
+### C29 — Per-chain cron isolation (owner: T6.4)
+
+`treasury-monitor` and `wallet-reconciler` finish every healthy chain when
+another chain's RPC does not answer. Isolation is of work, not of reporting.
+A chain that was not processed is recorded, and the run is not a success.
+
+No migration. Outcomes live in the existing heartbeat `detail` and, for the
+reconciler, in `reconciliation_runs.findings_json` as `chain_outcome` findings
+(`chainId` is the EVM chain id). Each outcome is `processed`,
+`processed-with-failures`, or `unavailable`.
+
+- **Work.** One chain's `RPC_UNAVAILABLE` or `CHAIN_ID_MISMATCH` does not
+  skip another chain's balance read, observation, alert evaluation, outgoing
+  scan, or wallet funding. Database, signer, and configuration errors still
+  fail the whole run. Within a chain that answered, per-wallet and
+  per-treasury behaviour is unchanged (C14, C23, C24, C25).
+- **No reading is not health.** The monitor does not call
+  `evaluateTreasuryAlerts` for an unavailable read, so an open balance alert
+  on that treasury is not resolved. The reconciler does not classify a
+  partial outage as success, so C15 does not resolve `reconciliation_failure`
+  on the dark chain either.
+- **C14 stays fail-closed.** An unreachable chain records
+  `outgoing_scan_incomplete` when its scan did not reach the chain. It never
+  becomes a clean empty report. This does not claim the Base Public
+  treasury's delegate-executed transfers are visible (D22).
+- **C15 policy vs failure is unchanged** for `FUNDING_DISABLED`. A kill
+  switch still exits 0 and does not page. The multi-chain amendment is the
+  bullet added under C15: a partial outage is `failure`, not `success`.
+- **Signal that replaces deleting the monitor throw.** The monitor still
+  throws `One or more treasury balances could not be read` after every chain
+  has been attempted, whenever any chain was not fully processed. That throw
+  is what sets exit 1. The heartbeat `chainOutcomes` say which chain. An
+  unavailable chain also logs `treasury_monitor.chain_unavailable`. Deleting
+  the throw would be CB-04: Render would report success while a chain went
+  unmonitored. Storing the outcome only in JSON without the throw would be
+  TX.15: a finding with no page and no operator-visible failure.
+- **Reconciler exit.** `classifyReconcilerExit` is unchanged for an error
+  code and for `FUNDING_DISABLED`. A partial outage (no error code, one chain
+  processed, another `unavailable`) exits 1. The choice is
+  `exitKindForPartialChainOutage`, which returns `malfunction`. A single
+  configured chain with no error code still exits 0, including when that
+  chain's outcome is `unavailable` because per-wallet failures never set
+  `error_code`. All chains throwing `RPC_UNAVAILABLE` still set the run-level
+  error code and exit 1, as they do today. An operator who wants a flaky
+  testnet RPC to stay quiet changes `exitKindForPartialChainOutage` to return
+  `success`. C15 will still refuse to classify the partial run as success, so
+  the open alert is not cleared. That reversal is not the default: exit 0
+  while a chain is dark is the CB-04 failure, and an alert email alone is the
+  path TX.15 showed can do nothing.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1670,3 +1729,4 @@ loads, before any process accepts work.
 - 2026-09-22 — **D20 / D21 (Base Sepolia prerequisites), and Phase 6 through T6.2.** T6.1 published **C26** (chain-keyed adapter registry, PR #115) and T6.2 published **C27** (multi-chain configuration, PR #116); both merged after independent planner verification — for C26, the same EOA registered on two chains resolves to each chain's own signer, and sabotaging the lookup back to address-only reproduces the wrong-chain send; for C27, the resolved config under the deployed Render env is byte-identical between `main` and the branch across six role/mode combinations. **D20:** Base Sepolia needs a dedicated QuickNode endpoint — the public `https://sepolia.base.org` returned HTTP 429 on 9 of 48 full-block calls at the scanner's own concurrency, and the C14 scan needs ~10,800 blocks per 6-hourly window there. **D21:** Base reuses the Sepolia EOA; one key, one signer per chain. Next free contract **C28** (T6.3), next free decision **D22**.
 - 2026-09-22 — **D22: Base Public treasury is a 7702 smart account and stays that way.** Found while verifying the funded Base treasuries: `eth_getCode` on `0xCD1f…9270` (Base Sepolia) returns `0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b` — a 23-byte EIP-7702 delegation indicator pointing at MetaMask's Delegator. Balances at the time: Base Public 1.3999 ETH / nonce 14, Base Private 3.5446 ETH / nonce 69 (plain EOA), Sepolia Public 1.0386 / nonce 34 (plain EOA), Sepolia Private 1.0095 / nonce 8. The operator declines to revoke pending an audit of delegations and session keys, and accepts that C14 crash-orphan detection does not cover that one account. Record the limitation wherever C14 coverage is described; do not quietly widen the claim when Base reconciliation goes live.
 - 2026-09-22 — **T6.3 published C28:** Base Sepolia (`base-sepolia`, chain id 84532, explorer `https://sepolia.basescan.org`, `blockTimeMs` 2_000, viem `baseSepolia`) is the second supported chain. Boot proves each configured RPC's chain id before the process accepts work; a reported mismatch throws `INVALID_CONFIGURATION` and is not treated as transient, and an unreachable RPC is a distinct non-throwing outcome. Treasury addresses are shared across chains (D21), which stays safe because C26 keys signers by `(chain id, address)`. Base RPC must be a dedicated endpoint (D20): the public endpoint returned HTTP 429 on 9 of 48 full-block calls. No migration. Next free contract **C29**.
+- 2026-09-22 — **T6.4 published C29:** a chain whose RPC does not answer no longer stops the other chains in `treasury-monitor` or `wallet-reconciler`, and that chain is recorded as `unavailable` on the heartbeat and (reconciler) in `findings_json`. A partial outage is not a C15 success, so it cannot clear an open alert. The monitor still throws after every chain is attempted — deleting that throw would repeat CB-04 — and a partial reconciler outage exits 1 via `exitKindForPartialChainOutage`, which an operator may reverse. No migration. Next free contract **C31** (C30 is T6.5).

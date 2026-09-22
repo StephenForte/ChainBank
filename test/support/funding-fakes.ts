@@ -650,6 +650,8 @@ export function createFakeOutgoingScanner(options?: {
   readonly findByNonce?: (nonce: number) => FindByNonceResult;
   readonly listResult?: OutgoingScanResult;
   readonly nonceResult?: ConfirmedNonceResult;
+  /** When set, every tip read returns unavailable. Default is a successful tip. */
+  readonly latestBlockUnavailable?: { readonly errorCode: string; readonly reason: string };
 }): TreasuryOutgoingScanner & {
   setConfirmedNonce(nonce: number): void;
   setLatestBlockNumber(blockNumber: bigint): void;
@@ -721,6 +723,13 @@ export function createFakeOutgoingScanner(options?: {
     },
     getLatestBlockNumber() {
       latestBlockCalls.push({ at: latestBlockCalls.length });
+      if (options?.latestBlockUnavailable !== undefined) {
+        return Promise.resolve({
+          kind: 'unavailable' as const,
+          errorCode: options.latestBlockUnavailable.errorCode,
+          reason: options.latestBlockUnavailable.reason,
+        });
+      }
       return Promise.resolve({ kind: 'ok' as const, blockNumber: latestBlockNumber });
     },
     getTransactionCountAtBlock(input) {

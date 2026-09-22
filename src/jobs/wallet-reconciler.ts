@@ -1,6 +1,13 @@
 import { pathToFileURL } from 'node:url';
 import { isNull } from 'drizzle-orm';
 import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
+import {
+  chainOutcomesForDetail,
+  chainOutcomesFromFindings,
+  exitKindForPartialChainOutage,
+  isPartialChainOutage,
+  type ChainRunOutcome,
+} from '../app/alerts/chain-run-outcome.js';
 import { proveConfiguredChainIds } from '../app/health/prove-configured-chain-ids.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import {
@@ -29,19 +36,27 @@ export const HEARTBEAT_SERVICE_ROLE = 'wallet-reconciler';
 const CRON_CREDENTIAL_ID = 'wallet-reconciler';
 
 /**
- * Exit classification for a finished reconciliation run (T4.2).
+ * Exit classification for a finished reconciliation run (T4.2, amended C29).
  *
  * - `success` / `policy-disabled` → process exit 0 (Render must not page)
- * - `malfunction` → process exit 1 (DB/RPC/signer/unhandled run-level failure)
+ * - `malfunction` → process exit 1 (DB/RPC/signer/unhandled run-level failure,
+ *   or a partial chain outage)
  *
  * `FUNDING_DISABLED` (including kill switch) is policy, not malfunction: a kill
  * switch left on for a week must not produce twenty-eight failed-run pages.
+ *
+ * A partial chain outage — one chain processed, another unavailable, and no
+ * run-level error code — uses {@link exitKindForPartialChainOutage}. A single
+ * configured chain with no error code stays success.
  */
 export type ReconcilerExitKind = 'success' | 'policy-disabled' | 'malfunction';
 
-export function classifyReconcilerExit(errorCode: string | undefined): ReconcilerExitKind {
+export function classifyReconcilerExit(
+  errorCode: string | undefined,
+  chainOutcomes: readonly ChainRunOutcome[] = [],
+): ReconcilerExitKind {
   if (errorCode === undefined) {
-    return 'success';
+    return isPartialChainOutage(chainOutcomes) ? exitKindForPartialChainOutage() : 'success';
   }
   if (errorCode === 'FUNDING_DISABLED') {
     return 'policy-disabled';
@@ -191,7 +206,8 @@ export async function runWalletReconciler(
     correlationId,
   });
 
-  const exitKind = classifyReconcilerExit(reconcileResult.run.errorCode);
+  const chainOutcomes = chainOutcomesFromFindings(reconcileResult.run.findings);
+  const exitKind = classifyReconcilerExit(reconcileResult.run.errorCode, chainOutcomes);
   const exitCode = reconcilerExitCode(exitKind);
 
   await recordHeartbeat(
@@ -210,6 +226,7 @@ export async function runWalletReconciler(
         // Stringify: heartbeat detail is JSONB; raw bigint cannot be serialized.
         weiTransferred: reconcileResult.counters.weiTransferred.toString(),
         outgoingScanStatus: reconcileResult.outgoingScanStatus,
+        chainOutcomes: chainOutcomesForDetail(chainOutcomes),
       },
     },
   );
@@ -241,6 +258,7 @@ export function buildReconcilerCompletionLogFields(
   readonly walletsFailed: number;
   readonly weiTransferred: string;
   readonly outgoingScanStatus: ReconcileWalletsResult['outgoingScanStatus'];
+  readonly chainOutcomes: ReturnType<typeof chainOutcomesForDetail>;
 } {
   return {
     correlationId,
@@ -254,6 +272,7 @@ export function buildReconcilerCompletionLogFields(
     walletsFailed: result.counters.failed,
     weiTransferred: result.counters.weiTransferred.toString(),
     outgoingScanStatus: result.outgoingScanStatus,
+    chainOutcomes: chainOutcomesForDetail(chainOutcomesFromFindings(result.run.findings)),
   };
 }
 
