@@ -216,7 +216,11 @@ export function ManagedWalletsPanel({
           <p className="muted">No managed wallets returned ({String(walletsTotal)} total).</p>
         ) : null}
         {walletsState === 'ready' && wallets.length > 0 && listed.length === 0 ? (
-          <p className="muted">No managed wallets on this chain.</p>
+          <p className="muted">
+            {walletsTotal > wallets.length
+              ? 'No managed wallets for this chain on the loaded page.'
+              : 'No managed wallets on this chain.'}
+          </p>
         ) : null}
         {walletsState === 'ready' && listed.length > 0 ? (
           <>

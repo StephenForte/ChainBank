@@ -79,7 +79,11 @@ function ReadinessBody(props: {
         </ul>
         <h3>Heartbeats</h3>
         {heartbeats.length === 0 ? (
-          <p className="muted">No heartbeats recorded yet.</p>
+          <p className="muted">
+            {readiness.heartbeats.length > 0
+              ? 'No heartbeats for this chain.'
+              : 'No heartbeats recorded yet.'}
+          </p>
         ) : (
           <ul className="plain">
             {heartbeats.map((heartbeat) => (

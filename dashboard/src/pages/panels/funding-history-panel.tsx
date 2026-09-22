@@ -96,7 +96,11 @@ export function FundingHistoryPanel({
           <p className="muted">No funding transactions returned ({String(fundingHistoryTotal)} total).</p>
         ) : null}
         {fundingHistoryState === 'ready' && fundingHistory.length > 0 && visibleHistory.length === 0 ? (
-          <p className="muted">No funding transactions on this chain.</p>
+          <p className="muted">
+            {fundingHistoryTotal > fundingHistory.length
+              ? 'No funding transactions for this chain on the loaded page.'
+              : 'No funding transactions on this chain.'}
+          </p>
         ) : null}
         {fundingHistoryState === 'ready' && visibleHistory.length > 0 ? (
           <>

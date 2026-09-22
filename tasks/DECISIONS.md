@@ -2067,7 +2067,10 @@ What the selection filters, and the field:
 
 - Treasuries, and Public → Private replenish rows: `chain.chainId`.
 - Managed wallets: `chain.chainId`.
-- Funding history: `chain.chainId`.
+- Funding history: `chain.chainId`. Wallets and funding history filter the
+  loaded page. There is no chain query on those routes. When `pagination.total`
+  is larger than the loaded page and the page has no row for the selection,
+  the empty copy says the loaded page has none.
 - Reconciliation chain outcomes and other findings: the finding's chain.
   `finding.chainId` when C29 stored one, otherwise the treasury row for
   `finding.treasuryId` (`chainIdForFinding`). The display name is
@@ -2097,7 +2100,8 @@ chains:
 - Wallets needing attention: visible wallets (`GET /v1/wallets`) whose
   `reconciliationEnabled` is false, or whose observed balance wei is strictly
   below `policy.minimumBalanceWei`. An unread or unavailable balance is not
-  below minimum. Links to `#/wallets`.
+  below minimum. The count uses the unfiltered first page, not the Wallets
+  page project, environment, or enabled filters. Links to `#/wallets`.
 - Open alerts: unacknowledged `treasury_finding` rows (`GET /v1/alerts`,
   state open), every chain. Links to `#/alerts`.
 - Last reconciler run: the newest `GET /v1/reconciliation-runs` row, its

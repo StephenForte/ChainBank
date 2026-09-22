@@ -102,9 +102,8 @@ export function TreasuriesPanel({
 }: TreasuriesPanelProps) {
   const canCheckTreasury = useHasPermission('treasury:check');
   const visibleTreasuries = treasuries.filter((treasury) => matchesChainFilter(treasury, visibleChainIds));
-  const replenishRows = treasuryFundingHistory
-    .filter(isTreasuryReplenish)
-    .filter((row) => matchesChainFilter(row, visibleChainIds));
+  const replenishAll = treasuryFundingHistory.filter(isTreasuryReplenish);
+  const replenishRows = replenishAll.filter((row) => matchesChainFilter(row, visibleChainIds));
   const compact = presentation === 'compact';
 
   return (
@@ -230,7 +229,11 @@ export function TreasuriesPanel({
             ) : null}
             {treasuryFundingHistoryState === 'empty' ||
             (treasuryFundingHistoryState === 'ready' && replenishRows.length === 0) ? (
-              <p className="muted">No Public → Private auto-funding transactions yet.</p>
+              <p className="muted">
+                {replenishAll.length > 0
+                  ? 'No Public → Private auto-funding on this chain.'
+                  : 'No Public → Private auto-funding transactions yet.'}
+              </p>
             ) : null}
             {treasuryFundingHistoryState === 'ready' && replenishRows.length > 0 ? (
               <ReplenishRows rows={replenishRows} />

@@ -151,6 +151,50 @@ describe('chain filter (C34)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Heartbeats and component detail/ }));
     expect(screen.getByText('wallet-reconciler')).toBeTruthy();
     expect(screen.queryByText('monitor Base Sepolia')).toBeNull();
+    expect(screen.queryByText('No heartbeats recorded yet.')).toBeNull();
+  });
+
+  it('does not describe a filtered-out heartbeat as never recorded', () => {
+    render(
+      <ServiceReadinessPanel
+        loadReadiness={() => Promise.resolve()}
+        readinessState="ready"
+        readinessError={undefined}
+        chains={segments()}
+        visibleChainIds={[SEPOLIA]}
+        readiness={{
+          status: 'degraded',
+          checkedAt: '2026-09-22T00:00:00.000Z',
+          components: [{ name: 'database', status: 'ok', detail: null }],
+          heartbeats: [{ serviceRole: 'monitor Base Sepolia', lastSeenAt: '2026-09-22T00:00:00.000Z' }],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Heartbeats and component detail/ }));
+    expect(screen.getByText('No heartbeats for this chain.')).toBeTruthy();
+    expect(screen.queryByText('No heartbeats recorded yet.')).toBeNull();
+  });
+
+  it('keeps the overview attention count when the wallets page filter changes', async () => {
+    const fetchMock = installFetch();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /Wallets needing attention/ }).textContent).toContain('1');
+    });
+
+    window.location.hash = '#/wallets';
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    fireEvent.change(await screen.findByLabelText('Enabled'), { target: { value: 'true' } });
+    await waitFor(() => {
+      const urls = fetchMock.mock.calls.map((call) => requestUrl(call[0] as RequestInfo | URL));
+      expect(urls.some((url) => url.includes('enabled=true'))).toBe(true);
+    });
+
+    window.location.hash = '#/overview';
+    fireEvent(window, new HashChangeEvent('hashchange'));
+    expect(screen.getByRole('link', { name: /Wallets needing attention/ }).textContent).toContain('1');
   });
 
   it('filters rows to the selected chain, badges the other chain, and does not refetch', async () => {
@@ -612,26 +656,42 @@ function liveResponse(url: string): Response {
     });
   }
   if (url.includes('/v1/wallets')) {
+    const attention = wallet({
+      id: 'wallet-sepolia-off',
+      chainId: SEPOLIA,
+      displayName: 'Ethereum Sepolia',
+      address: '0xcccccccccccccccccccccccccccccccccccccccc',
+      reconciliationEnabled: false,
+      minimumBalanceWei: '1',
+    });
+    const listed = [
+      wallet({
+        id: 'wallet-sepolia',
+        chainId: SEPOLIA,
+        displayName: 'Ethereum Sepolia',
+        address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        reconciliationEnabled: true,
+        minimumBalanceWei: '1',
+      }),
+      wallet({
+        id: 'wallet-base',
+        chainId: BASE,
+        displayName: 'Base Sepolia',
+        address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        reconciliationEnabled: true,
+        minimumBalanceWei: '1',
+      }),
+    ];
+    // A Wallets-page filter must not become the overview population.
+    if (url.includes('enabled=') || url.includes('projectId=') || url.includes('environmentId=')) {
+      return jsonResponse(200, {
+        data: [],
+        pagination: { limit: 50, offset: 0, total: 0 },
+      });
+    }
     return jsonResponse(200, {
-      data: [
-        wallet({
-          id: 'wallet-sepolia',
-          chainId: SEPOLIA,
-          displayName: 'Ethereum Sepolia',
-          address: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          reconciliationEnabled: true,
-          minimumBalanceWei: '1',
-        }),
-        wallet({
-          id: 'wallet-base',
-          chainId: BASE,
-          displayName: 'Base Sepolia',
-          address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          reconciliationEnabled: true,
-          minimumBalanceWei: '1',
-        }),
-      ],
-      pagination: { limit: 50, offset: 0, total: 2 },
+      data: [...listed, attention],
+      pagination: { limit: 50, offset: 0, total: 3 },
     });
   }
   if (url.includes('/v1/funding-transactions')) {
