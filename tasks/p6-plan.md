@@ -12,6 +12,52 @@ from it.
 
 Baseline at plan write: `origin/main` **`3a3fbcd`** (merge of PR #112, merged 2026-09-01).
 
+## Phase 6 is code-complete and Base Sepolia is LIVE (2026-09-22)
+
+All five tasks merged: T6.1/**C26**, T6.2/**C27**, T6.3/**C28**, T6.4/**C29**, T6.5/**C30**. `main` at
+`44fae7c`. Next free contract **C31**, decision **D23**, task **TX.28**; migrations through `0010`
+and Phase 6 consumed none.
+
+**Base Sepolia (84532) is registered and running.** `chainbank-web` went live with both chains at
+04:37 UTC, creating the Base chain row and its two treasury rows. Both crons were updated with the
+same `CHAINS` value later that day (D23).
+
+Live configuration, for whoever reads this next:
+
+|                       | Sepolia (11155111)                    | Base Sepolia (84532)                       |
+| --------------------- | ------------------------------------- | ------------------------------------------ |
+| Public / external     | `0x16caE6…8B2B`                       | `0x16caE6…8B2B` (same, unified 2026-09-22) |
+| Private / operational | `0x5128…652d`                         | `0x5128…652d` (same)                       |
+| Thresholds            | 0.75 / 0.3 / 1.5 / 0.1                | identical — mirrored, not derived          |
+| Operational policy    | min 0.75 / target 1.5 / maxTopUp 0.75 | identical                                  |
+| RPC                   | dedicated QuickNode (D20)             | dedicated QuickNode (D20)                  |
+
+Base's numbers **mirror Sepolia rather than being sized for Base**, because SettlementOS's Base
+wallets do not exist yet. Re-derive them from `Σ min(target, maxTopUp)` across that chain's wallets
+once they do.
+
+### What the cutover cost, and what is still open
+
+Two deploys failed before the third succeeded. **Neither was a code defect** — both were a stale
+`CHAINS` value naming the wrong Sepolia Public address, and migration `0010` correctly refused the
+resulting second enabled `external`. The genuine findings are recorded as D21 (amended), D23, and:
+
+- **TX.28 — `withDatabaseErrors` discards the Postgres constraint.** `client.ts:185` wraps the driver
+  error and logs only `Database operation "treasuries.upsert" failed`. The real message —
+  `constraint: treasuries_one_enabled_kind_per_chain`, `Key (chain_id, kind)=(19ec925a…, external)
+already exists` — is two levels down the cause chain and never reaches a log. This turned a
+  one-line config error into two hours and four wrong planner hypotheses. **Next dispatch.**
+- **~1.4 ETH is stranded** in `0xCD1f…9270` on Base Sepolia, outside ChainBank's view, from funding
+  the pre-unification Public address. `0x16caE6…8B2B` holds ~0.86 on Base — above the 0.75 warning
+  line but not by much. Operator action, no code.
+- **Phase 6 is not exited.** Code-complete is not exited: the §20-style evidence pass against the
+  PRD's five acceptance criteria has not been done. Four are demonstrable in the repo; "Base Sepolia
+  is the first additional implementation" became true today and now needs live evidence — a Base
+  treasury observation and a clean two-chain reconciler run.
+- **C14 does not cover Base Public** (D22, EIP-7702). Unchanged and deliberate.
+
+---
+
 ## Status — updated 2026-09-22
 
 `main` at **`a5554a2`**. Phase 6 is three tasks in; **zero open PRs**.
