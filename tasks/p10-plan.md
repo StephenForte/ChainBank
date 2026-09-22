@@ -122,6 +122,17 @@ Owns: `src/domain/auth/users.ts` (new), `src/app/auth/{login,logout,session,user
 
 ### T10.2 🟢 Dashboard shell: sidebar layout, pages, design tokens, collapsible detail — **C32** `[none]`
 
+**Status 2026-09-22: ✅ reviewed and approved in
+[#133](https://github.com/StephenForte/ChainBank/pull/133); operator merges.** Composition-only
+refactor confirmed by fingerprint (App.tsx keeps 24 state hooks / 6 effects / 88 API call sites) and by
+the three pre-existing dashboard tests passing with only an import path changed. The predicted
+`DECISIONS.md` tail conflict with T10.1 happened; the planner pushed merge commit `24be952` keeping
+C31 before C32. Gate on the merged tree: 668 unit / 52 dashboard / 138 integration. Planner's own
+visual check from a scratch dev server: sidebar + purple active item at 1280 px; top-nav collapse and
+zero horizontal scroll at 800 px; eight nav items in order. **Convention from this review, for every
+later brief:** screenshots go in the PR body, not the repository — this PR committed 16 PNGs (770 KiB)
+under `dashboard/screenshots/`, which the operator may keep or drop.
+
 Owns: everything under `dashboard/src/` **except** `dashboard/src/api.ts` (additive only, T10.3/T10.4/T10.6
 add calls) and `dashboard/src/panels/*` internals (moved, not rewritten). Owns `dashboard/src/styles.css`.
 **Strict no-behaviour-change refactor**: every existing dashboard test passes unmodified except for
