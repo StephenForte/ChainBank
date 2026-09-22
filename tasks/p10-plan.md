@@ -241,8 +241,11 @@ Owns: `src/infrastructure/email/recording-email-sender.ts` (new), `src/infrastru
 
 ### T10.6 🟢 Email page — **C36** `[T10.2, T10.5]`
 
-**Status 2026-09-22: 🔍 changes requested in
-[#146](https://github.com/StephenForte/ChainBank/pull/146), one wrong sentence, fix proven.** The
+**Status 2026-09-22: ✅ approved in
+[#146](https://github.com/StephenForte/ChainBank/pull/146) at `9af2894` after one round; operator merges.** Round
+one was changes-requested for one wrong sentence, fix proven in the planner's clone and adopted with an
+eighth test and a C36 correction; re-review gate 687 unit / 76 dashboard / 143 integration. Original
+finding: The
 worker dismissed Bugbot's finding that `pagination.total` is the filtered count, so a filter matching
 nothing said "No emails have been sent yet". The brief's "when `total` is 0" wording caused it (planner's
 ambiguity); the two-line fix keys the sentence on "no filter active" and passed the worker's seven
