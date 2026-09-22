@@ -148,10 +148,16 @@ pulled.
   blueprint test to load the multi-chain form, keep the CB-04 funding-gate assertions. Note the fix
   commit itself triggers a sync; with the singular keys gone from the file, Render preserves but does
   not re-create them. Dispatch before anyone touches `render.yaml` for another reason.
-  **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
-  startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
+  - **TX.34 landed outside this plan** — [#140](https://github.com/StephenForte/ChainBank/pull/140)
+    "Persist a proved-empty outgoing scan before the next treasury" (dispatched by the operator with
+    Cursor, not via a planner brief). It makes the Base first scan write its watermark per treasury and
+    stops a null stored nonce from forcing a full-lookback body scan every run. Planner did not review it;
+    the exit-evidence run must be read with it deployed. Next free task id is therefore **TX.35**.
+
+**Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
+startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
-  between the two. Fail-closed worked; the fleet rule in D23 covers it.
+between the two. Fail-closed worked; the fleet rule in D23 covers it.
 
 - **TX.34 — a first Base outgoing scan must finish inside one cron run and inside the heap.**
   The TX.29 note that "only the first scan is heavy" assumed a completed scan writes the
