@@ -182,9 +182,12 @@ for treasuries, wallets, funding history and reconciliation (filter plumbing onl
 
 ### T10.5 🔴 Email deliveries log and triggers API — **C35**, migration **0012** `[T10.1 merged first, for the migration number]`
 
-**Status 2026-09-22: 🔍 changes requested in
-[#137](https://github.com/StephenForte/ChainBank/pull/137), one blocking defect, fix proven in the
-planner's clone.** The decorator evaluated the delivery row outside its own guard, and the
+**Status 2026-09-22: ✅ approved in
+[#137](https://github.com/StephenForte/ChainBank/pull/137) at `381dfee` after one round; operator merges.**
+Round one was changes-requested for one blocking defect, fix proven in the planner's clone and
+adopted verbatim by the worker, plus a total Resend sender and a regression test; re-review gate
+677 unit / 52 dashboard / 140 integration, and the failing provider shape passes through the real
+sender for all four bodies. Original finding: The decorator evaluated the delivery row outside its own guard, and the
 pre-existing Resend sender returns `reason: undefined` on a 5xx whose body lacks `name`, so a handled
 `failed` result became a thrown `TypeError` on the alert path — the trap the brief named. Everything
 else verified: scratch-clone gate 676 unit / 52 dashboard / 140 integration; 0012 proven forward on
