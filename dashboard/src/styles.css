@@ -556,6 +556,12 @@ button.secondary:active:not(:disabled) {
   letter-spacing: 0.01em;
 }
 
+.recon-chain-unavailable {
+  font-weight: 700;
+  color: var(--warn-strong);
+  letter-spacing: 0.01em;
+}
+
 .recon-critical-always {
   margin-bottom: var(--s-sm);
 }

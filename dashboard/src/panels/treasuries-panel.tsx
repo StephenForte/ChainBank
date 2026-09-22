@@ -2,6 +2,7 @@ import type { FundingTransactionResource, TreasuryResource } from '../api';
 import {
   formatTimestamp,
   isTreasuryReplenish,
+  listSpansMultipleChains,
   shortAddress,
   statusClass,
   treasuryCardToneClass,
@@ -30,6 +31,7 @@ function ReplenishRows({ rows }: { readonly rows: readonly FundingTransactionRes
   if (rows.length === 0) {
     return <p className="muted">No Public → Private auto-funding yet.</p>;
   }
+  const chainsMixed = listSpansMultipleChains(rows);
   return (
     <div className="table-wrap">
       <table className="data-table">
@@ -53,6 +55,7 @@ function ReplenishRows({ rows }: { readonly rows: readonly FundingTransactionRes
               </td>
               <td className="mono">
                 {row.amountEther} {row.chain.nativeSymbol}
+                {chainsMixed ? ` · ${row.chain.displayName}` : ''}
               </td>
               <td>
                 <span className={statusClass(row.status)}>{row.status}</span>

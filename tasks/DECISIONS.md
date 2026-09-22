@@ -1633,6 +1633,45 @@ reconciler, in `reconciliation_runs.findings_json` as `chain_outcome` findings
   while a chain is dark is the CB-04 failure, and an alert email alone is the
   path TX.15 showed can do nothing.
 
+### C30 — Chain surfacing (owner: T6.5)
+
+A chain-scoped fact is read from the row's own chain. `config.chain`,
+`config.treasury`, `config.defaultChainId`, and "the first chain" are not
+substitutes. A chain that C29 recorded as `unavailable` is visible on the
+reconciliation panel without opening raw JSON and without a database query.
+
+No migration.
+
+- **Funding operation.** `GET /v1/funding-operations/:id` adds
+  `transaction.treasuryAddress` and `transaction.chain` (`slug`, `chainId`,
+  `displayName`, `nativeSymbol`) from the treasury row that signed the
+  transaction. Both are null only when that row is gone. Receipt resume
+  passes that same address as `senderAddress`. A submitted Base operation
+  no longer probes the default chain's treasury nonce.
+- **Test email.** One message, not one per chain.
+  `formatTestEmailChains` in `src/api/routes/admin.ts` is the only copy.
+  One configured chain keeps today's lines: display name, and that chain's
+  external treasury address. Several chains list every display name, and
+  on the treasury line each chain's name with its external address, plus
+  the Private address when that chain is two-tier. Reversing the copy is
+  that function alone.
+- **Dark chain.** A `chain_outcome` with `status: unavailable` renders
+  outside the collapsed warning list. The always-visible summary includes
+  `{displayName} was unavailable`, and a warning article with that sentence
+  (and the finding reason, when present) sits above the critical block.
+  The name is the display name of a loaded treasury with that `chainId`,
+  otherwise `chain {id}`, or `Unknown chain` when `chainId` is missing.
+  A finding with an unknown `kind`, or a `chain_outcome` missing `chainId`,
+  still renders (C22). Healthy `processed` outcomes are not shown, so a
+  single-chain run does not gain a chain-health section. Unacknowledged
+  criticals stay outside the collapse (C20). The collapse default is
+  unchanged (TX.18 / TX.20).
+- **Mixed lists.** Wallets, funding history, Public → Private replenish
+  rows, and funding-policy cards show `displayName` when the list contains
+  more than one chain. A single-chain list is unchanged.
+- **Not claimed.** This does not make delegate-executed transfers from the
+  Base Public 7702 account visible to C14 (D22).
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1730,3 +1769,4 @@ reconciler, in `reconciliation_runs.findings_json` as `chain_outcome` findings
 - 2026-09-22 — **D22: Base Public treasury is a 7702 smart account and stays that way.** Found while verifying the funded Base treasuries: `eth_getCode` on `0xCD1f…9270` (Base Sepolia) returns `0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b` — a 23-byte EIP-7702 delegation indicator pointing at MetaMask's Delegator. Balances at the time: Base Public 1.3999 ETH / nonce 14, Base Private 3.5446 ETH / nonce 69 (plain EOA), Sepolia Public 1.0386 / nonce 34 (plain EOA), Sepolia Private 1.0095 / nonce 8. The operator declines to revoke pending an audit of delegations and session keys, and accepts that C14 crash-orphan detection does not cover that one account. Record the limitation wherever C14 coverage is described; do not quietly widen the claim when Base reconciliation goes live.
 - 2026-09-22 — **T6.3 published C28:** Base Sepolia (`base-sepolia`, chain id 84532, explorer `https://sepolia.basescan.org`, `blockTimeMs` 2_000, viem `baseSepolia`) is the second supported chain. Boot proves each configured RPC's chain id before the process accepts work; a reported mismatch throws `INVALID_CONFIGURATION` and is not treated as transient, and an unreachable RPC is a distinct non-throwing outcome. Treasury addresses are shared across chains (D21), which stays safe because C26 keys signers by `(chain id, address)`. Base RPC must be a dedicated endpoint (D20): the public endpoint returned HTTP 429 on 9 of 48 full-block calls. No migration. Next free contract **C29**.
 - 2026-09-22 — **T6.4 published C29:** a chain whose RPC does not answer no longer stops the other chains in `treasury-monitor` or `wallet-reconciler`, and that chain is recorded as `unavailable` on the heartbeat and (reconciler) in `findings_json`. A partial outage is not a C15 success, so it cannot clear an open alert. The monitor still throws after every chain is attempted — deleting that throw would repeat CB-04 — and a partial reconciler outage exits 1 via `exitKindForPartialChainOutage`, which an operator may reverse. No migration. Next free contract **C31** (C30 is T6.5).
+- 2026-09-22 — **T6.5 published C30:** `GET /v1/funding-operations/:id` reports the signing treasury's chain and address, and receipt resume uses that address. The admin test email is one message from `formatTestEmailChains` naming every configured chain and its treasury. A reconciliation `chain_outcome` of `unavailable` shows "{display name} was unavailable" on the always-visible summary and in a warning article outside the collapsed detail; healthy `processed` outcomes stay hidden. Mixed wallet, history, replenish, and policy lists show the chain name. No migration. Next free contract **C31**.

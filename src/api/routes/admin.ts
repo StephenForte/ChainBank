@@ -2,6 +2,7 @@ import type { AppInstance } from '../types.js';
 import { listCredentials } from '../../app/credentials/list-credentials.js';
 import { mutateCredential } from '../../app/credentials/mutate-credential.js';
 import { sendTestEmail } from '../../app/admin/send-test-email.js';
+import type { ConfiguredChain } from '../../config/index.js';
 import type { Container } from '../../container.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { requireActor } from '../plugins/authentication.js';
@@ -13,6 +14,44 @@ import {
   parsePageOffset,
   type PaginationQuery,
 } from '../pagination.js';
+
+/**
+ * Copy for the operator test email. One message names every configured chain
+ * and that chain's treasury. A per-chain message would look like several
+ * incidents and would multiply the provider call this probe exists to make.
+ *
+ * One chain keeps today's two lines: the chain's display name, and its
+ * external treasury address. Several chains put each chain's name on the
+ * chain line and `Name address` (plus ` / Private address` when that chain
+ * is two-tier) on the treasury line. Reversing this copy is this function.
+ */
+export function formatTestEmailChains(chains: readonly ConfiguredChain[]): {
+  readonly chainDisplayName: string;
+  readonly treasuryAddressDisplay: string;
+} {
+  const only = chains.length === 1 ? chains[0] : undefined;
+  if (only !== undefined) {
+    return {
+      chainDisplayName: only.displayName,
+      treasuryAddressDisplay: only.treasury.address,
+    };
+  }
+  if (chains.length === 0) {
+    throw new ChainBankError('INVALID_CONFIGURATION', 'No chain is configured', {
+      publicMessage: 'The service is misconfigured.',
+    });
+  }
+  return {
+    chainDisplayName: chains.map((chain) => chain.displayName).join(', '),
+    treasuryAddressDisplay: chains
+      .map((chain) => {
+        const external = `${chain.displayName} ${chain.treasury.address}`;
+        const operational = chain.operationalTreasury;
+        return operational === undefined ? external : `${external} / Private ${operational.address}`;
+      })
+      .join('; '),
+  };
+}
 
 const credentialResponseSchema = {
   type: 'object',
@@ -171,8 +210,7 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
           sourceIp: request.ip,
           recipients: config.email.operatorRecipients,
           environment: config.app.environment,
-          chainDisplayName: config.chains.map((chain) => chain.displayName).join(', '),
-          treasuryAddressDisplay: config.treasury.address,
+          ...formatTestEmailChains(config.chains),
           dashboardUrl: config.app.publicBaseUrl,
         },
       );

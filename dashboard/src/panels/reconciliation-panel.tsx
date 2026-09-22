@@ -274,7 +274,12 @@ export function ReconciliationPanel({
             ? (() => {
                 const findings = dash.toFindingViews(reconciliationRuns);
                 const criticalFindings = findings.filter((item) => item.severity === 'critical');
-                const warningFindings = findings.filter((item) => item.severity === 'warning');
+                const unavailableChainFindings = findings.filter((item) =>
+                  dash.isUnavailableChainOutcome(item),
+                );
+                const warningFindings = findings.filter(
+                  (item) => item.severity === 'warning' && !dash.isQuietChainOutcome(item),
+                );
                 const otherFindings = findings.filter(
                   (item) => item.severity !== 'critical' && item.severity !== 'warning',
                 );
@@ -303,7 +308,10 @@ export function ReconciliationPanel({
                 const newestRun = reconciliationRuns[0];
                 const hasUnacknowledgedCritical = unacknowledgedCriticalFindings.length > 0;
                 const hasCritical = criticalFindings.length > 0;
-                const summaryNeedsAttention = hasUnacknowledgedCritical || otherFindings.length > 0;
+                const summaryNeedsAttention =
+                  hasUnacknowledgedCritical ||
+                  otherFindings.length > 0 ||
+                  unavailableChainFindings.length > 0;
                 const criticalLabel = dash.criticalFindingsSummaryLabel(
                   unacknowledgedCriticalFindings.length,
                   acknowledgedCriticalFindings.length,
@@ -535,6 +543,16 @@ export function ReconciliationPanel({
                         ) : (
                           <span>{criticalLabel}</span>
                         )}
+                        {unavailableChainFindings.length > 0 ? (
+                          <>
+                            <span aria-hidden="true"> · </span>
+                            <span className="recon-chain-unavailable">
+                              {unavailableChainFindings
+                                .map((finding) => dash.unavailableChainSentence(finding, treasuries))
+                                .join('; ')}
+                            </span>
+                          </>
+                        ) : null}
                         {otherFindings.length > 0 ? (
                           <>
                             <span aria-hidden="true"> · </span>
@@ -553,6 +571,33 @@ export function ReconciliationPanel({
                         ) : null}
                       </p>
                     </div>
+
+                    {/*
+            A dark chain is warning severity so it does not open a C18 alert
+            (C29), which put it in the collapsed warning list with no chain
+            name. That is the TX.15 shape: the fact sits on the run and the
+            operator does not see it. Name it here, outside the collapse.
+            Healthy `processed` outcomes stay hidden — they are not a new
+            chain-health section.
+          */}
+                    {unavailableChainFindings.length > 0 ? (
+                      <div className="finding-list recon-critical-always">
+                        {unavailableChainFindings.map((finding, index) => (
+                          <article
+                            key={`chain-unavailable-${finding.runId}-${String(finding.chainId ?? index)}`}
+                            className="finding finding-warning"
+                            data-testid="chain-unavailable"
+                          >
+                            <div className="finding-head">
+                              <span className="badge badge-warn">warning</span>
+                              <span>chain unavailable</span>
+                            </div>
+                            <p>{dash.unavailableChainSentence(finding, treasuries)}</p>
+                            {finding.reason !== undefined ? <p className="muted">{finding.reason}</p> : null}
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
 
                     {/*
             Unacknowledged critical findings stay outside the collapse.
@@ -675,6 +720,9 @@ export function ReconciliationPanel({
                                 <p className="muted">
                                   Run <code>{finding.runId}</code> ·{' '}
                                   {dash.formatTimestamp(finding.runStartedAt)}
+                                  {finding.kind === 'chain_outcome'
+                                    ? ` · ${dash.chainDisplayNameForFinding(finding, treasuries)} · ${finding.chainStatus ?? 'unknown status'}`
+                                    : ''}
                                   {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
                                 </p>
                               </article>

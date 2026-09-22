@@ -8,8 +8,12 @@ import type {
 import {
   ACK_FINDINGS_STORAGE_KEY,
   areFindingAlertsResolved,
+  asOptionalChainId,
   asOptionalNumber,
   asOptionalString,
+  chainDisplayNameForFinding,
+  isQuietChainOutcome,
+  isUnavailableChainOutcome,
   BALANCE_AUTO_LOAD_MAX,
   balancePolicyChip,
   criticalFindingsSummaryLabel,
@@ -27,6 +31,7 @@ import {
   fundingTransactionKindLabel,
   isCriticalFindingAcknowledged,
   isTreasuryReplenish,
+  listSpansMultipleChains,
   loadAcknowledgedFindingsExpanded,
   loadReconciliationDetailExpanded,
   loadStoredToken,
@@ -60,6 +65,8 @@ function makeFinding(
     nonce: 3,
     blockNumber: '11425869',
     reason: undefined,
+    chainId: undefined,
+    chainStatus: undefined,
     raw: {},
     ...overrides,
   };
@@ -391,7 +398,86 @@ describe('toFindingViews / field narrowing', () => {
       kind: 'unknown',
       valueWei: undefined,
       nonce: undefined,
+      chainId: undefined,
+      chainStatus: undefined,
     });
+  });
+
+  it('keeps chainId and status, and a finding without them does not throw (C22 / C30)', () => {
+    const views = toFindingViews([
+      makeRun([
+        {
+          kind: 'chain_outcome',
+          severity: 'warning',
+          chainId: 84532,
+          status: 'unavailable',
+          reason: 'RPC did not answer',
+        },
+        { kind: 'chain_outcome', severity: 'warning' },
+        { severity: { level: 'critical' }, kind: 12 },
+      ]),
+    ]);
+    expect(views).toHaveLength(3);
+    expect(views[0]).toMatchObject({
+      kind: 'chain_outcome',
+      severity: 'warning',
+      chainId: 84532,
+      chainStatus: 'unavailable',
+      reason: 'RPC did not answer',
+    });
+    expect(isUnavailableChainOutcome(views[0]!)).toBe(true);
+    expect(views[1]).toMatchObject({
+      kind: 'chain_outcome',
+      chainId: undefined,
+      chainStatus: undefined,
+    });
+    expect(isUnavailableChainOutcome(views[1]!)).toBe(false);
+    expect(views[2]).toMatchObject({ severity: 'unknown', kind: 'unknown', chainId: undefined });
+    expect(asOptionalChainId('84532')).toBeUndefined();
+    expect(asOptionalChainId(84532.5)).toBeUndefined();
+    expect(asOptionalChainId(84532)).toBe(84532);
+  });
+});
+
+describe('chain outcome labelling (C30)', () => {
+  const treasuries = [
+    { chain: { chainId: 11_155_111, displayName: 'Ethereum Sepolia' } },
+    { chain: { chainId: 84_532, displayName: 'Base Sepolia' } },
+  ];
+
+  it('names an unavailable chain from a loaded treasury and does not treat processed as a warning', () => {
+    const dark = makeFinding({
+      severity: 'warning',
+      kind: 'chain_outcome',
+      chainId: 84_532,
+      chainStatus: 'unavailable',
+    });
+    const healthy = makeFinding({
+      severity: 'warning',
+      kind: 'chain_outcome',
+      chainId: 11_155_111,
+      chainStatus: 'processed',
+    });
+    expect(chainDisplayNameForFinding(dark, treasuries)).toBe('Base Sepolia');
+    expect(isUnavailableChainOutcome(dark)).toBe(true);
+    expect(isQuietChainOutcome(dark)).toBe(true);
+    expect(isQuietChainOutcome(healthy)).toBe(true);
+    expect(isUnavailableChainOutcome(healthy)).toBe(false);
+    expect(
+      chainDisplayNameForFinding(makeFinding({ chainId: 1, chainStatus: 'unavailable' }), treasuries),
+    ).toBe('chain 1');
+    expect(chainDisplayNameForFinding(makeFinding({ chainStatus: 'unavailable' }), treasuries)).toBe(
+      'Unknown chain',
+    );
+  });
+
+  it('detects a mixed-chain list and leaves a single-chain list unlabelled', () => {
+    const sepolia = { chain: { chainId: 11_155_111 } };
+    const base = { chain: { chainId: 84_532 } };
+    expect(listSpansMultipleChains([sepolia, sepolia])).toBe(false);
+    expect(listSpansMultipleChains([sepolia])).toBe(false);
+    expect(listSpansMultipleChains([])).toBe(false);
+    expect(listSpansMultipleChains([sepolia, base])).toBe(true);
   });
 });
 
