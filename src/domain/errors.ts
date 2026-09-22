@@ -164,8 +164,16 @@ export function isChainBankError(error: unknown): error is ChainBankError {
 /**
  * Narrows an unknown thrown value to a loggable summary without ever assuming
  * it is an Error or that its message is safe to return to a client.
+ *
+ * A viem BaseError is duck-typed (string `shortMessage` on an Error) so this
+ * module does not import viem. Its `message` concatenates `metaMessages`, which
+ * for request errors include the endpoint URL and the JSON-RPC body. Those are
+ * omitted here; see {@link renderViemBaseError}.
  */
 export function describeUnknownError(error: unknown): string {
+  if (isViemBaseError(error)) {
+    return renderViemBaseError(error);
+  }
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`;
   }
@@ -200,6 +208,11 @@ const POSTGRES_DIAGNOSTIC_FIELDS = ['constraint', 'table', 'schema', 'detail', '
  * drizzle-orm 0.45 calls `super()` and never assigns `this.name`, so the
  * instance's own `name` stays `"Error"`. The class name is `constructor.name`.
  * Either spelling is treated as the wrapper; the message is never rendered.
+ *
+ * viem BaseError is duck-typed the same way (string `shortMessage`, no viem
+ * import). The rule applies at every cause depth: a ChainBankError whose cause
+ * is an RpcRequestError must not fall through to `name: message`, because that
+ * message carries the endpoint URL and the request body.
  */
 export function describeErrorChain(error: unknown): string {
   if (error === undefined || error === null) {
@@ -239,6 +252,10 @@ function renderDiagnosticNode(error: unknown): string {
 
   if (isDrizzleQueryError(error)) {
     return 'DrizzleQueryError';
+  }
+
+  if (isViemBaseError(error)) {
+    return renderViemBaseError(error);
   }
 
   if (error instanceof Error) {
@@ -282,6 +299,52 @@ function renderPostgresDriverError(error: PostgresDriverErrorShape): string {
     }
   }
   return parts.join(' ');
+}
+
+/**
+ * viem's BaseError always assigns a string `shortMessage`. RpcRequestError and
+ * HttpRequestError also set `url`, `body`, and `metaMessages`, and fold those
+ * into `message` (`URL: …` and `Request body: …`). `getUrl` strips only
+ * basic-auth credentials, so a path token stays in `message`. A failed
+ * `eth_sendRawTransaction` body is the signed raw transaction, which
+ * AGENTS.md §11 forbids logging. Render `name`, `shortMessage`, `details`, and
+ * `code` or `status` when those are strings or numbers. Never render
+ * `message`, `metaMessages`, `url`, or `body`.
+ */
+type ViemBaseErrorShape = Error & {
+  readonly shortMessage: string;
+};
+
+function isViemBaseError(error: unknown): error is ViemBaseErrorShape {
+  return error instanceof Error && typeof Reflect.get(error, 'shortMessage') === 'string';
+}
+
+function renderViemBaseError(error: ViemBaseErrorShape): string {
+  const parts = [`${error.name}: ${error.shortMessage}`];
+  const details: unknown = Reflect.get(error, 'details');
+  if (typeof details === 'string' && details.length > 0) {
+    parts.push(`details=${details}`);
+  }
+  const code: unknown = Reflect.get(error, 'code');
+  if (isLoggableScalar(code)) {
+    parts.push(`code=${scalarText(code)}`);
+  }
+  const status: unknown = Reflect.get(error, 'status');
+  if (isLoggableScalar(status)) {
+    parts.push(`status=${scalarText(status)}`);
+  }
+  return parts.join(' ');
+}
+
+function isLoggableScalar(value: unknown): value is string | number {
+  if (typeof value === 'string') {
+    return value.length > 0;
+  }
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function scalarText(value: string | number): string {
+  return typeof value === 'number' ? String(value) : value;
 }
 
 function isDrizzleQueryError(error: unknown): boolean {
