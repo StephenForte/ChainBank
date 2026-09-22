@@ -69,22 +69,21 @@ resulting second enabled `external`. The genuine findings are recorded as D21 (a
   treasury observation and a clean two-chain reconciler run.
 - **C14 does not cover Base Public** (D22, EIP-7702). Unchanged and deliberate.
 
-## Phase 6 exit evidence pass (draft, 2026-09-22) — NOT EXITED
+## Phase 6 exit evidence pass (2026-09-22) — EXIT PENDING TWO TICKS (00:00 UTC scheduled run; token rotation confirmed)
 
 Same shape as the §20 Phase 4 pass in `worker-plan.md`: each PRD criterion needs evidence, not a
 merged PR. Everything below was read from Render logs or the repo on 2026-09-22; nothing was read off
 the dashboard. Render's log search 504s on ranges longer than a day, so "today" is all that could be
 pulled.
 
-| PRD Phase 6 criterion                                                              | Status     | Evidence                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chain adapters expose a common balance, transfer, confirmation, explorer interface | ✅         | C26 registry (T6.1, PR #115): one `ChainAdapters` interface, per-chain balance reader, signer, tracker, scanner, `explorerBaseUrl` on the chain row. Both crons log `Startup chain-id proof finished` with `11155111 matched, 84532 matched` (14:01:50 and 14:03:06 UTC).                                                   |
-| Policies are chain-specific                                                        | ✅         | Policies hang off `managed_wallets`, which carry `chain_id` (FK to `chains`); C27 (T6.2, PR #116) validates addresses and thresholds per chain entry. No live Base wallet exists yet, so this is demonstrated by schema and tests, not by a Base policy in production.                                                      |
-| Each chain has an independent treasury, reserve, nonce lock, RPC config            | ✅         | Four enabled treasury rows, two per chain (ids `9d359e08…`/`a61b2d5e…` on 11155111, `938e9404…`/`5cd06f84…` on 84532); dedicated QuickNode endpoint per chain (D20); replenish prelude ran per operational treasury (`no-op` ×2 at 14:03:08 and 14:04:28 UTC).                                                              |
-| Failure on one chain does not block unrelated chains                               | ✅ live    | 14:03 UTC reconciler run: Base outgoing scan failed twice with `RPC_UNAVAILABLE` (below), yet Sepolia's four wallets were assessed (`walletsNoop 4`), both Sepolia watermarks advanced (`scannedToBlock 11758358`), and `chainOutcomes` lists both chains `processed`. C29 (T6.4, PR #121) behaved as designed, unattended. |
-| Base Sepolia is the first additional implementation                                | ⚠️ partial | **Observation: yes.** Treasury monitor 14:01:52 UTC recorded Base external `1855000000000000000` wei and operational `3544586630334914907` wei at block 47158711, both `healthy`, `transition none`. **Clean reconciler run: no.** The Base outgoing scan cannot complete — see TX.29.                                      |
-
-**What blocks exit — found by this pass, not previously known:**
+| PRD Phase 6 criterion                                                              | Status                                    | Evidence                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chain adapters expose a common balance, transfer, confirmation, explorer interface | ✅                                        | C26 registry (T6.1, PR #115): one `ChainAdapters` interface, per-chain balance reader, signer, tracker, scanner, `explorerBaseUrl` on the chain row. Both crons log `Startup chain-id proof finished` with `11155111 matched, 84532 matched` (14:01:50 and 14:03:06 UTC).                                                                           |
+| Policies are chain-specific                                                        | ✅                                        | Policies hang off `managed_wallets`, which carry `chain_id` (FK to `chains`); C27 (T6.2, PR #116) validates addresses and thresholds per chain entry. No live Base wallet exists yet, so this is demonstrated by schema and tests, not by a Base policy in production.                                                                              |
+| Each chain has an independent treasury, reserve, nonce lock, RPC config            | ✅                                        | Four enabled treasury rows, two per chain (ids `9d359e08…`/`a61b2d5e…` on 11155111, `938e9404…`/`5cd06f84…` on 84532); dedicated QuickNode endpoint per chain (D20); replenish prelude ran per operational treasury (`no-op` ×2 at 14:03:08 and 14:04:28 UTC).                                                                                      |
+| Failure on one chain does not block unrelated chains                               | ✅ live                                   | 14:03 UTC reconciler run: Base outgoing scan failed twice with `RPC_UNAVAILABLE` (below), yet Sepolia's four wallets were assessed (`walletsNoop 4`), both Sepolia watermarks advanced (`scannedToBlock 11758358`), and `chainOutcomes` lists both chains `processed`. C29 (T6.4, PR #121) behaved as designed, unattended.                         |
+| Base Sepolia is the first additional implementation                                | ✅ (pending the 00:00 UTC scheduled tick) | **Observation:** 14:01 UTC monitor recorded Base external `1855000000000000000` wei and operational `3544586630334914907` wei at block 47158711, both `healthy`. **Clean reconciler run:** 20:01:15 UTC, correlation `cb032258…`, both Base watermarks advanced, `outgoingScanStatus: complete`, both chains `processed` — see the run table below. |
+| **What blocks exit — found by this pass, not previously known:**                   |
 
 - **TX.29 — Base outgoing scan throttled to the provider budget.** ✅ reviewed and approved
   2026-09-22 in [#127](https://github.com/StephenForte/ChainBank/pull/127), operator merges. Root
@@ -173,11 +172,20 @@ between the two. Fail-closed worked; the fleet rule in D23 covers it.
   A per-chain lookback is not required once an empty window is two nonce reads.
   `render.yaml` and `NODE_OPTIONS` stay operator-owned (TX.33 is held).
 
-**Exit condition, stated once:** TX.29 (merged 2026-09-22) deployed, then one scheduled (not manual)
-`chainbank-wallet-reconciler` run whose log shows `outgoingScanStatus: complete`, both Base
-`watermark_advanced` lines, and `chainOutcomes` both `processed` — plus TX.30 merged and both QuickNode
-tokens rotated. As of 16:44 UTC no scheduled run has happened since #127 deployed; the 18:00 UTC run is
-the first candidate. Then this section changes to EXITED with that run's correlation id.
+**Exit evidence pass, run 2026-09-22 22:55 UTC (planner, from Render logs):**
+
+| Run (UTC)                 | Trigger                                      | Result                                                                                                                                                                                                                                                                                            |
+| ------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 18:00, `fdc9f5d5…`        | scheduled, first after TX.29 deployed        | Base `0x16ca…` body scan **completed**: 20 001 blocks, 0 transfers, 828 s at `maxRequestsPerSecond: 25`, no `rate_limited` line — TX.29 does what it claims. Second Base scan died at ~18:26 with the heap OOM TX.34 later fixed; no run-completed line.                                          |
+| 18:29 and 19:52           | Render re-runs after the #134 / #140 deploys | Both started a fresh 20 001-block Base scan (watermark not persisted before TX.34) and were superseded by the next deploy.                                                                                                                                                                        |
+| **20:01:15, `cb032258…`** | run after the TX.34 deploy                   | **Clean two-chain run**: Sepolia nonce-gate skips + `watermark_advanced` ×2; Base `watermark_advanced` ×2 (`938e9404…` nonce 1, `5cd06f84…` nonce 69 at block 47169504) by TX.34's equal-edge-count proof, no body scan; `outgoingScanStatus: complete`; `chainOutcomes` both `processed`; 5.6 s. |
+
+Criterion 5 is therefore evidenced on both halves: a Base treasury observation (14:01 UTC monitor run,
+above) and a clean two-chain reconciler run (20:01 UTC). TX.30 is merged (#129). Two ticks remain
+before this section reads EXITED, both outside the repo: **(a)** the first _scheduled_ run after the
+TX.34 deploy — 2026-09-23 00:00 UTC — repeating the 20:01 shape (the 20:01 run was deploy-triggered);
+**(b)** the operator's confirmation that both QuickNode endpoint tokens were rotated after TX.30's
+finding. Nothing else is open.
 
 ---
 
