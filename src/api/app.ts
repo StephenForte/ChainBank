@@ -14,6 +14,7 @@ import { readSessionToken } from './cookies.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerAdminEmailRoutes } from './routes/admin-email.js';
 import { registerAdminUserRoutes } from './routes/admin-users.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAlertRoutes } from './routes/alerts.js';
@@ -114,6 +115,7 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   registerReconciliationRunRoutes(app, container);
   registerAlertRoutes(app, container);
   registerAdminRoutes(app, container);
+  registerAdminEmailRoutes(app, container);
   registerAuthRoutes(app, container);
   registerAdminUserRoutes(app, container);
 

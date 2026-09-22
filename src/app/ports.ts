@@ -390,11 +390,46 @@ export interface ChainAdapterRegistry {
   externalSigner(chainId: number): TreasurySigner | undefined;
 }
 
+/**
+ * Template names that can be recorded on `email_deliveries` (C35).
+ * Treasury balance kinds are the names of {@link PendingAlertEmail}, not a
+ * second vocabulary: warning → treasury_warning, and so on.
+ * A send that omits `kind` is stored as `unknown`.
+ */
+export const EMAIL_DELIVERY_KINDS = [
+  'treasury_warning',
+  'treasury_critical',
+  'treasury_recovery',
+  'treasury_unresolved_reminder',
+  'treasury_finding',
+  'reconciliation_failure',
+  'funding_unavailable_reserve',
+  'test_email',
+] as const;
+
+export type EmailDeliveryKind = (typeof EMAIL_DELIVERY_KINDS)[number];
+
+/** Stored when a message does not name a {@link EmailDeliveryKind}. */
+export const UNKNOWN_EMAIL_DELIVERY_KIND = 'unknown';
+
+export type RecordedEmailKind = EmailDeliveryKind | typeof UNKNOWN_EMAIL_DELIVERY_KIND;
+
+export interface EmailRelatedEntity {
+  readonly type: string;
+  readonly id: string;
+}
+
 export interface EmailMessage {
   readonly to: readonly string[];
   readonly subject: string;
   readonly text: string;
   readonly html: string;
+  /** Template name. Omitted sends are recorded as `unknown` (C35). */
+  readonly kind?: EmailDeliveryKind;
+  /** Alert or finding this message belongs to. Omitted for the test email. */
+  readonly relatedEntity?: EmailRelatedEntity;
+  /** Operation or request id of the process that attempted the send. */
+  readonly correlationId?: string;
 }
 
 export type EmailSendResult =
@@ -415,6 +450,80 @@ export interface EmailSender {
  * retried on the next evaluation instead of being lost or duplicated.
  */
 export type PendingAlertEmail = 'warning' | 'critical' | 'reminder' | 'recovery';
+
+/** Maps the persist-then-send kind onto the delivery-log template name (C35). */
+export function emailKindForPendingAlert(pendingEmail: PendingAlertEmail): EmailDeliveryKind {
+  switch (pendingEmail) {
+    case 'warning':
+      return 'treasury_warning';
+    case 'critical':
+      return 'treasury_critical';
+    case 'reminder':
+      return 'treasury_unresolved_reminder';
+    case 'recovery':
+      return 'treasury_recovery';
+    default: {
+      const _exhaustive: never = pendingEmail;
+      return _exhaustive;
+    }
+  }
+}
+
+export type EmailDeliveryStatus = 'sent' | 'failed';
+
+/** One observed send attempt. The message body is not part of this record (C35). */
+export interface StoredEmailDelivery {
+  readonly id: string;
+  readonly sentAt: Date;
+  readonly kind: string;
+  readonly recipients: readonly string[];
+  readonly subject: string;
+  readonly status: EmailDeliveryStatus;
+  readonly providerMessageId: string | undefined;
+  readonly errorCode: string | undefined;
+  readonly errorSummary: string | undefined;
+  readonly relatedEntityType: string | undefined;
+  readonly relatedEntityId: string | undefined;
+  readonly correlationId: string | undefined;
+  readonly serviceRole: string;
+  readonly createdAt: Date;
+}
+
+export interface RecordEmailDeliveryInput {
+  readonly sentAt: Date;
+  readonly kind: string;
+  readonly recipients: readonly string[];
+  readonly subject: string;
+  readonly status: EmailDeliveryStatus;
+  readonly providerMessageId: string | undefined;
+  readonly errorCode: string | undefined;
+  readonly errorSummary: string | undefined;
+  readonly relatedEntityType: string | undefined;
+  readonly relatedEntityId: string | undefined;
+  readonly correlationId: string | undefined;
+  readonly serviceRole: string;
+}
+
+export interface EmailDeliveryListFilters {
+  readonly limit: number;
+  readonly offset: number;
+  readonly status?: EmailDeliveryStatus;
+  readonly kind?: string;
+}
+
+export interface EmailDeliveryListPage {
+  readonly items: readonly StoredEmailDelivery[];
+  readonly total: number;
+}
+
+/**
+ * Observation of what an email send did. Not part of the alert transaction:
+ * a failure here must not change the sender's result (C35).
+ */
+export interface EmailDeliveryRepository {
+  record(input: RecordEmailDeliveryInput): Promise<void>;
+  list(filters: EmailDeliveryListFilters): Promise<EmailDeliveryListPage>;
+}
 
 /** Open treasury (or other entity) alert row. Resolved alerts are not returned. */
 export interface StoredOpenAlert {

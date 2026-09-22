@@ -50,7 +50,11 @@ export async function sendTestEmail(
     recipients: input.recipients,
   });
 
-  const result = await dependencies.emailSender.send(message);
+  const result = await dependencies.emailSender.send({
+    ...message,
+    kind: 'test_email',
+    correlationId: input.operationId,
+  });
 
   await dependencies.auditEvents.record({
     actorType: 'api_credential',

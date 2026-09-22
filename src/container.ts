@@ -8,6 +8,7 @@ import type {
   CredentialScopeRepository,
   DashboardSessionRepository,
   DashboardUserRepository,
+  EmailDeliveryRepository,
   EmailSender,
   EnvironmentRepository,
   FundingPolicyRepository,
@@ -54,7 +55,9 @@ import { createReconciliationFundingQuery } from './infrastructure/db/repositori
 import { createReconciliationRunRepository } from './infrastructure/db/repositories/reconciliation-run-repository.js';
 import { createServiceHeartbeatRepository } from './infrastructure/db/repositories/service-heartbeat-repository.js';
 import { createTreasuryRepository } from './infrastructure/db/repositories/treasury-repository.js';
+import { createEmailDeliveryRepository } from './infrastructure/db/repositories/email-delivery-repository.js';
 import { createLogOnlyEmailSender } from './infrastructure/email/log-only-email-sender.js';
+import { createRecordingEmailSender } from './infrastructure/email/recording-email-sender.js';
 import { createResendEmailSender } from './infrastructure/email/resend-email-sender.js';
 import { createBalanceReader } from './infrastructure/evm/balance-reader.js';
 import { createChainAdapterRegistry } from './infrastructure/evm/chain-adapter-registry.js';
@@ -109,6 +112,12 @@ export interface Container {
      */
     readonly dashboardUsers?: DashboardUserRepository;
     readonly dashboardSessions?: DashboardSessionRepository;
+    /**
+     * Delivery log (C35). `buildContainer` always sets it. Optional on the
+     * type so a container assembled for a route that never lists mail still
+     * typechecks; the email routes fail closed when it is absent.
+     */
+    readonly emailDeliveries?: EmailDeliveryRepository;
   };
   /**
    * Chain-keyed adapters (C26). One registration per `config.chains` entry.
@@ -145,6 +154,7 @@ export function buildContainer(options: BuildContainerOptions): Container {
     });
 
   const database = createDatabase(config.database, logger);
+  const emailDeliveries = createEmailDeliveryRepository(database.db);
 
   return {
     config,
@@ -172,11 +182,12 @@ export function buildContainer(options: BuildContainerOptions): Container {
       fundingHealth: createFundingHealthQuery(database.db),
       dashboardUsers: createDashboardUserRepository(database.db),
       dashboardSessions: createDashboardSessionRepository(database.db),
+      emailDeliveries,
     },
     chainAdapters: buildChainAdapters(config, clock, logger),
     fundingDispatchLock: createFundingDispatchLock(database.db),
     operatorMutations: createOperatorMutationTransaction(database.db),
-    emailSender: buildEmailSender(config, logger),
+    emailSender: buildEmailSender(config, logger, clock, emailDeliveries),
     close: async () => {
       await database.close();
     },
@@ -272,16 +283,28 @@ function buildChainSigners(
   return { signers, externalSigner };
 }
 
-function buildEmailSender(config: ChainBankConfig, logger: Logger): EmailSender | undefined {
+function buildEmailSender(
+  config: ChainBankConfig,
+  logger: Logger,
+  clock: Clock,
+  deliveries: EmailDeliveryRepository,
+): EmailSender | undefined {
   if (config.email === undefined) {
     return undefined;
   }
-  if (config.email.provider === 'log-only') {
-    return createLogOnlyEmailSender(logger);
-  }
-  return createResendEmailSender({
-    apiKey: config.email.apiKey,
-    fromAddress: config.email.fromAddress,
+  const inner =
+    config.email.provider === 'log-only'
+      ? createLogOnlyEmailSender(logger)
+      : createResendEmailSender({
+          apiKey: config.email.apiKey,
+          fromAddress: config.email.fromAddress,
+          logger,
+        });
+  return createRecordingEmailSender({
+    inner,
+    deliveries,
     logger,
+    clock,
+    serviceRole: config.app.serviceRole,
   });
 }

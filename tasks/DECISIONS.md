@@ -1852,6 +1852,93 @@ Local design choices (T10.2, 2026-09-22):
 - **Token control** stays in the sidebar user block. Refresh and Test email
   stay in the top bar. T10.3 removes the token control.
 
+### C35 — Email deliveries log and email triggers (owner: T10.5)
+
+```ts
+// Table email_deliveries (migration 0012, no backfill). Body is not stored.
+// id uuid, sent_at timestamptz (attempt time), kind text,
+// recipients text[], subject text,
+// status email_delivery_status enum sent|failed,
+// provider_message_id text nullable,
+// error_code text nullable,
+// error_summary text nullable (describeErrorChain, then re_ tokens redacted),
+// related_entity_type text nullable, related_entity_id text nullable,
+// correlation_id text nullable, service_role text, created_at timestamptz
+// Indexes: (sent_at DESC), (related_entity_type, related_entity_id)
+
+// EmailMessage gains, all optional:
+// kind?: EmailDeliveryKind
+// relatedEntity?: { type: string; id: string }
+// correlationId?: string
+// A message without kind is recorded as 'unknown'.
+
+export const EMAIL_DELIVERY_KINDS = [
+  'treasury_warning', // PendingAlertEmail 'warning'
+  'treasury_critical', // PendingAlertEmail 'critical'
+  'treasury_recovery', // PendingAlertEmail 'recovery'
+  'treasury_unresolved_reminder', // PendingAlertEmail 'reminder'
+  'treasury_finding',
+  'reconciliation_failure',
+  'funding_unavailable_reserve',
+  'test_email',
+] as const;
+export type EmailDeliveryKind = (typeof EMAIL_DELIVERY_KINDS)[number];
+export function emailKindForPendingAlert(pending: PendingAlertEmail): EmailDeliveryKind;
+
+// Decorator createRecordingEmailSender wraps the sender buildEmailSender
+// builds (Resend or log-only) for every role that has one.
+// Record after the inner send, from the result. A thrown inner error is
+// recorded as failed and rethrown unchanged. A recording failure is logged
+// with describeErrorChain and never changes the result or throws.
+
+// GET /v1/admin/email/deliveries?limit&offset&status&kind
+// permission alert:read. Newest first.
+// 200 { data: Delivery[], pagination: { limit, offset, total } }
+// status: sent | failed. kind: EmailDeliveryKind | 'unknown'.
+
+// GET /v1/admin/email/triggers
+// permission alert:read. No new storage.
+// 200 {
+//   data: {
+//     triggers: { trigger, scope, condition, recipients }[],
+//     recipients: string[],
+//     fromAddress: string,
+//     provider: 'resend' | 'log-only',
+//   },
+// }
+// One row per enabled treasury (chain, Public/Private, address, four
+// threshold wei strings, and Private policy minimum/target/maximum top-up),
+// then reconciliation failure (consecutive-run threshold), unresolved
+// reminder (interval hours; 0 = off), funding-unavailable reserve,
+// critical findings (two kinds, always on), test email (on demand).
+```
+
+Local design choices (T10.5, 2026-09-22):
+
+- **The log is an observation.** The decorator writes after the inner sender
+  returns or throws, in the same process, and not inside the alert
+  transaction. `treasury.alert.email.sent` / `.failed` audit rows are
+  unchanged. A Postgres failure while recording is logged and discarded so a
+  treasury-critical send cannot be retried or dropped because the log was down.
+- **Secrets.** `error_summary` is `describeErrorChain` for a thrown error and
+  the result `reason` for a `failed` value. Either string is then stripped of
+  `re_…` tokens. The Resend adapter already returns `error.name` or a static
+  sentence; the decorator is the second line. The API key is never a column
+  and never a field of the triggers response.
+- **No body.** Text and html stay off the row. Recipients, subject, kind, and
+  the error summary are what the email page needs.
+- **Kinds reuse `PendingAlertEmail`.** `emailKindForPendingAlert` is the only
+  mapping from warning/critical/reminder/recovery onto the template names.
+  The union is exported from `src/app/ports.ts`.
+- **Test email has no related entity.** The other four send sites set
+  `relatedEntity` to the treasury, or to the finding key for
+  `treasury_finding`. `correlationId` is the operation id already on the call.
+- **`alert:read`.** No new permission. Operator, read-only, and dashboard
+  admin/operator/viewer can read both routes. `project-service` cannot.
+- **Provider name only.** Triggers report `resend` or `log-only`, the from
+  address, and `config.email.operatorRecipients`. Disabled treasuries are
+  omitted. No new environment variable.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1962,3 +2049,4 @@ Local design choices (T10.2, 2026-09-22):
 - 2026-09-22 — **Phase 10 (Operator Console v2) planned; D24 written.** Operator asked for a sidebar layout in the style of the Figma "CRM Dashboard Customers List", user login stored in Postgres, an Admin page, an Email page (triggers, recipients, delivery log), a chain filter, and +/− detail. Plan in `tasks/p10-plan.md`: T10.1 users/sessions/login API (C31, migration 0011) ∥ T10.2 dashboard shell refactor (C32) → T10.5 email deliveries log + triggers API (C35, migration 0012) → T10.3 login + Admin page (C33) ∥ T10.4 chain filter + overview (C34) → T10.6 Email page (C36). Four assumptions flagged for the operator, chiefly that "store their key" means replacing the pasted API token with login, not storing a treasury key. Next free: C37, D25, migration 0013.
 - 2026-09-22 — **T10.1 published C31:** dashboard users and server-side sessions (migration `0011`). Login sets `chainbank_session` (`HttpOnly`, `SameSite=Strict`, `Secure` when hosted). A present Authorization header is the only credential; the cookie is accepted only with `X-ChainBank-Session: 1`. `user:manage` is dashboard-admin only. C32–C36 stay reserved by the Phase 10 plan.
 - 2026-09-22 — T10.2 published C32: dashboard hash routes, design tokens, shell primitives, and localStorage collapse keys; unacknowledged critical findings and dark-chain warnings stay outside collapse.
+- 2026-09-22 — **T10.5 published C35:** `email_deliveries` (migration `0012`) records each send after the provider answers; a recording failure cannot change the send result. `GET /v1/admin/email/deliveries` and `GET /v1/admin/email/triggers` are `alert:read`. No message body, no API key. C36 stays reserved for the email page.
