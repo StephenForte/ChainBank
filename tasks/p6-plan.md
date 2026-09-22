@@ -15,7 +15,7 @@ Baseline at plan write: `origin/main` **`3a3fbcd`** (merge of PR #112, merged 20
 ## Phase 6 is code-complete and Base Sepolia is LIVE (2026-09-22)
 
 All five tasks merged: T6.1/**C26**, T6.2/**C27**, T6.3/**C28**, T6.4/**C29**, T6.5/**C30**. `main` at
-`52830b0`. Next free contract **C31**, decision **D24**, task **TX.31** (**TX.29** and **TX.30** are reserved
+`a9ccf1c`. Next free contract **C31**, decision **D24**, task **TX.33** (**TX.29**–**TX.32** are reserved
 below); migrations through `0010` and Phase 6 consumed none.
 
 **Base Sepolia (84532) is registered and running.** `chainbank-web` went live with both chains at
@@ -86,17 +86,21 @@ pulled.
 
 **What blocks exit — found by this pass, not previously known:**
 
-- **TX.29 (reserved) — the Base outgoing scan exceeds QuickNode's rate limit every run.** First Base
-  scan, no watermark, so `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` = 20 000 blocks applied: on Sepolia that
-  is ~2.8 days, on Base (2 s blocks) ~11 h, and every subsequent 6-hourly run is ~10 800 Base blocks
-  versus ~1 800 on Sepolia. The scanner fires `getBlock(includeTransactions)` 8-wide
-  (`BLOCK_SCAN_CONCURRENCY`) with `retryCount: 2` and no backoff. Measured 14:03:10→14:04:07 UTC: 2 520
-  blocks in 57 s, then `account limited to 50/sec` on `eth_getBlockByNumber`; the operational scan died
-  at 864 blocks. Result: two `outgoing_scan_incomplete` **critical** findings on the Base treasuries,
-  `outgoingScanStatus: incomplete`, and the Base watermarks did not advance — so the next run repeats
-  the same 20 000-block window and fails the same way, every six hours, with a critical finding each
-  time. Fix shape: throttle per chain to the provider's budget and size the window in time (there is
-  already `blockTimeMs` on `SupportedChain`), not in a chain-agnostic block count. No migration.
+- **TX.29 — Base outgoing scan throttled to the provider budget.** ✅ reviewed and approved
+  2026-09-22 in [#127](https://github.com/StephenForte/ChainBank/pull/127), operator merges. Root
+  cause as found by the exit pass: the scanner fired `getBlock(includeTransactions)` 8-wide with no
+  issuance limit; the first Base scan (20 000 blocks, no watermark) ran at ~44 req/s and QuickNode cut
+  it off at 50/s. Fix: a per-scanner token bucket (R starts per one-second window,
+  `RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND`, default 25, no Render change needed) plus
+  structural retry-with-backoff on QuickNode's -32007/-32008/-32011, JSON-RPC 429 and HTTP 429;
+  everything else still fails closed. **Correction to the earlier hypothesis above:** the block
+  window does _not_ need to be time-based. After one complete scan writes the watermark, the nonce
+  gate skips Base runs unless the treasury actually sent something, so only the first scan is heavy
+  (~13 min at R=25). Planner verification: scratch-clone gate green, **75 files / 647 unit**, **27 / 132
+  integration**; real-timer probes with viem's error classes and viem retry disabled: R=10 held at
+  10–11 observed/s, -32007 and 429 retried once and completed, plain `Error` still `incomplete`.
+  QuickNode's own request logs are enterprise-only, so the exact code returned at 14:04 UTC is
+  unknown; both paths are handled. Follow-ups recorded as TX.32, none blocking.
 - **TX.30 (reserved) — RPC error detail logs the endpoint URL including its token.** viem's
   `RpcRequestError.message` embeds `URL: https://….base-sepolia.quiknode.pro/<token>/`, and the
   scanner's `Treasury outgoing scan failed` line logs `describeUnknownError(error)` verbatim, so the
@@ -106,6 +110,26 @@ pulled.
   reader, tracker, signer); TX.28's `describeErrorChain` needs the same rule for viem-shaped causes.
   **Operator action first: rotate the Base Sepolia QuickNode endpoint token.** Whether Sepolia's has
   ever been logged the same way could not be checked (log search 504); assume yes and rotate both.
+
+- **TX.31 (reserved) — treasury-finding email copy must branch on finding kind.** The
+  "Recommended action" in `src/app/email/treasury-finding-template.ts` (line ~31) is one constant:
+  "Treat this as a possible treasury-key compromise… verify the transaction on the explorer… rotate
+  credentials if the transfer is unexplained." Correct for `unexplained_outgoing_transfer`; wrong
+  and alarming for `outgoing_scan_incomplete`, where there is no transaction to verify. The operator
+  received exactly that email for the 14:04 UTC Base finding. Small, no migration; dispatch with
+  TX.30 since both sit on the reconciler's failure path.
+- **TX.32 (reserved) — scanner retry ownership, from the #127 review.** (a) The scanner's transport
+  keeps viem `retryCount: 2`, and viem retries HTTP 429 / JSON-RPC 429 / -32005 itself at 150 ms
+  doubling, bypassing the bucket and the backoff — under a hard cap a limited second can carry up
+  to 3× the paced count. (b) The 6-attempt / 4 s-cap backoff (~7.75 s total) cannot outlast a
+  per-minute (-32008) window, so that code always exhausts and fails closed despite being
+  classified retriable. (c) Nonce/tip reads and the `findOutgoingByNonce` bisect are unpaced (the
+  worker measured peak 12 at R=10 from exactly this). (d) The test helper passes `retryCount`
+  inside viem's provider object, where `custom()` ignores it — the suite runs under viem's default
+  retry 3, so the scanner's own policy for 429/-32005 is untested in isolation; fix is
+  `custom(provider, { retryCount: 0 })`. Shape: transport `retryCount: 0` for the scanner, one paced
+  retry loop that owns viem's transient set too, a per-minute-aware budget. Not blocking exit; the
+  default 25 leaves 2× headroom.
 
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
