@@ -11,6 +11,11 @@ export interface UpdateUserDependencies {
 export interface UpdateUserInput {
   readonly actor: ActorPermissionSource;
   readonly actorUserId: string;
+  /**
+   * Session that authenticated this change. Kept when an admin replaces their
+   * own password; every other session of that user is still revoked.
+   */
+  readonly actorSessionId?: string;
   readonly userId: string;
   readonly enabled?: boolean;
   readonly role?: DashboardRole;
@@ -71,6 +76,15 @@ export async function updateDashboardUser(
     });
     if (updated === undefined) {
       throw new ChainBankError('USER_NOT_FOUND', `Dashboard user ${input.userId} does not exist`);
+    }
+
+    if (password !== undefined) {
+      const ownSessionId = input.actorUserId === input.userId ? input.actorSessionId : undefined;
+      if (ownSessionId !== undefined) {
+        await uow.dashboardSessions.revokeOthers(input.userId, ownSessionId, input.now);
+      } else {
+        await uow.dashboardSessions.revokeAll(input.userId, input.now);
+      }
     }
 
     await uow.auditEvents.record({

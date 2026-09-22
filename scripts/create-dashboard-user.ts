@@ -1,4 +1,3 @@
-import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config/index.js';
 import { loadDotEnvFile } from '../src/config/load-dotenv.js';
@@ -18,8 +17,8 @@ import { createLogger } from '../src/observability/logger.js';
  * Creates the first dashboard admin (or any role) against the database.
  *
  * The password is read from stdin, never from argv or the environment, and
- * nothing secret is printed. Refuses an email that already exists — this is
- * not an upsert.
+ * nothing secret is printed. A terminal prompt does not echo the password.
+ * Refuses an email that already exists — this is not an upsert.
  */
 async function main(): Promise<void> {
   loadDotEnvFile();
@@ -103,14 +102,7 @@ async function main(): Promise<void> {
 
 async function readPassword(): Promise<string> {
   if (process.stdin.isTTY === true) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return await new Promise((resolve) => {
-        rl.question('Password: ', resolve);
-      });
-    } finally {
-      rl.close();
-    }
+    return readSilentPassword();
   }
 
   const parts: string[] = [];
@@ -126,6 +118,66 @@ async function readPassword(): Promise<string> {
     return text.slice(0, -1);
   }
   return text;
+}
+
+/**
+ * Reads a password from the terminal without echoing it. Restores cooked
+ * mode before resolving so a later prompt is not left in raw mode.
+ */
+function readSilentPassword(): Promise<string> {
+  const stdin = process.stdin;
+  if (typeof stdin.setRawMode !== 'function') {
+    return Promise.reject(new Error('A terminal is required to type a password.'));
+  }
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding('utf8');
+  process.stdout.write('Password: ');
+
+  return new Promise((resolve, reject) => {
+    let password = '';
+    const finish = (value: string | undefined, error: Error | undefined): void => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stdout.write('\n');
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      resolve(value ?? '');
+    };
+    const onData = (chunk: string): void => {
+      if (chunk === '\u0003') {
+        finish(undefined, new Error('Password entry cancelled'));
+        return;
+      }
+      const end = indexOfLineEnd(chunk);
+      if (end >= 0) {
+        if (end > 0) {
+          password += chunk.slice(0, end);
+        }
+        finish(password, undefined);
+        return;
+      }
+      if (chunk === '\u007f' || chunk === '\b') {
+        password = password.slice(0, -1);
+        return;
+      }
+      password += chunk;
+    };
+    stdin.on('data', onData);
+  });
+}
+
+function indexOfLineEnd(chunk: string): number {
+  for (let index = 0; index < chunk.length; index += 1) {
+    const char = chunk[index];
+    if (char === '\r' || char === '\n' || char === '\u0004') {
+      return index;
+    }
+  }
+  return -1;
 }
 
 main().catch((error: unknown) => {

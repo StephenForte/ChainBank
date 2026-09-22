@@ -261,6 +261,8 @@ export interface DashboardSessionRepository {
   revoke(id: string, at: Date): Promise<void>;
   /** Revokes every other live session for the user. The current session stays. */
   revokeOthers(userId: string, exceptSessionId: string, at: Date): Promise<void>;
+  /** Revokes every live session for the user, including the one in use. */
+  revokeAll(userId: string, at: Date): Promise<void>;
 }
 
 export interface AuditEventInput {

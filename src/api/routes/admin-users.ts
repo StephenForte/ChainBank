@@ -165,6 +165,7 @@ export function registerAdminUserRoutes(app: AppInstance, container: Container):
         {
           actor,
           actorUserId: actor.userId,
+          ...(actor.sessionId === undefined ? {} : { actorSessionId: actor.sessionId }),
           userId: params.id,
           now: container.clock.now(),
           operationId: request.id,

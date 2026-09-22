@@ -16,8 +16,9 @@ the same way an API credential is issued. Later users are created from
    npm run user:create -- --email operator@example.com --name "Ada Lovelace" --role admin
    ```
 
-2. Type the password when prompted, or pipe it. The password is not an argument
-   and not an environment variable. Fewer than 12 characters is refused.
+2. Type the password when prompted. The prompt does not echo it. You can also
+   pipe it. The password is not an argument and not an environment variable.
+   Fewer than 12 characters is refused.
 
    ```bash
    printf '%s\n' 'a-long-password' | npm run user:create -- --email operator@example.com --name "Ada Lovelace" --role admin

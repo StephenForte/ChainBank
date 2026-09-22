@@ -62,6 +62,15 @@ export function createDashboardSessionRepository(db: Database): DashboardSession
       });
     },
 
+    async revokeAll(userId, at): Promise<void> {
+      await withDatabaseErrors('dashboard_sessions.revokeAll', async () => {
+        await db
+          .update(dashboardSessions)
+          .set({ revokedAt: at })
+          .where(and(eq(dashboardSessions.userId, userId), isNull(dashboardSessions.revokedAt)));
+      });
+    },
+
     async revokeOthers(userId, exceptSessionId, at): Promise<void> {
       await withDatabaseErrors('dashboard_sessions.revokeOthers', async () => {
         await db

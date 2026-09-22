@@ -312,6 +312,47 @@ describe.skipIf(!integrationEnabled)('dashboard users and sessions (integration)
     expect(blocked.json<{ error: { code: string } }>().error.code).toBe('RATE_LIMITED');
   });
 
+  it('revokes every session when an admin sets another user password', async () => {
+    await insertUser('admin@example.com', 'Ada', 'admin');
+    const adminLogin = await login('admin@example.com', PASSWORD);
+    const adminCookie = { cookie: `chainbank_session=${sessionToken(adminLogin)}`, ...SESSION_HEADER };
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/admin/users',
+      headers: adminCookie,
+      payload: {
+        email: 'operator@example.com',
+        displayName: 'Otto',
+        role: 'operator',
+        password: PASSWORD,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const operatorId = created.json<{ data: { id: string } }>().data.id;
+
+    const operatorLogin = await login('operator@example.com', PASSWORD);
+    const operatorCookie = {
+      cookie: `chainbank_session=${sessionToken(operatorLogin)}`,
+      ...SESSION_HEADER,
+    };
+    const before = await app.inject({ method: 'GET', url: '/v1/auth/me', headers: operatorCookie });
+    expect(before.statusCode).toBe(200);
+
+    const reset = await app.inject({
+      method: 'PATCH',
+      url: `/v1/admin/users/${operatorId}`,
+      headers: adminCookie,
+      payload: { password: `${PASSWORD}-reset-by-admin` },
+    });
+    expect(reset.statusCode).toBe(200);
+
+    const after = await app.inject({ method: 'GET', url: '/v1/auth/me', headers: operatorCookie });
+    expect(after.statusCode).toBe(401);
+    const adminStill = await app.inject({ method: 'GET', url: '/v1/auth/me', headers: adminCookie });
+    expect(adminStill.statusCode).toBe(200);
+  });
+
   async function insertUser(
     email: string,
     displayName: string,

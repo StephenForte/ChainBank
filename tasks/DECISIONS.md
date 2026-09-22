@@ -1705,8 +1705,10 @@ No migration.
 //   POST { email, displayName, role, password }
 //   PATCH { enabled?, role?, password? }
 //   requires user:manage (dashboard admin). Self disable or demotion is
-//   CREDENTIAL_SELF_MUTATION_DENIED. Every mutation writes an audit event
-//   with actor_type dashboard_user.
+//   CREDENTIAL_SELF_MUTATION_DENIED. A password on PATCH revokes that user's
+//   sessions (all of them when the target is someone else; every other
+//   session when the admin replaces their own). Every mutation writes an
+//   audit event with actor_type dashboard_user.
 
 // Authentication hook
 // Authorization header present → bearer only; a cookie is not a fallback.
@@ -1743,9 +1745,10 @@ Local design choices (T10.1, 2026-09-22):
 - **`user:manage` is not on the operator API role.** Dashboard `admin` maps
   to the operator permission set so existing routes stay unchanged, and
   additionally holds `user:manage`. A bearer operator cannot create users.
-- **Self-mutation.** Disable or demotion of the signed-in admin uses
-  `CREDENTIAL_SELF_MUTATION_DENIED`, the same code as a credential that
-  tries to disable itself.
+- **Admin password reset.** `PATCH` with a password revokes that user's
+  live sessions. Resetting someone else revokes all of their sessions.
+  Replacing your own password revokes the others and keeps the session that
+  presented the change, matching `POST /v1/auth/password`.
 - **Rate limit key.** Cookie sessions are keyed by the SHA-256 of the
   session token, not by IP. A present Authorization header is still keyed
   by the bearer token. Login's tighter limit is per IP.
