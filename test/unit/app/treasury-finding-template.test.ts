@@ -48,4 +48,65 @@ describe('renderTreasuryFindingEmail', () => {
     expect(message.html).not.toContain('<script>alert(1)</script>');
     expect(message.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
+
+  it('keeps the unexplained-transfer advice verbatim', () => {
+    const message = renderTreasuryFindingEmail(BASE_CONTEXT);
+    const action =
+      'Treat this as a possible treasury-key compromise until a human confirms otherwise. ' +
+      'Verify the transaction on the explorer, confirm whether an authorized operator initiated it, ' +
+      'and rotate credentials if the transfer is unexplained.';
+
+    expect(message.text).toContain(action);
+    expect(message.html).toContain(action);
+    expect(message.subject).toBe(
+      '[CRITICAL] ChainBank treasury finding — unexplained_outgoing_transfer (Ethereum Sepolia)',
+    );
+  });
+
+  it('tells the operator an incomplete scan found no transfer and to check the RPC endpoint', () => {
+    const message = renderTreasuryFindingEmail({
+      ...BASE_CONTEXT,
+      findingKind: 'outgoing_scan_incomplete',
+      transactionHash: undefined,
+      toAddress: undefined,
+      valueWei: undefined,
+      nonce: undefined,
+      blockNumber: undefined,
+      errorCode: 'RPC_UNAVAILABLE',
+      reason: 'Treasury outgoing transaction scan could not be completed.',
+      explorerTxUrl: undefined,
+    });
+
+    expect(message.subject).toBe(
+      '[CRITICAL] ChainBank treasury finding — outgoing_scan_incomplete (Ethereum Sepolia)',
+    );
+    expect(message.text).toContain('Error code:           RPC_UNAVAILABLE');
+    expect(message.text).toContain('Treasury outgoing transaction scan could not be completed.');
+    expect(message.text).toContain('were not verified');
+    expect(message.text).toContain('No outgoing transfer was detected, and none is implied.');
+    expect(message.text).toContain('RPC endpoint');
+    expect(message.text).toContain('next scheduled run');
+    expect(message.html).toContain('were not verified');
+    expect(message.html).toContain('No outgoing transfer was detected, and none is implied.');
+    expect(message.html).toContain('RPC endpoint');
+    expect(message.html).toContain('next scheduled run');
+    expect(message.text).not.toMatch(/compromise/i);
+    expect(message.text).not.toMatch(/rotate/i);
+    expect(message.html).not.toMatch(/compromise/i);
+    expect(message.html).not.toMatch(/rotate/i);
+  });
+
+  it('escapes HTML in operator-facing fields for both finding kinds', () => {
+    const kinds = ['unexplained_outgoing_transfer', 'outgoing_scan_incomplete'] as const;
+    for (const findingKind of kinds) {
+      const message = renderTreasuryFindingEmail({
+        ...BASE_CONTEXT,
+        findingKind,
+        toAddress: '<script>alert(1)</script>',
+      });
+
+      expect(message.html).not.toContain('<script>alert(1)</script>');
+      expect(message.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    }
+  });
 });

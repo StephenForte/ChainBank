@@ -1,3 +1,5 @@
+import { assertNever } from '../../domain/funding/statuses.js';
+import type { ReconciliationFinding } from '../ports.js';
 import {
   escapeHtml,
   formatBalanceDisplay,
@@ -5,6 +7,9 @@ import {
   htmlRow,
   type RenderedEmailTemplate,
 } from './email-template-helpers.js';
+
+/** Critical findings are the only kinds this email is sent for. */
+export type TreasuryFindingEmailKind = Extract<ReconciliationFinding, { severity: 'critical' }>['kind'];
 
 /**
  * Forensic context for a critical reconciliation finding email (C18 / TX.15).
@@ -15,7 +20,7 @@ export interface TreasuryFindingEmailContext {
   readonly chainDisplayName: string;
   readonly treasuryAddressDisplay: string;
   readonly treasuryId: string;
-  readonly findingKind: string;
+  readonly findingKind: TreasuryFindingEmailKind;
   readonly transactionHash: string | undefined;
   readonly toAddress: string | undefined;
   readonly valueWei: string | undefined;
@@ -27,10 +32,26 @@ export interface TreasuryFindingEmailContext {
   readonly dashboardBaseUrl: string;
 }
 
-const RECOMMENDED_ACTION =
+const UNEXPLAINED_OUTGOING_TRANSFER_ACTION =
   'Treat this as a possible treasury-key compromise until a human confirms otherwise. ' +
   'Verify the transaction on the explorer, confirm whether an authorized operator initiated it, ' +
   'and rotate credentials if the transfer is unexplained.';
+
+const OUTGOING_SCAN_INCOMPLETE_ACTION =
+  'ChainBank could not read this chain, so outgoing transfers in this scan window were not verified. ' +
+  'No outgoing transfer was detected, and none is implied. ' +
+  'Check the RPC endpoint for this chain, then confirm that the next scheduled run reports the scan complete.';
+
+function recommendedAction(findingKind: TreasuryFindingEmailKind): string {
+  switch (findingKind) {
+    case 'unexplained_outgoing_transfer':
+      return UNEXPLAINED_OUTGOING_TRANSFER_ACTION;
+    case 'outgoing_scan_incomplete':
+      return OUTGOING_SCAN_INCOMPLETE_ACTION;
+    default:
+      return assertNever(findingKind, 'recommendedAction');
+  }
+}
 
 /**
  * Sent when reconciliation records a critical finding (e.g. unexplained outgoing
@@ -80,10 +101,9 @@ export function renderTreasuryFindingEmail(context: TreasuryFindingEmailContext)
     textLines.push(`Explorer:             ${context.explorerTxUrl}`);
   }
 
-  textLines.push(
-    `Recommended action:   ${RECOMMENDED_ACTION}`,
-    `Dashboard:            ${context.dashboardBaseUrl}`,
-  );
+  const action = recommendedAction(context.findingKind);
+
+  textLines.push(`Recommended action:   ${action}`, `Dashboard:            ${context.dashboardBaseUrl}`);
 
   const rows = [
     htmlRow('Environment', context.environment),
@@ -125,7 +145,7 @@ export function renderTreasuryFindingEmail(context: TreasuryFindingEmailContext)
         `</td></tr>`,
     );
   }
-  rows.push(htmlRow('Recommended action', RECOMMENDED_ACTION));
+  rows.push(htmlRow('Recommended action', action));
 
   const html = htmlEmailShell(
     'Critical treasury finding',
