@@ -101,23 +101,24 @@ pulled.
   10–11 observed/s, -32007 and 429 retried once and completed, plain `Error` still `incomplete`.
   QuickNode's own request logs are enterprise-only, so the exact code returned at 14:04 UTC is
   unknown; both paths are handled. Follow-ups recorded as TX.32, none blocking.
-- **TX.30 (reserved) — RPC error detail logs the endpoint URL including its token.** viem's
-  `RpcRequestError.message` embeds `URL: https://….base-sepolia.quiknode.pro/<token>/`, and the
-  scanner's `Treasury outgoing scan failed` line logs `describeUnknownError(error)` verbatim, so the
-  token is in Render logs as of 14:04 UTC today. `rpcUrl` is on the pino redaction list but this is
-  inside a message string, which redaction cannot see. Fix: render viem errors from `shortMessage` +
-  `details`, never `message`, at every `detail:` site that can see an RPC error (scanner, balance
-  reader, tracker, signer); TX.28's `describeErrorChain` needs the same rule for viem-shaped causes.
-  **Operator action first: rotate the Base Sepolia QuickNode endpoint token.** Whether Sepolia's has
-  ever been logged the same way could not be checked (log search 504); assume yes and rotate both.
-
-- **TX.31 (reserved) — treasury-finding email copy must branch on finding kind.** The
-  "Recommended action" in `src/app/email/treasury-finding-template.ts` (line ~31) is one constant:
-  "Treat this as a possible treasury-key compromise… verify the transaction on the explorer… rotate
-  credentials if the transfer is unexplained." Correct for `unexplained_outgoing_transfer`; wrong
-  and alarming for `outgoing_scan_incomplete`, where there is no transaction to verify. The operator
-  received exactly that email for the 14:04 UTC Base finding. Small, no migration; dispatch with
-  TX.30 since both sit on the reconciler's failure path.
+- **TX.30 — RPC errors render without the endpoint URL or request body.** ✅ reviewed and approved
+  2026-09-22 in [#129](https://github.com/StephenForte/ChainBank/pull/129) together with TX.31,
+  operator merges. viem builds every `message` as shortMessage + `URL: …` + `Request body: …` +
+  details; `getUrl` strips only basic-auth, so a path token stays, and a failed
+  `eth_sendRawTransaction` body is the signed raw transaction. Fix at one altitude: both
+  `describeUnknownError` and `describeErrorChain` duck-type a viem BaseError (string `shortMessage`)
+  and render name, shortMessage, details, code/status — never message, metaMessages, url, body — at
+  every cause depth. This is the one sanctioned change to `describeUnknownError` since TX.28; other
+  errors render byte-for-byte as before. Planner verification: scratch-clone gate green, **76 files /
+  655 unit**, **27 / 132 integration**; probes through viem's real HTTP transport against a local
+  JSON-RPC server (a -32007 on `eth_sendRawTransaction` and a plain HTTP 429) showed the raw messages
+  leaking token, host and body and both renderers clean. `.gitleaksignore` gained one commit-scoped
+  fingerprint for a sequential-hex fixture; read and accepted.
+- **TX.31 — finding-email advice branches on kind.** ✅ same PR. `findingKind` is now the
+  critical-kind union, and an exhaustive switch picks the copy: the original compromise/rotate
+  sentence for `unexplained_outgoing_transfer`; for `outgoing_scan_incomplete`, "could not read this
+  chain … no outgoing transfer was detected, and none is implied … check the RPC endpoint … confirm
+  the next scheduled run reports the scan complete." Verified by rendering both kinds.
 - **TX.32 (reserved) — scanner retry ownership, from the #127 review.** (a) The scanner's transport
   keeps viem `retryCount: 2`, and viem retries HTTP 429 / JSON-RPC 429 / -32005 itself at 150 ms
   doubling, bypassing the bucket and the backoff — under a hard cap a limited second can carry up
@@ -136,10 +137,11 @@ startup — `FUNDING_ENABLED=true with an operational treasury configured requir
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
 between the two. Fail-closed worked; the fleet rule in D23 covers it.
 
-**Exit condition, stated once:** TX.29 merged and deployed, then one scheduled (not manual)
+**Exit condition, stated once:** TX.29 (merged 2026-09-22) deployed, then one scheduled (not manual)
 `chainbank-wallet-reconciler` run whose log shows `outgoingScanStatus: complete`, both Base
 `watermark_advanced` lines, and `chainOutcomes` both `processed` — plus TX.30 merged and both QuickNode
-tokens rotated. Then this section changes to EXITED with that run's correlation id.
+tokens rotated. As of 16:44 UTC no scheduled run has happened since #127 deployed; the 18:00 UTC run is
+the first candidate. Then this section changes to EXITED with that run's correlation id.
 
 ---
 
