@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AppInstance } from '../types.js';
 import type { ChainBankError } from '../../domain/errors.js';
-import { describeUnknownError, isChainBankError } from '../../domain/errors.js';
+import { describeErrorChain, isChainBankError } from '../../domain/errors.js';
 
 interface ErrorResponseBody {
   readonly error: {
@@ -42,7 +42,7 @@ export function registerErrorHandler(app: AppInstance): void {
         .send(body('RATE_LIMITED', 'Too many requests. Please retry later.', requestId));
     }
 
-    request.log.error({ detail: describeUnknownError(error) }, 'Unhandled error');
+    request.log.error({ detail: describeErrorChain(error) }, 'Unhandled error');
     return reply
       .status(500)
       .send(body('INTERNAL_ERROR', 'An unexpected internal error occurred.', requestId));
