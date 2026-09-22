@@ -40,20 +40,21 @@ export function createRecordingEmailSender(options: CreateRecordingEmailSenderOp
   return {
     async send(message: EmailMessage): Promise<EmailSendResult> {
       const sentAt = options.clock.now();
+      let result: EmailSendResult;
       try {
-        const result = await options.inner.send(message);
-        await recordSafely(options, deliveryFromResult(message, sentAt, options.serviceRole, result));
-        return result;
+        result = await options.inner.send(message);
       } catch (error) {
-        await recordSafely(options, deliveryFromThrow(message, sentAt, options.serviceRole, error));
+        await recordSafely(options, () => deliveryFromThrow(message, sentAt, options.serviceRole, error));
         throw error;
       }
+      await recordSafely(options, () => deliveryFromResult(message, sentAt, options.serviceRole, result));
+      return result;
     },
   };
 }
 
-export function redactEmailProviderSecrets(value: string): string {
-  return value.replace(RESEND_KEY_PATTERN, '[redacted]');
+export function redactEmailProviderSecrets(value: string | undefined): string {
+  return (value ?? '').replace(RESEND_KEY_PATTERN, '[redacted]');
 }
 
 function deliveryFromResult(
@@ -131,10 +132,10 @@ function thrownErrorCode(error: unknown): string {
 
 async function recordSafely(
   options: CreateRecordingEmailSenderOptions,
-  input: RecordEmailDeliveryInput,
+  build: () => RecordEmailDeliveryInput,
 ): Promise<void> {
   try {
-    await options.deliveries.record(input);
+    await options.deliveries.record(build());
   } catch (error) {
     try {
       options.logger.error({ detail: describeErrorChain(error) }, 'Email delivery could not be recorded');

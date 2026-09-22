@@ -79,6 +79,24 @@ describe('recording email sender', () => {
     });
   });
 
+  it('records a failed result whose reason is missing at runtime and returns it unchanged', async () => {
+    const result = {
+      kind: 'failed',
+      errorCode: 'EMAIL_PROVIDER_REJECTED',
+    } as EmailSendResult;
+    const { rows, repository } = createDeliveries();
+    const { sender } = createSender({ send: () => Promise.resolve(result) }, repository);
+
+    await expect(sender.send(message)).resolves.toBe(result);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: 'failed',
+      errorCode: 'EMAIL_PROVIDER_REJECTED',
+      errorSummary: '',
+      providerMessageId: undefined,
+    });
+  });
+
   it('records a thrown inner error as failed and rethrows that same error', async () => {
     const error = new Error('smtp down');
     const { rows, repository } = createDeliveries();
