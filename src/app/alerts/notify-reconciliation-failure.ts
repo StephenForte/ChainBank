@@ -16,6 +16,7 @@ import type {
   StoredOpenAlert,
   Treasury,
 } from '../ports.js';
+import { chainOutcomesFromFindings, isPartialChainOutage } from './chain-run-outcome.js';
 import { TREASURY_ALERT_ENTITY_TYPE } from './evaluate-treasury-alerts.js';
 
 /**
@@ -90,9 +91,16 @@ export type NotifyReconciliationFailureResult =
  * the run summary. `outgoing_scan_status` (`incomplete` / `not-run`) alone still
  * does not classify as failure — it degrades orphan detection without meaning
  * the sweep failed to fund (C15 / TX.9).
+ *
+ * A configured chain that was not processed is not partial progress (C29).
+ * When the run records outcomes for more than one chain and one of them is
+ * `unavailable`, funding wallets on a healthy chain is not evidence that the
+ * dark chain recovered — classifying that run as success would resolve the
+ * open alert. A single configured chain, and any historical row with no
+ * `chain_outcome` findings, keeps the rules above.
  */
 export function classifyReconciliationRun(
-  run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed'>,
+  run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed' | 'findings'>,
 ): ReconciliationRunClass {
   if (run.finishedAt === undefined) {
     return 'neutral';
@@ -102,6 +110,9 @@ export function classifyReconciliationRun(
   }
   // Attempted work, accomplished none of it: not evidence of recovery.
   if (run.walletsFailed > 0 && run.walletsFunded === 0) {
+    return 'failure';
+  }
+  if (isPartialChainOutage(chainOutcomesFromFindings(run.findings))) {
     return 'failure';
   }
   return 'success';

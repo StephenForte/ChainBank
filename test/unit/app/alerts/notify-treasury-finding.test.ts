@@ -321,11 +321,15 @@ describe('treasuryFindingAlertEntityId', () => {
 
 describe('C15 neutrality with critical findings', () => {
   it('classifies a funded-correctly run with a critical finding as success and exit 0', () => {
-    const run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed'> = {
+    const run: Pick<
+      ReconciliationRun,
+      'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed' | 'findings'
+    > = {
       finishedAt: new Date('2026-08-05T18:00:20.000Z'),
       errorCode: undefined,
       walletsFunded: 0,
       walletsFailed: 0,
+      findings: [],
     };
 
     expect(classifyReconciliationRun(run)).toBe('success');

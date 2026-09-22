@@ -7,6 +7,7 @@ import {
   logRunOutcome,
   reconcilerExitCode,
 } from '../../../src/jobs/wallet-reconciler.js';
+import { exitKindForPartialChainOutage } from '../../../src/app/alerts/chain-run-outcome.js';
 import { createLogger } from '../../../src/observability/logger.js';
 
 function collectLogs(): { stream: Writable; lines: () => unknown[] } {
@@ -88,6 +89,29 @@ describe('wallet reconciler exit semantics', () => {
       expect(classifyReconcilerExit(code)).toBe('malfunction');
       expect(reconcilerExitCode(classifyReconcilerExit(code))).toBe(1);
     }
+  });
+
+  it('exits non-zero on a partial chain outage and zero when the only chain is dark without an error code', () => {
+    expect(exitKindForPartialChainOutage()).toBe('malfunction');
+    const partial = classifyReconcilerExit(undefined, [
+      { chainId: 11_155_111, status: 'processed', errorCode: undefined, reason: undefined },
+      { chainId: 84_532, status: 'unavailable', errorCode: 'RPC_UNAVAILABLE', reason: 'down' },
+    ]);
+    expect(partial).toBe('malfunction');
+    expect(reconcilerExitCode(partial)).toBe(1);
+
+    const singleDark = classifyReconcilerExit(undefined, [
+      { chainId: 11_155_111, status: 'unavailable', errorCode: 'RPC_UNAVAILABLE', reason: 'down' },
+    ]);
+    expect(singleDark).toBe('success');
+    expect(reconcilerExitCode(singleDark)).toBe(0);
+
+    const allHealthy = classifyReconcilerExit(undefined, [
+      { chainId: 11_155_111, status: 'processed', errorCode: undefined, reason: undefined },
+      { chainId: 84_532, status: 'processed', errorCode: undefined, reason: undefined },
+    ]);
+    expect(allHealthy).toBe('success');
+    expect(reconcilerExitCode(allHealthy)).toBe(0);
   });
 });
 
