@@ -2,12 +2,12 @@ import { HttpRequestError, LimitExceededRpcError, RpcRequestError } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { ChainBankError, describeErrorChain, describeUnknownError } from '../../../src/domain/errors.js';
 
-/** Fake path token. Recognisable, and not a credential that was ever deployed. */
-const TOKEN = '0123456789abcdef0123456789abcdef01234567';
+/** Recognisable path segment placed in the fixture URL. Not a deployed credential. */
+const PATH_SEGMENT = '0123456789abcdef0123456789abcdef01234567';
 const HOST = 'chaotic-young-grass.base-sepolia.quiknode.pro';
 const BODY_MARKER = 'tx30-signed-raw-body-marker';
 const DETAILS = 'account limited to 50/sec';
-const RPC_URL = `https://${HOST}/${TOKEN}/`;
+const RPC_URL = `https://${HOST}/${PATH_SEGMENT}/`;
 const SCAN_MESSAGE = 'Treasury outgoing transaction scan could not be completed.';
 
 function rpcRequestError(): RpcRequestError {
@@ -38,7 +38,7 @@ function expectOperatorSummary(rendered: string, errorName: string, shortMessage
   expect(rendered).toContain(errorName);
   expect(rendered).toContain(shortMessage);
   expect(rendered).toContain(DETAILS);
-  expect(rendered).not.toContain(TOKEN);
+  expect(rendered).not.toContain(PATH_SEGMENT);
   expect(rendered).not.toContain(HOST);
   expect(rendered).not.toContain(BODY_MARKER);
   expect(rendered).not.toContain('https://');
@@ -97,6 +97,8 @@ describe('viem error rendering', () => {
     expect(describeUnknownError(new ChainBankError('DATABASE_UNAVAILABLE', internal))).toBe(
       `ChainBankError: ${internal}`,
     );
-    expect(describeUnknownError(new Error(`plain failure ${TOKEN}`))).toBe(`Error: plain failure ${TOKEN}`);
+    expect(describeUnknownError(new Error(`plain failure ${PATH_SEGMENT}`))).toBe(
+      `Error: plain failure ${PATH_SEGMENT}`,
+    );
   });
 });
