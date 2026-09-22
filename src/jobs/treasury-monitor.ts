@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { evaluateTreasuryAlerts } from '../app/alerts/evaluate-treasury-alerts.js';
 import {
   chainOutcomesForDetail,
@@ -231,10 +232,21 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  const detail = isChainBankError(error) ? error.message : describeUnknownError(error);
-  process.stderr.write(
-    `${JSON.stringify({ level: 'fatal', service: 'chainbank', role: SERVICE_ROLE, message: 'Cron startup failed', detail })}\n`,
-  );
-  process.exitCode = 1;
-});
+/** True only when this file is the process entry point (not imported by tests). */
+function isExecutedAsMain(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) {
+    return false;
+  }
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isExecutedAsMain()) {
+  main().catch((error: unknown) => {
+    const detail = isChainBankError(error) ? error.message : describeUnknownError(error);
+    process.stderr.write(
+      `${JSON.stringify({ level: 'fatal', service: 'chainbank', role: SERVICE_ROLE, message: 'Cron startup failed', detail })}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

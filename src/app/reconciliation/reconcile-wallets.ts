@@ -335,6 +335,11 @@ export async function reconcileWallets(
 
             counters = addSweepOutcome(counters, outcome.counter, outcome.transferredWei);
             anyWalletObserved = true;
+            // A returned `failed` is a per-item failure on a chain that answered.
+            // Leaving it as `processed` would hide the failure in the chain outcome.
+            if (outcome.counter === 'failed') {
+              anyItemFailure = true;
+            }
 
             if (
               outcome.counter === 'blocked' &&

@@ -1837,4 +1837,52 @@ describe('reconcileWallets per-chain isolation (C29)', () => {
     expect(classifyReconcilerExit(result.run.errorCode)).toBe('malfunction');
     expect(reconcilerExitCode('malfunction')).toBe(1);
   });
+
+  it('records processed-with-failures when a returned funding attempt fails', async () => {
+    const stores = createInMemoryFundingStores();
+    const signer = createFakeSigner({ address: TREASURY_ADDRESS });
+    const balanceReader = createFakeBalanceReader({
+      balances: { [TREASURY_ADDRESS]: 20n * ONE_ETH, [WALLET_A]: 0n },
+    });
+    const deps = buildDeps(stores, [buildWallet('w-fail', WALLET_A)], buildTreasury(), {
+      signer,
+      balanceReader,
+      externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+    });
+    const withRevertedReceipt = {
+      ...deps,
+      chainAdapters: createTestChainAdapterRegistry({
+        balanceReader,
+        signer,
+        outgoingScanner: createFakeOutgoingScanner(),
+        receiptTracker: createFakeReceiptTracker({ kind: 'reverted' }),
+        externalSigner: createFakeSigner({ address: TREASURY_ADDRESS }),
+      }),
+    };
+
+    const result = await reconcileWallets(withRevertedReceipt, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-item-failed',
+      runId: 'run-item-failed',
+    });
+
+    expect(result.counters.failed).toBe(1);
+    expect(result.counters.funded).toBe(0);
+    expect(result.run.errorCode).toBeUndefined();
+    expect(result.run.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'chain_outcome',
+          chainId: 11_155_111,
+          status: 'processed-with-failures',
+        }),
+      ]),
+    );
+    // A single chain with per-wallet failures still exits 0. C15 classifies
+    // the run as failure from the counters, which is the pre-C29 rule.
+    expect(classifyReconciliationRun(result.run)).toBe('failure');
+    expect(classifyReconcilerExit(result.run.errorCode)).toBe('success');
+    expect(reconcilerExitCode('success')).toBe(0);
+  });
 });
