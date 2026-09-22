@@ -162,6 +162,11 @@ fetched while the session is unknown; per-role button inventory (viewer has no C
 / Acknowledge, no Admin link); the change-password 401 exception holds. Bugbot's stale-401 finding was
 fixed with a session epoch and a test. **Operator action after merge:** `npm run user:create` against
 the hosted database for the first admin (docs/runbooks/create-dashboard-user.md).
+**Done 2026-09-22.** First attempt failed with only `A required dependency is currently unavailable`
+— the CLI prints `publicMessage` and hides the cause chain, the TX.28 mistake in a script. Reserved
+**TX.35**: `scripts/create-dashboard-user.ts` and `scripts/issue-credential.ts` print
+`describeErrorChain(error)` on failure (operator-facing CLI, no client to protect). Next free TX id is
+**TX.36**.
 
 Owns: `dashboard/src/pages/{login,admin}*.tsx` (new), `dashboard/src/session/*` (new); additive on
 `dashboard/src/api.ts`, `dashboard/src/App.tsx` (route table).
@@ -250,13 +255,13 @@ every time.
 
 ## Exit criteria (PRD Phase 10) and how each will be evidenced
 
-| Criterion                                                      | Evidence expected                                                                                                                  |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Operators log in with email + password; no API token is pasted | Hosted dashboard shows the login page; `GET /v1/auth/me` in the browser after login; the token input is gone from the built bundle |
-| A second user can be created and can log in                    | Admin page audit event + that user's own session row                                                                               |
-| Sidebar layout, compact panels, +/− detail                     | Screenshots in the T10.2/T10.4 PRs and on the hosted instance                                                                      |
-| Chain filter ALL / per chain, derived from registered chains   | Segments read `ALL · Ethereum Sepolia · Base Sepolia` on the hosted instance                                                       |
-| Email page shows triggers, recipients and a delivery log       | A real delivery row for the daily treasury-monitor email or a test email                                                           |
+| Criterion                                                      | Evidence expected                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operators log in with email + password; no API token is pasted | ✅ 2026-09-22: hosted `chainbank-web` serves only the sign-in form (email, password, no nav, no "Operator token" text — planner checked in a browser after #141 deployed); bundle greps `Authorization` 0 / `operatorToken` 0; first admin `81281471…` created with `npm run user:create` in the Render shell |
+| A second user can be created and can log in                    | Admin page audit event + that user's own session row                                                                                                                                                                                                                                                          |
+| Sidebar layout, compact panels, +/− detail                     | Screenshots in the T10.2/T10.4 PRs and on the hosted instance                                                                                                                                                                                                                                                 |
+| Chain filter ALL / per chain, derived from registered chains   | Segments read `ALL · Ethereum Sepolia · Base Sepolia` on the hosted instance                                                                                                                                                                                                                                  |
+| Email page shows triggers, recipients and a delivery log       | A real delivery row for the daily treasury-monitor email or a test email                                                                                                                                                                                                                                      |
 
 Phase 10 is exited only with a §20-style evidence pass against the hosted instance, like Phase 4 and
 Phase 6.
