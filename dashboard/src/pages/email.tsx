@@ -209,10 +209,14 @@ function DeliveryLog(props: EmailPageProps) {
         <p className="muted">Loading…</p>
       ) : null}
       {props.deliveriesState === 'error' ? <p className="error-inline">{props.deliveriesError}</p> : null}
-      {props.deliveriesState === 'empty' && props.deliveriesTotal === 0 ? (
+      {props.deliveriesState === 'empty' &&
+      props.deliveriesTotal === 0 &&
+      props.statusFilter === '' &&
+      props.kindFilter === '' ? (
         <p className="muted">{EMPTY_LOG}</p>
       ) : null}
-      {props.deliveriesState === 'empty' && props.deliveriesTotal > 0 ? (
+      {props.deliveriesState === 'empty' &&
+      (props.deliveriesTotal > 0 || props.statusFilter !== '' || props.kindFilter !== '') ? (
         <p className="muted">{EMPTY_FILTERED}</p>
       ) : null}
       {props.deliveriesState === 'ready' && props.deliveries.length > 0 ? (

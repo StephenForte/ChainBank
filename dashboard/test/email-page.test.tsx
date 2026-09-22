@@ -166,6 +166,25 @@ describe('email page (C36)', () => {
     expect(screen.queryByText('No emails have been sent yet')).toBeNull();
   });
 
+  it('uses the filter sentence when a status filter matches nothing', async () => {
+    installFetch((url) => {
+      if (url.includes('/v1/admin/email/deliveries')) {
+        if (url.includes('status=failed')) {
+          return jsonResponse(200, deliveryPage([], 0));
+        }
+        return jsonResponse(200, deliveryPage([sentDelivery()], 3));
+      }
+      return signedInResponse('viewer', VIEWER_PERMISSIONS, url);
+    });
+    render(<App />);
+    expect(await screen.findByRole('table', { name: 'Email deliveries' })).toBeTruthy();
+    expect(screen.queryByText('No emails have been sent yet')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'failed' } });
+    expect(await screen.findByText('No deliveries match these filters')).toBeTruthy();
+    expect(screen.queryByText('No emails have been sent yet')).toBeNull();
+  });
+
   it('keeps Send test email off the top bar, gates it on email:test, and reloads after a send', async () => {
     installFetch((url) => signedInResponse('viewer', VIEWER_PERMISSIONS, url));
     const viewer = render(<App />);

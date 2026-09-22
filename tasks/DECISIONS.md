@@ -2140,9 +2140,12 @@ export async function listEmailDeliveries(query: {
 // log. TopBar no longer takes onTestEmail and no longer renders the button.
 // Refresh stays.
 
-// Empty log: pagination.total === 0 → "No emails have been sent yet"
-//            otherwise, when this page has no rows →
+// Empty log: no status or kind filter and pagination.total === 0 →
+//            "No emails have been sent yet"
+//            every other empty page →
 //            "No deliveries match these filters"
+// pagination.total is the filtered count, so a filter that matches
+// nothing uses the second sentence.
 ```
 
 Trigger rows stay in API order. A condition's integer wei amounts (the
