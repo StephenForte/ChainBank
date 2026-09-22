@@ -145,6 +145,11 @@ export interface AlertsConfig {
 export interface ReconciliationConfig {
   /** Lookback bound for outgoing scans (C14). Passed to reconcileWallets as bigint. */
   readonly outgoingLookbackBlocks: number;
+  /**
+   * Per-chain cap on outgoing-scan RPC starts in any one-second window
+   * (RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND).
+   */
+  readonly outgoingScanMaxRequestsPerSecond: number;
 }
 
 export interface ChainBankConfig {
@@ -286,7 +291,10 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
     },
     reconciliation:
       options.serviceRole === 'cron-reconciler'
-        ? { outgoingLookbackBlocks: env.RECONCILE_OUTGOING_LOOKBACK_BLOCKS }
+        ? {
+            outgoingLookbackBlocks: env.RECONCILE_OUTGOING_LOOKBACK_BLOCKS,
+            outgoingScanMaxRequestsPerSecond: env.RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
+          }
         : undefined,
     isFundingEnabled: funding.enabled,
     isFundingKillSwitchActive: funding.killSwitch,

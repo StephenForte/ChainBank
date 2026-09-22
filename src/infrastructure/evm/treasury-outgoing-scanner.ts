@@ -2,6 +2,7 @@ import {
   createPublicClient,
   getAddress,
   http,
+  HttpRequestError,
   isAddress,
   type Chain,
   type PublicClient,
@@ -16,6 +17,7 @@ import type {
   TreasuryOutgoingTransfer,
 } from '../../app/ports.js';
 import type { ChainConfig } from '../../config/index.js';
+import { DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND } from '../../config/schema.js';
 import { ChainBankError, describeUnknownError } from '../../domain/errors.js';
 import type { Logger } from '../../observability/logger.js';
 import { resolveViemChain } from './chains.js';
@@ -26,14 +28,55 @@ const RPC_RETRY_COUNT = 2;
 const BLOCK_SCAN_CONCURRENCY = 8;
 /** Progress logs for long scans — interval, not per block (TX.9 defect 4). */
 const PROGRESS_LOG_INTERVAL_MS = 30_000;
+/**
+ * Attempts per block after a provider rate-limit rejection, including the
+ * first try. Exhaustion still fails closed: a provider that stays limited
+ * must not hang the cron or become a clean scan.
+ */
+const RATE_LIMIT_MAX_ATTEMPTS = 6;
+const RATE_LIMIT_BACKOFF_BASE_MS = 250;
+const RATE_LIMIT_BACKOFF_CAP_MS = 4_000;
+const ONE_SECOND_MS = 1_000;
+
+/**
+ * JSON-RPC codes that mean "slow down", independent of the provider sentence
+ * in `details`.
+ *
+ * The 2026-09-22 Base failure was a viem `RpcRequestError` whose `details`
+ * (copied from the JSON-RPC `error.message`) read "account limited to 50/sec".
+ * That sentence is not the predicate. QuickNode documents the same class of
+ * rejection as HTTP 429, JSON-RPC code 429, and the per-second / per-minute /
+ * method codes below, and it can reword `details` without changing the code.
+ * viem's own `shouldRetry` special-cases 429 and -32005 only, so -32007
+ * reaches this scanner on the first failure.
+ *
+ * - 429 — HTTP too many requests (`HttpRequestError.status`) and the JSON-RPC
+ *   code QuickNode puts in a 429 body (`RpcRequestError.code`).
+ * - -32005 — EIP-1474 limit exceeded (`LimitExceededRpcError`).
+ * - -32007 — QuickNode per-second request limit.
+ * - -32008 — QuickNode per-minute request limit.
+ * - -32011 — QuickNode method rate limit.
+ */
+const RATE_LIMIT_JSON_RPC_CODES: ReadonlySet<number> = new Set([429, -32_005, -32_007, -32_008, -32_011]);
 
 export interface CreateTreasuryOutgoingScannerOptions {
   readonly chain: ChainConfig;
   readonly logger: Logger;
+  /**
+   * Max RPC starts in any one-second window for this scanner instance.
+   * Each chain has its own scanner, so the cap is per chain.
+   * Defaults to {@link DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND}.
+   */
+  readonly maxRequestsPerSecond?: number;
   /** Test-only transport override. */
   readonly transport?: Transport;
-  /** Test-only clock for progress-interval assertions. */
+  /** Test-only clock for progress-interval assertions and the rate limiter. */
   readonly nowMs?: () => number;
+  /**
+   * Test-only wait. When `nowMs` is frozen, this must advance that clock;
+   * the production timer advances `Date.now`.
+   */
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -59,6 +102,15 @@ export function createTreasuryOutgoingScanner(
   });
 
   const nowMs = options.nowMs ?? (() => Date.now());
+  const sleep = options.sleep ?? delay;
+  const maxRequestsPerSecond = options.maxRequestsPerSecond ?? DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND;
+  if (!Number.isSafeInteger(maxRequestsPerSecond) || maxRequestsPerSecond <= 0) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'Outgoing scan request rate must be a positive integer',
+    );
+  }
+  const acquireRequest = createOutgoingScanTokenBucket({ maxRequestsPerSecond, nowMs, sleep });
 
   return {
     async getConfirmedTransactionCount(address: string): Promise<ConfirmedNonceResult> {
@@ -309,7 +361,13 @@ export function createTreasuryOutgoingScanner(
       readonly fromBlock: bigint;
       readonly toBlock: bigint;
     }): Promise<OutgoingScanResult> {
-      return scanOutgoingWindow(publicClient, options, { ...input, nowMs });
+      return scanOutgoingWindow(publicClient, options, {
+        ...input,
+        nowMs,
+        sleep,
+        acquireRequest,
+        maxRequestsPerSecond,
+      });
     },
   };
 }
@@ -322,6 +380,9 @@ async function scanOutgoingWindow(
     readonly fromBlock: bigint;
     readonly toBlock: bigint;
     readonly nowMs: () => number;
+    readonly sleep: (ms: number) => Promise<void>;
+    readonly acquireRequest: () => Promise<void>;
+    readonly maxRequestsPerSecond: number;
   },
 ): Promise<OutgoingScanResult> {
   if (!isAddress(input.fromAddress, { strict: false })) {
@@ -346,6 +407,7 @@ async function scanOutgoingWindow(
   let blocksScanned = 0n;
 
   try {
+    await input.acquireRequest();
     const chainCheck = await verifyConfiguredChain(publicClient, options.chain.chainId);
     if (!chainCheck.ok) {
       return {
@@ -364,6 +426,7 @@ async function scanOutgoingWindow(
         fromBlock: input.fromBlock.toString(),
         toBlock: input.toBlock.toString(),
         totalBlocks: totalBlocks.toString(),
+        maxRequestsPerSecond: input.maxRequestsPerSecond,
       },
       'Treasury outgoing scan started',
     );
@@ -383,8 +446,10 @@ async function scanOutgoingWindow(
         blockNumbers.push(n);
       }
 
+      // Concurrency bounds outstanding calls. The token bucket bounds how
+      // many of those calls may start in any one-second window.
       const blocks = await Promise.all(
-        blockNumbers.map((blockNumber) => publicClient.getBlock({ blockNumber, includeTransactions: true })),
+        blockNumbers.map((blockNumber) => readBlockForScan(publicClient, options, input, blockNumber)),
       );
 
       for (const block of blocks) {
@@ -503,4 +568,123 @@ async function verifyConfiguredChain(
       reason: 'Chain ID could not be read from the RPC endpoint.',
     };
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Token bucket for scan issuance. Capacity is R. A token is returned only
+ * once the request that took it is more than one second old, so any
+ * one-second window holds at most R starts. A bucket that refills
+ * continuously while still holding a full burst would admit almost 2R in
+ * that window, which is over a hard provider ceiling.
+ *
+ * One bucket per scanner instance. Chains do not share it.
+ */
+function createOutgoingScanTokenBucket(input: {
+  readonly maxRequestsPerSecond: number;
+  readonly nowMs: () => number;
+  readonly sleep: (ms: number) => Promise<void>;
+}): () => Promise<void> {
+  const issuedAtMs: number[] = [];
+  let queue: Promise<void> = Promise.resolve();
+
+  return function acquire() {
+    const turn = queue.then(async () => {
+      for (;;) {
+        const now = input.nowMs();
+        while (issuedAtMs.length > 0) {
+          const oldest = issuedAtMs[0];
+          if (oldest === undefined || now - oldest <= ONE_SECOND_MS) {
+            break;
+          }
+          issuedAtMs.shift();
+        }
+        if (issuedAtMs.length < input.maxRequestsPerSecond) {
+          issuedAtMs.push(now);
+          return;
+        }
+        const oldest = issuedAtMs[0];
+        if (oldest === undefined) {
+          issuedAtMs.push(now);
+          return;
+        }
+        const waitMs = Math.max(1, oldest + ONE_SECOND_MS - now + 1);
+        await input.sleep(waitMs);
+      }
+    });
+    queue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
+  };
+}
+
+async function readBlockForScan(
+  publicClient: PublicClient,
+  options: CreateTreasuryOutgoingScannerOptions,
+  input: {
+    readonly sleep: (ms: number) => Promise<void>;
+    readonly acquireRequest: () => Promise<void>;
+  },
+  blockNumber: bigint,
+) {
+  for (let attempt = 1; ; attempt += 1) {
+    await input.acquireRequest();
+    try {
+      return await publicClient.getBlock({ blockNumber, includeTransactions: true });
+    } catch (error) {
+      if (!isProviderRateLimitError(error) || attempt >= RATE_LIMIT_MAX_ATTEMPTS) {
+        throw error;
+      }
+      const backoffMs = Math.min(RATE_LIMIT_BACKOFF_CAP_MS, RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1));
+      options.logger.warn(
+        {
+          event: 'reconciliation.outgoing_scan.rate_limited',
+          blockNumber: blockNumber.toString(),
+          attempt,
+          backoffMs,
+        },
+        'Treasury outgoing scan hit the provider rate limit; retrying',
+      );
+      await input.sleep(backoffMs);
+    }
+  }
+}
+
+/**
+ * True when `error` or a cause is a provider rate-limit rejection.
+ * Walks `cause` because viem wraps `RpcRequestError` (for example
+ * `LimitExceededRpcError` around code -32005). `details` is the provider
+ * message and is intentionally not read.
+ */
+function isProviderRateLimitError(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    if (typeof current !== 'object') {
+      return false;
+    }
+    if (seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+    if (current instanceof HttpRequestError && current.status === 429) {
+      return true;
+    }
+    if (
+      'code' in current &&
+      typeof current.code === 'number' &&
+      RATE_LIMIT_JSON_RPC_CODES.has(current.code)
+    ) {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
 }

@@ -181,7 +181,13 @@ export function buildChainAdapters(config: ChainBankConfig, clock: Clock, logger
     config.chains.map((chain) => {
       const balanceReader = createBalanceReader({ chain, clock, logger });
       const receiptTracker = createTransactionReceiptTracker({ chain, clock, logger });
-      const outgoingScanner = createTreasuryOutgoingScanner({ chain, logger });
+      const outgoingScanner = createTreasuryOutgoingScanner({
+        chain,
+        logger,
+        ...(config.reconciliation === undefined
+          ? {}
+          : { maxRequestsPerSecond: config.reconciliation.outgoingScanMaxRequestsPerSecond }),
+      });
       const signers = buildChainSigners(config, chain, logger);
 
       return {

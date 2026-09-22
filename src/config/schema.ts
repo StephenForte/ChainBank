@@ -26,6 +26,13 @@ const positiveInteger = z
   .transform((value) => Number.parseInt(value, 10))
   .refine((value) => value > 0, 'must be greater than zero');
 
+/**
+ * Default per-chain cap on outgoing-scan RPC starts in any one-second window.
+ * Half of a 50 req/s provider budget: the scan's in-flight cap is separate,
+ * and viem may still retry a rejected call inside one start.
+ */
+export const DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND = 25;
+
 const nonNegativeInteger = z
   .string()
   .trim()
@@ -238,6 +245,16 @@ export const environmentSchema = z.object({
    * run (first run / long outage). Default 20000 (~2.8 days at Sepolia ~12s).
    */
   RECONCILE_OUTGOING_LOOKBACK_BLOCKS: positiveInteger.default(20_000),
+
+  /**
+   * Max JSON-RPC requests the treasury outgoing scan may start in any
+   * one-second window, per chain (TX.29). Independent of the in-flight cap
+   * inside the scanner. Default stays under a 50 req/s provider ceiling
+   * with headroom, so a deploy does not need this variable set.
+   */
+  RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND: positiveInteger.default(
+    DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
+  ),
 
   /**
    * Consecutive reconciliation-run failures before paging the operator (P4-US3 / C15).
