@@ -54,6 +54,7 @@ describe('authenticateCredential', () => {
     const actor = await authenticateCredential({ apiCredentials, clock }, generated.token);
 
     expect(actor).toEqual({
+      kind: 'api_credential',
       credentialId: 'cred-1',
       name: 'operator-local',
       role: 'operator',

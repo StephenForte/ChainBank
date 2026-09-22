@@ -1,6 +1,7 @@
 import { ChainBankError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
 import type { Role } from '../../domain/auth/roles.js';
+import type { DashboardRole } from '../../domain/auth/users.js';
 import { hashApiToken } from '../../shared/api-token.js';
 import type { ApiCredentialRepository } from '../ports.js';
 
@@ -8,6 +9,16 @@ export interface AuthenticatedActor {
   readonly credentialId: string;
   readonly name: string;
   readonly role: Role;
+  /**
+   * Who presented the credential (C31). Bearer authentication sets
+   * `api_credential`. A dashboard session sets `dashboard_user` plus `userId`.
+   * Optional so actors constructed before the field existed still typecheck.
+   */
+  readonly kind?: 'api_credential' | 'dashboard_user';
+  readonly userId?: string;
+  readonly dashboardRole?: DashboardRole;
+  /** Set only for a dashboard session, so password change can spare this row. */
+  readonly sessionId?: string;
 }
 
 export interface AuthenticateCredentialDependencies {
@@ -62,5 +73,10 @@ export async function authenticateCredential(
   // proceed unrecorded.
   await dependencies.apiCredentials.touchLastUsed(credential.id, dependencies.clock.now());
 
-  return { credentialId: credential.id, name: credential.name, role: credential.role };
+  return {
+    kind: 'api_credential',
+    credentialId: credential.id,
+    name: credential.name,
+    role: credential.role,
+  };
 }

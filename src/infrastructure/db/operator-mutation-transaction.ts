@@ -5,6 +5,8 @@ import { createApiCredentialRepository } from './repositories/api-credential-rep
 import { createAuditEventRepository } from './repositories/audit-event-repository.js';
 import { createBalanceObservationRepository } from './repositories/balance-observation-repository.js';
 import { createChainRepository } from './repositories/chain-repository.js';
+import { createDashboardSessionRepository } from './repositories/dashboard-session-repository.js';
+import { createDashboardUserRepository } from './repositories/dashboard-user-repository.js';
 import { createEnvironmentRepository } from './repositories/environment-repository.js';
 import { createFundingPolicyRepository } from './repositories/funding-policy-repository.js';
 import { createManagedWalletRepository } from './repositories/managed-wallet-repository.js';
@@ -39,6 +41,8 @@ export function createOperatorMutationTransaction(db: Database): OperatorMutatio
             projects: createProjectRepository(txDb),
             environments: createEnvironmentRepository(txDb),
             chains: createChainRepository(txDb),
+            dashboardUsers: createDashboardUserRepository(txDb),
+            dashboardSessions: createDashboardSessionRepository(txDb),
           };
           return work(uow);
         }),

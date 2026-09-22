@@ -1674,6 +1674,87 @@ No migration.
 - **Not claimed.** This does not make delegate-executed transfers from the
   Base Public 7702 account visible to C14 (D22).
 
+### C31 — Dashboard users, sessions, and login (owner: T10.1)
+
+```ts
+// Tables (migration 0011, no backfill)
+// dashboard_users: id, email (unique on lower(email)), display_name,
+//   role dashboard_role admin|operator|viewer, password_hash, password_params
+//   (scrypt N/r/p, salt, keyLength), enabled default true, created_at,
+//   updated_at, last_login_at nullable
+// dashboard_sessions: id, user_id fk, token_hash unique (SHA-256 of a 256-bit
+//   token), created_at, expires_at (absolute, not extended), last_seen_at,
+//   revoked_at nullable, index on user_id
+// actor_type gains 'dashboard_user'
+
+// Password: node:crypto scrypt, N=2^15, r=8, p=1, 16-byte salt, 64-byte key.
+// Compared with timingSafeEqual. Parameters live on the row.
+
+// HTTP
+// POST /v1/auth/login  { email, password } → 204
+//   Set-Cookie: chainbank_session=<token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=<idle>
+//   Secure is omitted only when config.app.isHosted is false.
+//   Unknown email, wrong password, and disabled user: same 401 body.
+//   Per-IP limit LOGIN_RATE_LIMIT_MAX / LOGIN_RATE_LIMIT_WINDOW_SECONDS (default 10 / 900).
+// POST /v1/auth/logout → 204, revokes the presented session, clears the cookie
+// GET  /v1/auth/me → { user: { id, email, displayName, role }, permissions }
+//   role is the dashboard role. API bearer credentials are 403.
+// POST /v1/auth/password { currentPassword, newPassword } → 204
+//   own dashboard account only; revokes that user's other sessions
+// GET/POST /v1/admin/users, PATCH /v1/admin/users/:id
+//   POST { email, displayName, role, password }
+//   PATCH { enabled?, role?, password? }
+//   requires user:manage (dashboard admin). Self disable or demotion is
+//   CREDENTIAL_SELF_MUTATION_DENIED. A password on PATCH revokes that user's
+//   sessions (all of them when the target is someone else; every other
+//   session when the admin replaces their own). Every mutation writes an
+//   audit event with actor_type dashboard_user.
+
+// Authentication hook
+// Authorization header present → bearer only; a cookie is not a fallback.
+// Header absent → cookie chainbank_session, and only if X-ChainBank-Session: 1.
+// Idle 12h slides last_seen_at (SESSION_IDLE_TTL_SECONDS, default 43200).
+// Absolute 7d is expires_at (SESSION_ABSOLUTE_TTL_SECONDS, default 604800).
+// Expired or revoked → 401, row not updated.
+
+// Role mapping onto the existing Role used by current routes
+// admin → operator permissions + user:manage
+// operator → operator
+// viewer → read-only
+// user:manage is not granted to any API credential role.
+
+// Bootstrap: scripts/create-dashboard-user.ts reads the password from stdin.
+```
+
+Local design choices (T10.1, 2026-09-22):
+
+- **Bearer wins.** A request that sends `Authorization` is authenticated as
+  that header alone. An invalid bearer with a valid session cookie is 401.
+  The cookie is consulted only when the header is absent. This is the gate
+  that keeps a stolen cookie from being mixed into a machine call, and keeps
+  a forged cookie from rescuing a bad token.
+- **CSRF.** `SameSite=Strict` plus `X-ChainBank-Session: 1`. CORS stays
+  `credentials: false`. The header is not a secret; it is proof the caller
+  can set a custom header, which a cross-site form cannot.
+- **Hashes only.** `password_hash` is scrypt. `token_hash` is SHA-256, the
+  same function as API tokens, because the session token is 256 bits of
+  generated entropy. The raw token and the password are never stored.
+  Node's default scrypt memory cap rejects N=2^15, r=8, so verification
+  passes `maxmem` of 64 MiB. That ceiling is process configuration, not a
+  stored KDF parameter.
+- **`user:manage` is not on the operator API role.** Dashboard `admin` maps
+  to the operator permission set so existing routes stay unchanged, and
+  additionally holds `user:manage`. A bearer operator cannot create users.
+- **Admin password reset.** `PATCH` with a password revokes that user's
+  live sessions. Resetting someone else revokes all of their sessions.
+  Replacing your own password revokes the others and keeps the session that
+  presented the change, matching `POST /v1/auth/password`.
+- **Rate limit key.** Cookie sessions are keyed by the SHA-256 of the
+  session token, not by IP. A present Authorization header is still keyed
+  by the bearer token. Login's tighter limit is per IP.
+- **Not claimed.** No password reset email, MFA, or OAuth. The dashboard
+  UI still pastes a token until T10.3. Bearer authentication is unchanged.
+
 ### C32 — Dashboard shell (owner: T10.2)
 
 Hash routes, design tokens, and the one +/− control for the operator console.
@@ -1794,6 +1875,10 @@ Local design choices (T10.2, 2026-09-22):
 | `TREASURY_OPERATIONAL_TARGET_BALANCE_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
 | `TREASURY_OPERATIONAL_MAXIMUM_TOP_UP_ETH`   | all                            | when operational address set | —                                                | Phase 9                                   |
 | `CHAINS`                                    | all                            | no (singular form remains)   | — (JSON array; exclusive of singular env)        | T6.2                                      |
+| `SESSION_IDLE_TTL_SECONDS`                  | web                            | no                           | `43200` (12 h, sliding)                          | T10.1                                     |
+| `SESSION_ABSOLUTE_TTL_SECONDS`              | web                            | no                           | `604800` (7 d, fixed at login)                   | T10.1                                     |
+| `LOGIN_RATE_LIMIT_MAX`                      | web                            | no                           | `10`                                             | T10.1                                     |
+| `LOGIN_RATE_LIMIT_WINDOW_SECONDS`           | web                            | no                           | `900`                                            | T10.1                                     |
 
 ## 4. Decision log (append-only)
 
@@ -1875,4 +1960,5 @@ Local design choices (T10.2, 2026-09-22):
 - 2026-09-22 — **TX.29 approved (PR #127): per-chain token bucket on the outgoing scan, default 25 starts/s, structural rate-limit retry.** Planner re-ran the gate in a scratch clone (647 unit / 132 integration) and probed with real timers and viem error classes. Earlier note that the block window should be time-based is withdrawn: the nonce gate makes steady-state Base runs free once the first scan completes. Reserved **TX.31** (finding-email copy branches on kind — the `outgoing_scan_incomplete` email told the operator to verify a transaction that does not exist) and **TX.32** (scanner retry ownership: viem transport retries bypass the bucket, per-minute limit outlasts the backoff, tip reads unpaced, test transport `retryCount` misplaced). Next free task **TX.33**.
 - 2026-09-22 — **TX.30 + TX.31 approved (PR #129).** Both domain error renderers now duck-type viem's BaseError and render shortMessage/details/code/status, never message (which carries the endpoint URL with its token and the JSON-RPC body — for a failed `eth_sendRawTransaction`, the signed raw transaction). `describeUnknownError` changed for viem errors only. Finding email advice is an exhaustive switch on the two critical kinds. Planner re-ran the gate (655 unit / 132 integration) and probed through viem's real HTTP transport. Exit still waits on the first scheduled reconciler run after TX.29's deploy (18:00 UTC candidate).
 - 2026-09-22 — **Phase 10 (Operator Console v2) planned; D24 written.** Operator asked for a sidebar layout in the style of the Figma "CRM Dashboard Customers List", user login stored in Postgres, an Admin page, an Email page (triggers, recipients, delivery log), a chain filter, and +/− detail. Plan in `tasks/p10-plan.md`: T10.1 users/sessions/login API (C31, migration 0011) ∥ T10.2 dashboard shell refactor (C32) → T10.5 email deliveries log + triggers API (C35, migration 0012) → T10.3 login + Admin page (C33) ∥ T10.4 chain filter + overview (C34) → T10.6 Email page (C36). Four assumptions flagged for the operator, chiefly that "store their key" means replacing the pasted API token with login, not storing a treasury key. Next free: C37, D25, migration 0013.
+- 2026-09-22 — **T10.1 published C31:** dashboard users and server-side sessions (migration `0011`). Login sets `chainbank_session` (`HttpOnly`, `SameSite=Strict`, `Secure` when hosted). A present Authorization header is the only credential; the cookie is accepted only with `X-ChainBank-Session: 1`. `user:manage` is dashboard-admin only. C32–C36 stay reserved by the Phase 10 plan.
 - 2026-09-22 — T10.2 published C32: dashboard hash routes, design tokens, shell primitives, and localStorage collapse keys; unacknowledged critical findings and dark-chain warnings stay outside collapse.

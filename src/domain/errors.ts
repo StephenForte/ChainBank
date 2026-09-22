@@ -28,6 +28,8 @@ export type ErrorCode =
   | 'CREDENTIAL_NOT_FOUND'
   | 'CREDENTIAL_SELF_MUTATION_DENIED'
   | 'CREDENTIAL_REVOKED'
+  | 'USER_NOT_FOUND'
+  | 'USER_EMAIL_CONFLICT'
   | 'INSUFFICIENT_ROLE'
   | 'FUNDING_DISABLED'
   | 'ENTITY_DISABLED'
@@ -76,6 +78,8 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   CREDENTIAL_NOT_FOUND: 'not_found',
   CREDENTIAL_SELF_MUTATION_DENIED: 'validation',
   CREDENTIAL_REVOKED: 'conflict',
+  USER_NOT_FOUND: 'not_found',
+  USER_EMAIL_CONFLICT: 'conflict',
   INSUFFICIENT_ROLE: 'authorization',
   FUNDING_DISABLED: 'authorization',
   ENTITY_DISABLED: 'authorization',

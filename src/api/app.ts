@@ -10,9 +10,12 @@ import { createTrustProxy } from '../config/trusted-proxy.js';
 import type { Container } from '../container.js';
 import { ChainBankError } from '../domain/errors.js';
 import { hashApiToken } from '../shared/api-token.js';
+import { readSessionToken } from './cookies.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerAdminUserRoutes } from './routes/admin-users.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerEnvironmentRoutes } from './routes/environments.js';
 import { registerFundingOperationRoutes } from './routes/funding-operations.js';
@@ -111,6 +114,8 @@ export async function buildApp(container: Container): Promise<AppInstance> {
   registerReconciliationRunRoutes(app, container);
   registerAlertRoutes(app, container);
   registerAdminRoutes(app, container);
+  registerAuthRoutes(app, container);
+  registerAdminUserRoutes(app, container);
 
   await registerDashboard(app);
 
@@ -130,9 +135,26 @@ export async function buildApp(container: Container): Promise<AppInstance> {
  */
 export function rateLimitKeyOf(request: Pick<FastifyRequest, 'headers' | 'ip'>): string {
   const authorization = request.headers.authorization;
-  const token =
-    typeof authorization === 'string' ? BEARER_PATTERN.exec(authorization.trim())?.[1] : undefined;
-  return token === undefined ? `ip:${request.ip}` : `tok:${hashApiToken(token)}`;
+  if (authorization !== undefined) {
+    if (typeof authorization !== 'string') {
+      return `ip:${request.ip}`;
+    }
+    const token = BEARER_PATTERN.exec(authorization.trim())?.[1];
+    if (token !== undefined) {
+      return `tok:${hashApiToken(token)}`;
+    }
+    if (authorization.trim() !== '') {
+      return `ip:${request.ip}`;
+    }
+  }
+
+  const cookie = request.headers.cookie;
+  const cookieHeader = typeof cookie === 'string' ? cookie : undefined;
+  const sessionToken = readSessionToken(cookieHeader);
+  if (sessionToken !== undefined) {
+    return `sess:${hashApiToken(sessionToken)}`;
+  }
+  return `ip:${request.ip}`;
 }
 
 /**
