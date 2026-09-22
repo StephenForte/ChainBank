@@ -3,7 +3,7 @@ import {
   calculateTreasurySpendableWei,
   type FundingPolicy,
 } from '../../domain/funding/funding-math.js';
-import { ChainBankError, describeUnknownError, isChainBankError } from '../../domain/errors.js';
+import { ChainBankError, describeErrorChain, isChainBankError } from '../../domain/errors.js';
 import type { Clock, IdGenerator } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import type {
@@ -195,7 +195,7 @@ export async function dispatchFunding(
         {
           correlationId: input.correlationId,
           operationId: operation.id,
-          detail: describeUnknownError(error),
+          detail: describeErrorChain(error),
         },
         'Funding dispatch failed',
       );

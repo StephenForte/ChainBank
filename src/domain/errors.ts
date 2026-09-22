@@ -174,3 +174,130 @@ export function describeUnknownError(error: unknown): string {
   }
   return 'Non-error value thrown';
 }
+
+/**
+ * How many causes to render. Deep enough for ChainBankError → DrizzleQueryError
+ * → the driver error, and shallow enough that a cyclic chain cannot hang startup.
+ */
+const MAX_ERROR_CHAIN_DEPTH = 5;
+
+const ERROR_CHAIN_SEPARATOR = ' <- ';
+
+const POSTGRES_DIAGNOSTIC_FIELDS = ['constraint', 'table', 'schema', 'detail', 'hint'] as const;
+
+/**
+ * Renders an error and its cause chain as one string for logs.
+ *
+ * Postgres driver errors are duck-typed so this module does not import `pg`.
+ * node-postgres puts the SQLSTATE on `code` and a severity token (`ERROR`,
+ * `FATAL`, …) on `severity`. A ChainBankError also has a string `code`, but
+ * never a `severity`, so those two strings are what make a driver error
+ * recognizable here. Rendered fields are `code`, `constraint`, `table`,
+ * `schema`, `detail`, and `hint`; the driver message is left out.
+ *
+ * drizzle-orm wraps that driver error in `DrizzleQueryError`, whose message
+ * embeds the SQL text and the bound parameters. Only the name is rendered.
+ * drizzle-orm 0.45 calls `super()` and never assigns `this.name`, so the
+ * instance's own `name` stays `"Error"`. The class name is `constructor.name`.
+ * Either spelling is treated as the wrapper; the message is never rendered.
+ */
+export function describeErrorChain(error: unknown): string {
+  if (error === undefined || error === null) {
+    return 'Non-error value thrown';
+  }
+
+  const seen = new Set<object>();
+  const parts: string[] = [];
+  let current: unknown = error;
+
+  for (let depth = 0; depth < MAX_ERROR_CHAIN_DEPTH; depth += 1) {
+    if (current === undefined || current === null) {
+      break;
+    }
+    if (typeof current === 'object' && seen.has(current)) {
+      break;
+    }
+    if (typeof current === 'object') {
+      seen.add(current);
+    }
+
+    parts.push(renderDiagnosticNode(current));
+    current = typeof current === 'object' ? readCause(current) : undefined;
+  }
+
+  return parts.join(ERROR_CHAIN_SEPARATOR);
+}
+
+function renderDiagnosticNode(error: unknown): string {
+  if (isChainBankError(error)) {
+    return `${error.name} ${error.code}: ${error.message}`;
+  }
+
+  if (isPostgresDriverError(error)) {
+    return renderPostgresDriverError(error);
+  }
+
+  if (isDrizzleQueryError(error)) {
+    return 'DrizzleQueryError';
+  }
+
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return 'Non-error value thrown';
+}
+
+/**
+ * `code` + `severity` are the pg-protocol error fields. Anything else with a
+ * string `code` (ChainBankError, Node system errors) is not a driver error.
+ */
+interface PostgresDriverErrorShape {
+  readonly code: string;
+  readonly severity: string;
+  readonly constraint?: unknown;
+  readonly table?: unknown;
+  readonly schema?: unknown;
+  readonly detail?: unknown;
+  readonly hint?: unknown;
+}
+
+function isPostgresDriverError(error: unknown): error is PostgresDriverErrorShape {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  return typeof Reflect.get(error, 'code') === 'string' && typeof Reflect.get(error, 'severity') === 'string';
+}
+
+function renderPostgresDriverError(error: PostgresDriverErrorShape): string {
+  const parts = [`code=${error.code}`];
+  for (const field of POSTGRES_DIAGNOSTIC_FIELDS) {
+    const value = error[field];
+    if (typeof value === 'string' && value.length > 0) {
+      parts.push(`${field}=${value}`);
+    }
+  }
+  return parts.join(' ');
+}
+
+function isDrizzleQueryError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if (Reflect.get(error, 'name') === 'DrizzleQueryError') {
+    return true;
+  }
+  const constructor: unknown = Reflect.get(error, 'constructor');
+  return typeof constructor === 'function' && constructor.name === 'DrizzleQueryError';
+}
+
+function readCause(error: object): unknown {
+  if (!('cause' in error)) {
+    return undefined;
+  }
+  return error.cause;
+}

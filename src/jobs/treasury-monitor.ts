@@ -17,7 +17,12 @@ import { checkTreasuryBalance } from '../app/treasury/check-treasury-balance.js'
 import { loadConfig } from '../config/index.js';
 import { loadDotEnvFile } from '../config/load-dotenv.js';
 import { buildContainer, type Container } from '../container.js';
-import { ChainBankError, describeUnknownError, isChainBankError } from '../domain/errors.js';
+import {
+  ChainBankError,
+  describeErrorChain,
+  describeUnknownError,
+  isChainBankError,
+} from '../domain/errors.js';
 
 const SERVICE_ROLE = 'treasury-monitor';
 
@@ -220,7 +225,7 @@ async function main(): Promise<void> {
         operationId,
         durationMs: Date.now() - startedAt,
         code: isChainBankError(error) ? error.code : undefined,
-        detail: describeUnknownError(error),
+        detail: describeErrorChain(error),
       },
       'Treasury monitor run failed',
     );

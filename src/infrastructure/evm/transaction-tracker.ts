@@ -8,7 +8,7 @@ import {
 } from 'viem';
 import type { TransactionReceiptTracker, TransactionTrackingOutcome } from '../../app/ports.js';
 import type { ChainConfig } from '../../config/index.js';
-import { ChainBankError, describeUnknownError } from '../../domain/errors.js';
+import { ChainBankError, describeErrorChain, describeUnknownError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
 import type { Logger } from '../../observability/logger.js';
 import { resolveViemChain } from './chains.js';
@@ -139,7 +139,7 @@ async function classifyMissingTransaction(
     });
   } catch (error) {
     logger.warn(
-      { transactionHash: hash, detail: describeUnknownError(error) },
+      { transactionHash: hash, detail: describeErrorChain(error) },
       'Could not probe sender nonce; treating funding transaction as still pending',
     );
     return { kind: 'pending' };

@@ -8,7 +8,7 @@ import {
 } from '../app/bootstrap/register-configured-treasury.js';
 import { proveConfiguredChainIds } from '../app/health/prove-configured-chain-ids.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
-import { describeUnknownError, isChainBankError } from '../domain/errors.js';
+import { describeErrorChain, describeUnknownError, isChainBankError } from '../domain/errors.js';
 import { buildApp } from './app.js';
 
 const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'] as const;
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
       'ChainBank web service started',
     );
   } catch (error) {
-    logger.fatal({ detail: describeUnknownError(error) }, 'Web service failed to start');
+    logger.fatal({ detail: describeErrorChain(error) }, 'Web service failed to start');
     await container.close();
     process.exitCode = 1;
   }

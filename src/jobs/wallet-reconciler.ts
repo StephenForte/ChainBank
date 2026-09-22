@@ -18,7 +18,12 @@ import {
 import { loadConfig } from '../config/index.js';
 import { loadDotEnvFile } from '../config/load-dotenv.js';
 import { buildContainer, type Container } from '../container.js';
-import { ChainBankError, describeUnknownError, isChainBankError } from '../domain/errors.js';
+import {
+  ChainBankError,
+  describeErrorChain,
+  describeUnknownError,
+  isChainBankError,
+} from '../domain/errors.js';
 import { reconciliationRuns } from '../infrastructure/db/schema.js';
 import type { Logger } from '../observability/logger.js';
 
@@ -330,7 +335,7 @@ async function main(): Promise<void> {
         correlationId,
         durationMs: Date.now() - startedAt,
         code: isChainBankError(error) ? error.code : undefined,
-        detail: describeUnknownError(error),
+        detail: describeErrorChain(error),
       },
       'Wallet reconciler run failed',
     );

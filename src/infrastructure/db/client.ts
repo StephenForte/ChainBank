@@ -3,7 +3,7 @@ import type { PeerCertificate } from 'node:tls';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import type { DatabaseConfig } from '../../config/index.js';
-import { ChainBankError, describeUnknownError } from '../../domain/errors.js';
+import { ChainBankError, describeErrorChain, describeUnknownError } from '../../domain/errors.js';
 import type { Logger } from '../../observability/logger.js';
 import * as schema from './schema.js';
 
@@ -190,7 +190,7 @@ export async function withDatabaseErrors<T>(operation: string, run: () => Promis
       throw error;
     }
     throw new ChainBankError('DATABASE_UNAVAILABLE', `Database operation "${operation}" failed`, {
-      context: { operation, detail: describeUnknownError(error) },
+      context: { operation, detail: describeErrorChain(error) },
       cause: error,
     });
   }
