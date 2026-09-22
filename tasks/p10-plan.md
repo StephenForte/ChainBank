@@ -82,6 +82,17 @@ model OK. `[deps]` must merge first. Every task carries the commit-and-merge con
 
 ### T10.1 🔴 Users, sessions, login API — **C31**, migration **0011** `[none]`
 
+**Status 2026-09-22: ✅ reviewed and approved in
+[#134](https://github.com/StephenForte/ChainBank/pull/134); operator merges.** Planner re-ran the gate
+in a scratch clone (668 unit / 48 dashboard / 138 integration), proved 0011 forward on a populated
+0010 database (rows intact, `actor_type` gains `dashboard_user` and is usable after the migration),
+and probed six cases the worker's suite does not cover: bearer beside a valid cookie authenticates as
+the credential; CSRF header values other than `1` and a duplicated cookie are rejected; disabling a
+user kills a live session on the next request; absolute and idle expiry are enforced to the
+millisecond; viewer → read-only and admin → operator reach the existing routes; unknown email and
+wrong password are indistinguishable in body and within 3× in time. Bootstrap after T10.3:
+`npm run user:create` against the hosted database creates the first admin.
+
 Owns: `src/domain/auth/users.ts` (new), `src/app/auth/{login,logout,session,users}*.ts` (new),
 `src/infrastructure/db/repositories/{dashboard-user,dashboard-session}-repository.ts` (new),
 `src/api/routes/auth.ts` (new), `src/api/routes/admin-users.ts` (new), `scripts/create-dashboard-user.ts`
