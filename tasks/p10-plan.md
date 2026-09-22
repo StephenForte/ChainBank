@@ -241,6 +241,17 @@ Owns: `src/infrastructure/email/recording-email-sender.ts` (new), `src/infrastru
 
 ### T10.6 🟢 Email page — **C36** `[T10.2, T10.5]`
 
+**Status 2026-09-22: ✅ approved in
+[#146](https://github.com/StephenForte/ChainBank/pull/146) at `9af2894` after one round; operator merges.** Round
+one was changes-requested for one wrong sentence, fix proven in the planner's clone and adopted with an
+eighth test and a C36 correction; re-review gate 687 unit / 76 dashboard / 143 integration. Original
+finding: The
+worker dismissed Bugbot's finding that `pagination.total` is the filtered count, so a filter matching
+nothing said "No emails have been sent yet". The brief's "when `total` is 0" wording caused it (planner's
+ambiguity); the two-line fix keys the sentence on "no filter active" and passed the worker's seven
+page tests unchanged. Everything else verified: scratch-clone gate 687 unit / 75 dashboard / 143
+integration; `.env` untouched; test-email button moved with both role gates tested.
+
 Owns: `dashboard/src/pages/email.tsx` (new); additive on `dashboard/src/api.ts`.
 
 - Triggers table (from C35) and deliveries table with status pills, kind filter, and a +/− per row
