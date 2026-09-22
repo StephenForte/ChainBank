@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Dispatch, SetStateAction } from 'react';
 import type { ReconciliationRunResource, TreasuryResource } from '../src/api';
-import { ReconciliationPanel } from '../src/panels/reconciliation-panel';
+import { ReconciliationPanel } from '../src/pages/panels/reconciliation-panel';
 
 afterEach(() => {
   cleanup();

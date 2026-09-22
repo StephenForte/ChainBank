@@ -1,7 +1,7 @@
-import type { ManagedWalletResource } from '../api';
-import { CollapsibleSection } from '../collapsible-section';
-import * as dash from '../dashboard-shared';
-import type { LoadState, WalletBalanceView } from '../dashboard-shared';
+import type { ManagedWalletResource } from '../../api';
+import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
+import * as dash from '../../dashboard-shared';
+import type { LoadState, WalletBalanceView } from '../../dashboard-shared';
 
 export type ManagedWalletsPanelProps = {
   readonly checkListedWalletBalances: (activeToken: string) => Promise<void>;
@@ -237,7 +237,11 @@ export function ManagedWalletsPanel({
                 </table>
               </div>
               {!showDisabledInline ? (
-                <CollapsibleSection title="Disabled wallets" count={disabled.length}>
+                <CollapsibleSection
+                  title="Disabled wallets"
+                  count={disabled.length}
+                  storageKey={COLLAPSE_STORAGE_KEYS.disabledWallets}
+                >
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>

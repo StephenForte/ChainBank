@@ -1674,6 +1674,103 @@ No migration.
 - **Not claimed.** This does not make delegate-executed transfers from the
   Base Public 7702 account visible to C14 (D22).
 
+### C32 — Dashboard shell (owner: T10.2)
+
+Hash routes, design tokens, and the one +/− control for the operator console.
+No migration. No new runtime dependency. `dashboard/src/api.ts` is unchanged.
+Fetch and mutation logic stay in `App.tsx`; pages only compose the existing panels.
+
+```ts
+type DashboardRoute =
+  'overview' | 'treasuries' | 'wallets' | 'funding' | 'reconciliation' | 'alerts' | 'email' | 'admin';
+
+// useHashRoute() — unknown or empty hash renders overview. Back/forward are hashchange.
+('#/overview'); // service readiness + treasuries
+('#/treasuries');
+('#/wallets'); // projects, environments, managed wallets, funding policy
+('#/funding'); // funding history
+('#/reconciliation');
+('#/alerts'); // the same reconciliation panel; no second alert fetch
+('#/email'); // placeholder until T10.6
+('#/admin'); // placeholder until T10.3
+
+function Sidebar(props: {
+  route: DashboardRoute;
+  tokenInput: string;
+  setTokenInput: (value: string) => void;
+  sessionBusy: boolean;
+  onSaveToken: (event: FormEvent) => void;
+}): JSX.Element;
+function TopBar(props: {
+  title: string;
+  sessionBusy: boolean;
+  token: string;
+  onRefresh: () => void;
+  onTestEmail: () => Promise<void>;
+  sessionError: string | undefined;
+}): JSX.Element;
+function Page(props: { children: ReactNode }): JSX.Element;
+function StatCard(props: { label: string; value: string; hint?: string; icon?: ReactNode }): JSX.Element;
+function DataTable(props: { caption?: string; children: ReactNode }): JSX.Element;
+function CollapsibleSection(props: {
+  title: string;
+  count?: number;
+  defaultOpen?: boolean; // default false
+  storageKey?: string; // uncontrolled localStorage
+  open?: boolean; // controlled; parent persists
+  onToggle?: () => void;
+  bodyId?: string;
+  children: ReactNode;
+}): JSX.Element;
+
+// :root tokens. Healthy / warning / critical classes map onto success / warning / danger.
+('--page');
+('--card');
+('--hairline');
+('--accent');
+('--accent-soft');
+('--ink');
+('--muted');
+('--success');
+('--success-soft');
+('--warning');
+('--warning-soft');
+('--danger');
+('--danger-soft');
+('--radius');
+('--shadow');
+
+// Collapse keys. Absent or 'false' is collapsed. 'true' is expanded.
+('chainbank.reconciliationDetailExpanded'); // existing — warnings, acknowledged run findings, run history
+('chainbank.acknowledgedFindingsExpanded'); // existing — acknowledged alert rows
+('chainbank.collapse.readinessDetail');
+('chainbank.collapse.disabledProjects');
+('chainbank.collapse.disabledEnvironments');
+('chainbank.collapse.disabledWallets');
+('chainbank.collapse.disabledWalletPolicies');
+('chainbank.collapse.treasury.<treasuryId>'); // thresholds, last checked, last error, kind blurb
+('chainbank.collapse.treasuryAutoFunding');
+('chainbank.collapse.policy.<walletId>');
+```
+
+Local design choices (T10.2, 2026-09-22):
+
+- **C20 on the shell.** Unacknowledged critical findings are not children of
+  `CollapsibleSection`. The compact row's own +/− still only opens the field
+  grid; the kind, value, and Acknowledge control stay in the document with no
+  click. A `chain_outcome` of `unavailable` stays outside that collapse too
+  (C30). Pages that do not mount the reconciliation panel repeat the open
+  finding-alert count in a strip that cannot be collapsed, linking to
+  `#/alerts`. That strip reads state `App` already loaded. It is not a new
+  fetch. `#/alerts` renders the reconciliation panel.
+- **C22.** One `PanelErrorBoundary` per panel section, including Session in the
+  sidebar. The root boundary in `main.tsx` is unchanged. `PanelBody` stays,
+  because each page is still one function component.
+- **Below 900px** the sidebar becomes a top nav. At 1280px the content column
+  does not scroll horizontally; wide tables scroll inside `.table-wrap`.
+- **Token control** stays in the sidebar user block. Refresh and Test email
+  stay in the top bar. T10.3 removes the token control.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -1778,3 +1875,4 @@ No migration.
 - 2026-09-22 — **TX.29 approved (PR #127): per-chain token bucket on the outgoing scan, default 25 starts/s, structural rate-limit retry.** Planner re-ran the gate in a scratch clone (647 unit / 132 integration) and probed with real timers and viem error classes. Earlier note that the block window should be time-based is withdrawn: the nonce gate makes steady-state Base runs free once the first scan completes. Reserved **TX.31** (finding-email copy branches on kind — the `outgoing_scan_incomplete` email told the operator to verify a transaction that does not exist) and **TX.32** (scanner retry ownership: viem transport retries bypass the bucket, per-minute limit outlasts the backoff, tip reads unpaced, test transport `retryCount` misplaced). Next free task **TX.33**.
 - 2026-09-22 — **TX.30 + TX.31 approved (PR #129).** Both domain error renderers now duck-type viem's BaseError and render shortMessage/details/code/status, never message (which carries the endpoint URL with its token and the JSON-RPC body — for a failed `eth_sendRawTransaction`, the signed raw transaction). `describeUnknownError` changed for viem errors only. Finding email advice is an exhaustive switch on the two critical kinds. Planner re-ran the gate (655 unit / 132 integration) and probed through viem's real HTTP transport. Exit still waits on the first scheduled reconciler run after TX.29's deploy (18:00 UTC candidate).
 - 2026-09-22 — **Phase 10 (Operator Console v2) planned; D24 written.** Operator asked for a sidebar layout in the style of the Figma "CRM Dashboard Customers List", user login stored in Postgres, an Admin page, an Email page (triggers, recipients, delivery log), a chain filter, and +/− detail. Plan in `tasks/p10-plan.md`: T10.1 users/sessions/login API (C31, migration 0011) ∥ T10.2 dashboard shell refactor (C32) → T10.5 email deliveries log + triggers API (C35, migration 0012) → T10.3 login + Admin page (C33) ∥ T10.4 chain filter + overview (C34) → T10.6 Email page (C36). Four assumptions flagged for the operator, chiefly that "store their key" means replacing the pasted API token with login, not storing a treasury key. Next free: C37, D25, migration 0013.
+- 2026-09-22 — T10.2 published C32: dashboard hash routes, design tokens, shell primitives, and localStorage collapse keys; unacknowledged critical findings and dark-chain warnings stay outside collapse.

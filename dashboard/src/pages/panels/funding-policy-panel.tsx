@@ -1,12 +1,12 @@
-import type { ManagedWalletResource } from '../api';
-import { CollapsibleSection } from '../collapsible-section';
+import type { ManagedWalletResource } from '../../api';
+import { CollapsibleSection, COLLAPSE_STORAGE_KEYS, policyDetailStorageKey } from '../../collapsible-section';
 import {
   formatTimestamp,
   formatWeiAsEther,
   listSpansMultipleChains,
   partitionByEnabled,
   type LoadState,
-} from '../dashboard-shared';
+} from '../../dashboard-shared';
 
 export type FundingPolicyPanelProps = {
   readonly loadPolicyPanel: (activeToken: string) => Promise<void>;
@@ -84,39 +84,41 @@ export function FundingPolicyPanel({
             {wallet.address}
           </a>
         </p>
-        {wallet.policy === null ? (
-          <p className="muted">No funding policy set.</p>
-        ) : (
-          <dl className="facts">
-            <div>
-              <dt>Minimum</dt>
-              <dd className="mono">
-                {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
-                <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
-              </dd>
-            </div>
-            <div>
-              <dt>Target</dt>
-              <dd className="mono">
-                {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
-                <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
-              </dd>
-            </div>
-            <div>
-              <dt>Maximum top-up</dt>
-              <dd className="mono">
-                {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
-                <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
-              </dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd>
-                v{String(wallet.policy.version)} · updated {formatTimestamp(wallet.policy.updatedAt)}
-              </dd>
-            </div>
-          </dl>
-        )}
+        <CollapsibleSection title="Policy detail" storageKey={policyDetailStorageKey(wallet.id)}>
+          {wallet.policy === null ? (
+            <p className="muted">No funding policy set.</p>
+          ) : (
+            <dl className="facts">
+              <div>
+                <dt>Minimum</dt>
+                <dd className="mono">
+                  {formatWeiAsEther(wallet.policy.minimumBalanceWei)} ETH
+                  <div className="muted tiny">{wallet.policy.minimumBalanceWei} wei</div>
+                </dd>
+              </div>
+              <div>
+                <dt>Target</dt>
+                <dd className="mono">
+                  {formatWeiAsEther(wallet.policy.targetBalanceWei)} ETH
+                  <div className="muted tiny">{wallet.policy.targetBalanceWei} wei</div>
+                </dd>
+              </div>
+              <div>
+                <dt>Maximum top-up</dt>
+                <dd className="mono">
+                  {formatWeiAsEther(wallet.policy.maximumTopUpWei)} ETH
+                  <div className="muted tiny">{wallet.policy.maximumTopUpWei} wei</div>
+                </dd>
+              </div>
+              <div>
+                <dt>Version</dt>
+                <dd>
+                  v{String(wallet.policy.version)} · updated {formatTimestamp(wallet.policy.updatedAt)}
+                </dd>
+              </div>
+            </dl>
+          )}
+        </CollapsibleSection>
         {!isEditing ? (
           <button type="button" className="secondary" onClick={() => beginEditPolicy(wallet)}>
             Edit policy
@@ -220,7 +222,11 @@ export function FundingPolicyPanel({
           {policyState === 'ready' ? (
             <>
               <div className="policy-list">{enabled.map(renderPolicyCard)}</div>
-              <CollapsibleSection title="Disabled wallet policies" count={disabled.length}>
+              <CollapsibleSection
+                title="Disabled wallet policies"
+                count={disabled.length}
+                storageKey={COLLAPSE_STORAGE_KEYS.disabledWalletPolicies}
+              >
                 <div className="policy-list">{disabled.map(renderPolicyCard)}</div>
               </CollapsibleSection>
             </>

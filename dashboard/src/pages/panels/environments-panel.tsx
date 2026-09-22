@@ -1,6 +1,6 @@
-import type { EnvironmentResource } from '../api';
-import { CollapsibleSection } from '../collapsible-section';
-import { enabledBadge, formatTimestamp, partitionByEnabled, type LoadState } from '../dashboard-shared';
+import type { EnvironmentResource } from '../../api';
+import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
+import { enabledBadge, formatTimestamp, partitionByEnabled, type LoadState } from '../../dashboard-shared';
 
 export type EnvironmentsPanelProps = {
   readonly loadProjectEnvironments: (activeToken: string, projectId: string) => Promise<void>;
@@ -109,7 +109,11 @@ export function EnvironmentsPanel({
                   />
                 ))}
               </ul>
-              <CollapsibleSection title="Disabled environments" count={disabled.length}>
+              <CollapsibleSection
+                title="Disabled environments"
+                count={disabled.length}
+                storageKey={COLLAPSE_STORAGE_KEYS.disabledEnvironments}
+              >
                 <ul className="plain env-list">
                   {disabled.map((environment) => (
                     <EnvironmentRow

@@ -1,6 +1,6 @@
-import { CollapsibleSection } from '../collapsible-section';
-import type { ReadinessResponse } from '../api';
-import { statusClass, type LoadState } from '../dashboard-shared';
+import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
+import type { ReadinessResponse } from '../../api';
+import { statusClass, type LoadState } from '../../dashboard-shared';
 
 export type ServiceReadinessPanelProps = {
   readonly loadReadiness: () => Promise<void>;
@@ -39,7 +39,10 @@ export function ServiceReadinessPanel({
               </li>
             ))}
           </ul>
-          <CollapsibleSection title="Heartbeats and component detail">
+          <CollapsibleSection
+            title="Heartbeats and component detail"
+            storageKey={COLLAPSE_STORAGE_KEYS.readinessDetail}
+          >
             <ul className="plain">
               {readiness.components.map((component) => (
                 <li key={`detail-${component.name}`}>
