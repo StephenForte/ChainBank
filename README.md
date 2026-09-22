@@ -156,7 +156,7 @@ npm run build:server
 npm run cron:wallet-reconciler
 ```
 
-Loads the `cron-reconciler` config role: DB, chain/RPC, funding/signer settings, thresholds, lookback (`RECONCILE_OUTGOING_LOOKBACK_BLOCKS`), and email (for failure alerting). Signing-capable — set `TREASURY_PRIVATE_KEY` only when `FUNDING_ENABLED=true`. Records a `wallet-reconciler` heartbeat, closes the pool before exit. Funding disabled / kill switch exits **zero** (policy); DB/RPC run-level failures exit **non-zero**.
+Loads the `cron-reconciler` config role: DB, chain/RPC, funding/signer settings, thresholds, lookback (`RECONCILE_OUTGOING_LOOKBACK_BLOCKS`), per-chain outgoing-scan request rate (`RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND`, default 25), and email (for failure alerting). Signing-capable — set `TREASURY_PRIVATE_KEY` only when `FUNDING_ENABLED=true`. Records a `wallet-reconciler` heartbeat, closes the pool before exit. Funding disabled / kill switch exits **zero** (policy); DB/RPC run-level failures exit **non-zero**.
 
 ## Scripts
 
