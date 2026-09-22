@@ -11,6 +11,21 @@ Authority: `tasks/ChainBank_PRD_v4.md` Phase 6, `tasks/DECISIONS.md` (D15–D18,
 from it.
 
 Baseline at plan write: `origin/main` **`3a3fbcd`** (merge of PR #112, merged 2026-09-01).
+
+## Status — updated 2026-09-22
+
+`main` at **`a5554a2`**. Phase 6 is three tasks in; **zero open PRs**.
+
+| Task                        | Contract | PR                                                         | Outcome                                                                                                                                                                                |
+| --------------------------- | -------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TX.26 security gates        | —        | [#114](https://github.com/StephenForte/ChainBank/pull/114) | merged. `fast-uri` and `fastify` advisories cleared; root cause was a stale exact pin in `overrides`                                                                                   |
+| TX.27 trustProxy (D19)      | —        | #114                                                       | merged. CVE-2026-16732 closed; planner reproduced the forgery against fastify 5.10.0 and confirmed it fails closed after                                                               |
+| **T6.1** registry           | **C26**  | [#115](https://github.com/StephenForte/ChainBank/pull/115) | merged. Planner probe: same EOA on two chains resolves to each chain's own signer; sabotaging to address-only lookup reproduces the wrong-chain send and reddens 2 of 5 registry tests |
+| **T6.2** multi-chain config | **C27**  | [#116](https://github.com/StephenForte/ChainBank/pull/116) | merged. Planner diffed resolved config on `main` vs branch under the deployed Render env across 6 role/mode combinations — byte-identical                                              |
+| **T6.3** Base Sepolia       | **C28**  | —                                                          | next                                                                                                                                                                                   |
+
+Verified baselines on `a5554a2`: **67 files / 613 unit**, 41 dashboard, **25 files / 126 integration**, 0 skipped, `npm audit --omit=dev --audit-level=high` clean.
+
 Verified at plan write: `npm run test:unit` → **62 files / 572 tests passed, 0 skipped**.
 PR #112 CI green on all eleven checks. Integration tests run inside the CI job named
 **`migration validation`** (it applies migrations, runs `db:check`, then
@@ -167,7 +182,7 @@ the day Base is registered, which is why they are fixed before it is.
 | **T6.4** | C29      | Per-chain failure isolation in treasury-monitor and wallet-reconciler                                             | medium   |
 | **T6.5** | C30      | Chain surfacing in API responses and the dashboard                                                                | cheap    |
 
-**Run order:** **TX.26 (security gates, above)** → T6.1 → T6.2 → T6.3 → (T6.4 ∥ T6.5).
+**Run order:** ~~TX.26~~ → ~~T6.1~~ → ~~T6.2~~ → **T6.3** → (T6.4 ∥ T6.5). The first three are merged.
 
 T6.1–T6.3 are **serial**, not a parallelism failure: all three rewrite `src/container.ts`
 and `src/config/index.ts`, and running them concurrently produces one unresolvable
@@ -224,6 +239,51 @@ chains, and the loader fails closed with `INVALID_CONFIGURATION` otherwise.
 Read `tasks/DECISIONS.md` CB-04 before touching `render.yaml`: funding gates are
 `sync: false` on web and wallet-reconciler for a reason that already caused an 18-hour
 silent funding outage.
+
+## D20 — Base Sepolia RPC must be a dedicated endpoint, not the public one
+
+Operator, 2026-09-22. SettlementOS uses `https://sepolia.base.org`, and that endpoint is correct
+and healthy — it reports chain `0x14a34` (84532) in ~180 ms. It is adequate for the low-volume
+paths: treasury balance reads, nonce lookups, funding dispatch, a handful of calls per run.
+
+**It cannot serve the C14 outgoing scan.** Measured 2026-09-22 against the scanner's real access
+pattern (`getBlockByNumber` with `includeTransactions: true`, 8-way concurrency, matching
+`BLOCK_SCAN_CONCURRENCY`): **9 of 48 calls returned HTTP 429 "over rate limit" within 1.4 s.**
+Base Sepolia produces ~2 s blocks, so a 6-hourly reconciler window is **~10,800 blocks** versus
+Sepolia's ~1,800, against a `RECONCILE_OUTGOING_LOOKBACK_BLOCKS` cap of 20,000. The scan needs
+10,800 such calls and the endpoint refuses at 48.
+
+The scanner fails closed (C14), so this would not fabricate a clean report — it would return
+`incomplete` on every run, and **crash-orphan detection would never work on Base**. That is the
+check that caught the operator's manual 1 ETH transfer during Phase 4.
+
+Caveat on the measurement: one sample, 48 calls, from the planner's IP; Render's IP has its own
+budget. The conclusion survives the caveat because the shortfall is ~225×, which retries
+(`RPC_RETRY_COUNT = 2`) cannot close.
+
+**Decision:** provision a **QuickNode Base Sepolia endpoint** (QuickNode supports `base-sepolia` /
+84532; the account today holds only the two Ethereum Sepolia endpoints `L2_Render` and `L2_mini`).
+Rejected: scanning on the public endpoint with C14 scoped to Sepolia only, which would weaken C14
+per chain; and shrinking the Base scan window, for which no viable size has been measured.
+
+The operator provisions it — the planner did not create a billable resource. **RPC URLs carry API
+keys: they stay `sync: false` in `render.yaml` and are never written into these documents.**
+
+## D21 — Base reuses the Sepolia treasury EOA
+
+Operator, 2026-09-22. The same EOA is valid on every EVM chain, so Base Sepolia registers the same
+external (and, per D16, operational) addresses as Sepolia. One process-global key produces one
+signer per chain, which is already what C26 and C27 build — no new secret env vars, no `render.yaml`
+key change, nothing new under the CB-04 sync hazard. Rejected: a distinct Base key, which would
+limit blast radius but add secrets to two services.
+
+C26 makes this safe: signer lookup is keyed by `(chain id, address)`, so a shared address cannot
+draw another chain's signer. Under the pre-T6.1 address-only lookup this decision would have been
+the trigger for a silent wrong-chain send.
+
+**Operator prerequisites before T6.3 deploys** (not before it merges — the PR is source, the
+endpoint and funds are deployment config): the QuickNode Base Sepolia endpoint exists, and both the
+Public and Private treasury addresses are funded on Base Sepolia.
 
 ## T6.3 — Base Sepolia (C28)
 
