@@ -67,7 +67,6 @@ function renderPanel(options: {
     <ReconciliationPanel
       loadReconciliationRuns={() => Promise.resolve()}
       loadFindingAlerts={() => Promise.resolve()}
-      token="operator-token"
       findingAlertsState="ready"
       findingAlertsError={undefined}
       openFindingAlerts={[]}

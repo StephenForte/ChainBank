@@ -1,10 +1,10 @@
 import type { ProjectResource } from '../../api';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
 import { enabledBadge, partitionByEnabled, type LoadState } from '../../dashboard-shared';
+import { useHasPermission } from '../../session/permissions';
 
 export type ProjectsPanelProps = {
-  readonly loadProjectsPanel: (activeToken: string) => Promise<void>;
-  readonly token: string;
+  readonly loadProjectsPanel: () => Promise<void>;
   readonly projectsState: LoadState;
   readonly projectsError: string | undefined;
   readonly projectsTotal: number;
@@ -21,12 +21,14 @@ function ProjectCard({
   busyId,
   onSelect,
   onToggle,
+  canWrite,
 }: {
   readonly project: ProjectResource;
   readonly isSelected: boolean;
   readonly busyId: string | undefined;
   readonly onSelect: (projectId: string) => void;
   readonly onToggle: (project: ProjectResource) => Promise<void>;
+  readonly canWrite: boolean;
 }) {
   return (
     <article className={isSelected ? 'entity-card is-selected' : 'entity-card'}>
@@ -45,14 +47,16 @@ function ProjectCard({
         >
           {isSelected ? 'Selected' : 'Select'}
         </button>
-        <button
-          type="button"
-          className={project.enabled ? 'secondary' : undefined}
-          disabled={busyId === project.id}
-          onClick={() => void onToggle(project)}
-        >
-          {project.enabled ? 'Disable' : 'Enable'}
-        </button>
+        {canWrite ? (
+          <button
+            type="button"
+            className={project.enabled ? 'secondary' : undefined}
+            disabled={busyId === project.id}
+            onClick={() => void onToggle(project)}
+          >
+            {project.enabled ? 'Disable' : 'Enable'}
+          </button>
+        ) : null}
       </div>
     </article>
   );
@@ -60,7 +64,6 @@ function ProjectCard({
 
 export function ProjectsPanel({
   loadProjectsPanel,
-  token,
   projectsState,
   projectsError,
   projectsTotal,
@@ -70,18 +73,18 @@ export function ProjectsPanel({
   projectBusyId,
   onToggleProject,
 }: ProjectsPanelProps) {
+  const canWrite = useHasPermission('project:write');
   const { enabled, disabled } = partitionByEnabled(projects);
 
   return (
     <section className="panel">
       <div className="panel-head">
         <h2 className="section-title">Projects</h2>
-        <button type="button" className="secondary" onClick={() => void loadProjectsPanel(token)}>
+        <button type="button" className="secondary" onClick={() => void loadProjectsPanel()}>
           Reload
         </button>
       </div>
-      {token === '' ? <p className="muted">Paste an operator token to load projects.</p> : null}
-      {token !== '' && projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
+      {projectsState === 'loading' ? <p className="muted">Loading…</p> : null}
       {projectsState === 'error' ? <p className="error-inline">{projectsError}</p> : null}
       {projectsState === 'empty' ? (
         <p className="muted">No projects returned ({String(projectsTotal)} total).</p>
@@ -102,6 +105,7 @@ export function ProjectsPanel({
                 busyId={projectBusyId}
                 onSelect={setSelectedProjectId}
                 onToggle={onToggleProject}
+                canWrite={canWrite}
               />
             ))}
           </div>
@@ -119,6 +123,7 @@ export function ProjectsPanel({
                   busyId={projectBusyId}
                   onSelect={setSelectedProjectId}
                   onToggle={onToggleProject}
+                  canWrite={canWrite}
                 />
               ))}
             </div>

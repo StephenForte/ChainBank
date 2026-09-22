@@ -69,8 +69,56 @@ export class ApiClientError extends Error {
   }
 }
 
-async function parseJson(response: Response): Promise<unknown> {
-  return response.json() as Promise<unknown>;
+/** C31 accepts only this literal. It is not a secret; it proves the caller can set a header. */
+export const SESSION_HEADER_NAME = 'X-ChainBank-Session';
+export const SESSION_HEADER_VALUE = '1';
+
+const CURRENT_PASSWORD_REJECTED = 'The current password is not valid.';
+
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler | undefined;
+let sessionEpoch = 0;
+
+/**
+ * Invalidates 401s from requests that started in an earlier session. An
+ * in-flight call can return 401 after the next login; that response belongs
+ * to the session that started it.
+ */
+export function bumpDashboardSessionEpoch(): void {
+  sessionEpoch += 1;
+}
+
+/** Installed by `useSession` for the signed-in → signed-out transition. */
+export function setDashboardUnauthorizedHandler(handler: UnauthorizedHandler | undefined): void {
+  unauthorizedHandler = handler;
+}
+
+function notifyUnauthorized(path: string, message: string, epoch: number): void {
+  if (epoch !== sessionEpoch) {
+    return;
+  }
+  // Login has no session yet. A wrong current password is 401 while the cookie
+  // remains valid (change-password.ts). `GET /v1/auth/me` is the probe that
+  // decides unknown → signed-out and must not announce "session ended".
+  if (path === '/v1/auth/login' || path === '/v1/auth/me') {
+    return;
+  }
+  if (path === '/v1/auth/password' && message === CURRENT_PASSWORD_REJECTED) {
+    return;
+  }
+  unauthorizedHandler?.();
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  if (response.status === 204) {
+    return undefined;
+  }
+  const text = await response.text();
+  if (text.trim() === '') {
+    return undefined;
+  }
+  return JSON.parse(text) as unknown;
 }
 
 function isApiErrorBody(value: unknown): value is ApiErrorBody {
@@ -89,69 +137,30 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
 }
 
 export async function fetchReadiness(): Promise<ReadinessResponse> {
-  const response = await fetch('/health/ready');
-  const body: unknown = await parseJson(response);
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
-    }
-    throw new Error(`Readiness check failed (${String(response.status)})`);
-  }
+  const body = await authorizedJson('/health/ready');
   return body as ReadinessResponse;
 }
 
-export async function listTreasuries(token: string): Promise<readonly TreasuryResource[]> {
-  const response = await fetch('/v1/treasuries', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body: unknown = await parseJson(response);
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
-    }
-    throw new Error(`Failed to list treasuries (${String(response.status)})`);
-  }
+export async function listTreasuries(): Promise<readonly TreasuryResource[]> {
+  const body = await authorizedJson('/v1/treasuries');
   return (body as { data: readonly TreasuryResource[] }).data;
 }
 
 export async function checkTreasury(
-  token: string,
   treasuryId: string,
 ): Promise<{ readonly data: TreasuryResource; readonly check: { readonly outcome: string } }> {
-  const response = await fetch(`/v1/treasuries/${treasuryId}/check`, {
+  const body = await authorizedJson(`/v1/treasuries/${treasuryId}/check`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
     body: '{}',
   });
-  const body: unknown = await parseJson(response);
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
-    }
-    throw new Error(`Treasury check failed (${String(response.status)})`);
-  }
   return body as { data: TreasuryResource; check: { outcome: string } };
 }
 
-export async function sendTestEmail(token: string): Promise<void> {
-  const response = await fetch('/v1/admin/email/test', {
+export async function sendTestEmail(): Promise<void> {
+  await authorizedJson('/v1/admin/email/test', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
     body: '{}',
   });
-  const body: unknown = await parseJson(response);
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
-    }
-    throw new Error(`Test email failed (${String(response.status)})`);
-  }
 }
 
 export interface FundingTransactionResource {
@@ -214,7 +223,6 @@ export interface FundingTransactionListResponse {
 }
 
 export async function listFundingTransactions(
-  token: string,
   query: {
     readonly projectId?: string;
     readonly status?: string;
@@ -241,16 +249,7 @@ export async function listFundingTransactions(
   }
 
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const response = await fetch(`/v1/funding-transactions${suffix}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body: unknown = await parseJson(response);
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
-    }
-    throw new Error(`Failed to list funding transactions (${String(response.status)})`);
-  }
+  const body = await authorizedJson(`/v1/funding-transactions${suffix}`);
   return body as FundingTransactionListResponse;
 }
 
@@ -278,7 +277,6 @@ export interface ReconciliationRunResource {
 }
 
 export async function listReconciliationRuns(
-  token: string,
   query: {
     readonly limit?: number;
     readonly offset?: number;
@@ -292,7 +290,7 @@ export async function listReconciliationRuns(
     params.set('offset', String(query.offset));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const body = await authorizedJson(token, `/v1/reconciliation-runs${suffix}`);
+  const body = await authorizedJson(`/v1/reconciliation-runs${suffix}`);
   return body as PaginatedListResponse<ReconciliationRunResource>;
 }
 
@@ -315,7 +313,6 @@ export interface AlertResource {
 }
 
 export async function listAlerts(
-  token: string,
   query: {
     readonly limit?: number;
     readonly offset?: number;
@@ -341,12 +338,12 @@ export async function listAlerts(
     params.set('entityType', query.entityType);
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const body = await authorizedJson(token, `/v1/alerts${suffix}`);
+  const body = await authorizedJson(`/v1/alerts${suffix}`);
   return body as PaginatedListResponse<AlertResource>;
 }
 
-export async function acknowledgeAlert(token: string, alertId: string, note: string): Promise<AlertResource> {
-  const body = await authorizedJson(token, `/v1/alerts/${alertId}/acknowledge`, {
+export async function acknowledgeAlert(alertId: string, note: string): Promise<AlertResource> {
+  const body = await authorizedJson(`/v1/alerts/${alertId}/acknowledge`, {
     method: 'POST',
     body: JSON.stringify({ note }),
   });
@@ -357,15 +354,12 @@ export async function acknowledgeAlert(token: string, alertId: string, note: str
  * C20 finding-identity acknowledgement — works whether or not an alert row
  * already exists (persist-only open + ack when creating; no email).
  */
-export async function acknowledgeFinding(
-  token: string,
-  input: {
-    readonly entityId: string;
-    readonly note: string;
-    readonly metadata?: Readonly<Record<string, unknown>>;
-  },
-): Promise<AlertResource> {
-  const body = await authorizedJson(token, '/v1/alerts/acknowledge-finding', {
+export async function acknowledgeFinding(input: {
+  readonly entityId: string;
+  readonly note: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}): Promise<AlertResource> {
+  const body = await authorizedJson('/v1/alerts/acknowledge-finding', {
     method: 'POST',
     body: JSON.stringify({
       entityId: input.entityId,
@@ -443,18 +437,38 @@ export interface PaginatedListResponse<T> {
   };
 }
 
-async function authorizedJson(token: string, path: string, init: RequestInit = {}): Promise<unknown> {
+async function authorizedJson(path: string, init: RequestInit = {}): Promise<unknown> {
+  const epoch = sessionEpoch;
   const headers = new Headers(init.headers);
-  headers.set('Authorization', `Bearer ${token}`);
+  headers.set(SESSION_HEADER_NAME, SESSION_HEADER_VALUE);
   if (init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(path, { ...init, headers });
-  const body: unknown = await parseJson(response);
+  const response = await fetch(path, {
+    ...init,
+    credentials: 'same-origin',
+    headers,
+  });
+  let body: unknown;
+  try {
+    body = await readResponseBody(response);
+  } catch (caught) {
+    if (!response.ok) {
+      throw new Error(`Request failed (${String(response.status)})`, { cause: caught });
+    }
+    throw caught;
+  }
   if (!response.ok) {
     if (isApiErrorBody(body)) {
-      throw new ApiClientError(response.status, body);
+      const error = new ApiClientError(response.status, body);
+      if (response.status === 401) {
+        notifyUnauthorized(path, error.message, epoch);
+      }
+      throw error;
+    }
+    if (response.status === 401) {
+      notifyUnauthorized(path, '', epoch);
     }
     throw new Error(`Request failed (${String(response.status)})`);
   }
@@ -462,7 +476,6 @@ async function authorizedJson(token: string, path: string, init: RequestInit = {
 }
 
 export async function listProjects(
-  token: string,
   query: {
     readonly limit?: number;
     readonly offset?: number;
@@ -476,12 +489,11 @@ export async function listProjects(
     params.set('offset', String(query.offset));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const body = await authorizedJson(token, `/v1/projects${suffix}`);
+  const body = await authorizedJson(`/v1/projects${suffix}`);
   return body as PaginatedListResponse<ProjectResource>;
 }
 
 export async function listProjectEnvironments(
-  token: string,
   projectId: string,
   query: {
     readonly limit?: number;
@@ -496,33 +508,28 @@ export async function listProjectEnvironments(
     params.set('offset', String(query.offset));
   }
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const body = await authorizedJson(token, `/v1/projects/${projectId}/environments${suffix}`);
+  const body = await authorizedJson(`/v1/projects/${projectId}/environments${suffix}`);
   return body as PaginatedListResponse<EnvironmentResource>;
 }
 
-export async function setProjectEnabled(
-  token: string,
-  projectId: string,
-  enabled: boolean,
-): Promise<ProjectResource> {
-  const body = await authorizedJson(token, `/v1/projects/${projectId}`, {
+export async function setProjectEnabled(projectId: string, enabled: boolean): Promise<ProjectResource> {
+  const body = await authorizedJson(`/v1/projects/${projectId}`, {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
   });
   return (body as { data: ProjectResource }).data;
 }
 
-export async function getEnvironment(token: string, environmentId: string): Promise<EnvironmentResource> {
-  const body = await authorizedJson(token, `/v1/environments/${environmentId}`);
+export async function getEnvironment(environmentId: string): Promise<EnvironmentResource> {
+  const body = await authorizedJson(`/v1/environments/${environmentId}`);
   return (body as { data: EnvironmentResource }).data;
 }
 
 export async function setEnvironmentEnabled(
-  token: string,
   environmentId: string,
   enabled: boolean,
 ): Promise<EnvironmentResource> {
-  const body = await authorizedJson(token, `/v1/environments/${environmentId}`, {
+  const body = await authorizedJson(`/v1/environments/${environmentId}`, {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
   });
@@ -530,7 +537,6 @@ export async function setEnvironmentEnabled(
 }
 
 export async function listWallets(
-  token: string,
   query: {
     readonly projectId?: string;
     readonly environmentId?: string;
@@ -558,7 +564,7 @@ export async function listWallets(
   }
 
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const body = await authorizedJson(token, `/v1/wallets${suffix}`);
+  const body = await authorizedJson(`/v1/wallets${suffix}`);
   return body as PaginatedListResponse<ManagedWalletResource>;
 }
 
@@ -582,17 +588,13 @@ export type WalletBalanceResponse =
       };
     };
 
-export async function getWalletBalance(token: string, walletId: string): Promise<WalletBalanceResponse> {
-  const body = await authorizedJson(token, `/v1/wallets/${walletId}/balance`);
+export async function getWalletBalance(walletId: string): Promise<WalletBalanceResponse> {
+  const body = await authorizedJson(`/v1/wallets/${walletId}/balance`);
   return body as WalletBalanceResponse;
 }
 
-export async function setWalletEnabled(
-  token: string,
-  walletId: string,
-  enabled: boolean,
-): Promise<ManagedWalletResource> {
-  const body = await authorizedJson(token, `/v1/wallets/${walletId}`, {
+export async function setWalletEnabled(walletId: string, enabled: boolean): Promise<ManagedWalletResource> {
+  const body = await authorizedJson(`/v1/wallets/${walletId}`, {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
   });
@@ -600,11 +602,10 @@ export async function setWalletEnabled(
 }
 
 export async function setWalletReconciliationEnabled(
-  token: string,
   walletId: string,
   reconciliationEnabled: boolean,
 ): Promise<ManagedWalletResource> {
-  const body = await authorizedJson(token, `/v1/wallets/${walletId}`, {
+  const body = await authorizedJson(`/v1/wallets/${walletId}`, {
     method: 'PATCH',
     body: JSON.stringify({ reconciliationEnabled }),
   });
@@ -612,7 +613,6 @@ export async function setWalletReconciliationEnabled(
 }
 
 export async function setWalletPolicy(
-  token: string,
   walletId: string,
   policy: {
     readonly minimumBalanceWei: string;
@@ -620,9 +620,115 @@ export async function setWalletPolicy(
     readonly maximumTopUpWei: string;
   },
 ): Promise<ManagedWalletResource> {
-  const body = await authorizedJson(token, `/v1/wallets/${walletId}/policy`, {
+  const body = await authorizedJson(`/v1/wallets/${walletId}/policy`, {
     method: 'PUT',
     body: JSON.stringify(policy),
   });
   return (body as { data: ManagedWalletResource }).data;
+}
+
+export type DashboardRole = 'admin' | 'operator' | 'viewer';
+
+export interface DashboardUserResource {
+  readonly id: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: DashboardRole;
+  readonly enabled: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly lastLoginAt: string | null;
+}
+
+export interface CurrentUserResponse {
+  readonly user: {
+    readonly id: string;
+    readonly email: string;
+    readonly displayName: string;
+    readonly role: DashboardRole;
+  };
+  readonly permissions: readonly string[];
+}
+
+export interface ApiCredentialResource {
+  readonly id: string;
+  readonly name: string;
+  readonly role: string;
+  readonly tokenPrefix: string;
+  readonly enabled: boolean;
+  readonly revokedAt: string | null;
+  readonly lastUsedAt: string | null;
+  readonly createdAt: string;
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
+  const body = await authorizedJson('/v1/auth/me');
+  return body as CurrentUserResponse;
+}
+
+export async function loginWithPassword(email: string, password: string): Promise<void> {
+  await authorizedJson('/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function logoutSession(): Promise<void> {
+  await authorizedJson('/v1/auth/logout', { method: 'POST' });
+}
+
+export async function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await authorizedJson('/v1/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+export async function listDashboardUsers(): Promise<PaginatedListResponse<DashboardUserResource>> {
+  const body = await authorizedJson('/v1/admin/users?limit=50&offset=0');
+  return body as PaginatedListResponse<DashboardUserResource>;
+}
+
+export async function createDashboardUser(input: {
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: DashboardRole;
+  readonly password: string;
+}): Promise<DashboardUserResource> {
+  const body = await authorizedJson('/v1/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return (body as { data: DashboardUserResource }).data;
+}
+
+export async function updateDashboardUser(
+  userId: string,
+  patch: {
+    readonly enabled?: boolean;
+    readonly role?: DashboardRole;
+    readonly password?: string;
+  },
+): Promise<DashboardUserResource> {
+  const body = await authorizedJson(`/v1/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  return (body as { data: DashboardUserResource }).data;
+}
+
+export async function listApiCredentials(): Promise<PaginatedListResponse<ApiCredentialResource>> {
+  const body = await authorizedJson('/v1/admin/credentials?limit=50&offset=0');
+  return body as PaginatedListResponse<ApiCredentialResource>;
+}
+
+export async function mutateApiCredential(
+  credentialId: string,
+  action: 'enable' | 'disable' | 'revoke',
+): Promise<ApiCredentialResource> {
+  const body = await authorizedJson(`/v1/admin/credentials/${credentialId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action }),
+  });
+  return (body as { data: ApiCredentialResource }).data;
 }

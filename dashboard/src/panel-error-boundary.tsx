@@ -91,7 +91,7 @@ function fallbackCopy(
       return {
         title: 'Session controls could not be rendered',
         body:
-          'The operator token was not cleared. Reload the page to recover. Open the browser ' +
+          'Sign-in controls could not be rendered. Reload the page to recover. Open the browser ' +
           'console for the error detail.',
       };
     }

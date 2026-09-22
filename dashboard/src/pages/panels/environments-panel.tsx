@@ -1,11 +1,11 @@
 import type { EnvironmentResource } from '../../api';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
 import { enabledBadge, formatTimestamp, partitionByEnabled, type LoadState } from '../../dashboard-shared';
+import { useHasPermission } from '../../session/permissions';
 
 export type EnvironmentsPanelProps = {
-  readonly loadProjectEnvironments: (activeToken: string, projectId: string) => Promise<void>;
-  readonly loadEnvironmentDetail: (activeToken: string, environmentId: string) => Promise<void>;
-  readonly token: string;
+  readonly loadProjectEnvironments: (projectId: string) => Promise<void>;
+  readonly loadEnvironmentDetail: (environmentId: string) => Promise<void>;
   readonly selectedProjectId: string;
   readonly envLookupId: string;
   readonly setEnvLookupId: (value: string) => void;
@@ -21,14 +21,12 @@ export type EnvironmentsPanelProps = {
 
 function EnvironmentRow({
   environment,
-  token,
   setEnvLookupId,
   loadEnvironmentDetail,
 }: {
   readonly environment: EnvironmentResource;
-  readonly token: string;
   readonly setEnvLookupId: (value: string) => void;
-  readonly loadEnvironmentDetail: (activeToken: string, environmentId: string) => Promise<void>;
+  readonly loadEnvironmentDetail: (environmentId: string) => Promise<void>;
 }) {
   return (
     <li>
@@ -37,7 +35,7 @@ function EnvironmentRow({
         className="linkish"
         onClick={() => {
           setEnvLookupId(environment.id);
-          void loadEnvironmentDetail(token, environment.id);
+          void loadEnvironmentDetail(environment.id);
         }}
       >
         <code>{environment.slug}</code>
@@ -53,7 +51,6 @@ function EnvironmentRow({
 export function EnvironmentsPanel({
   loadProjectEnvironments,
   loadEnvironmentDetail,
-  token,
   selectedProjectId,
   envLookupId,
   setEnvLookupId,
@@ -66,6 +63,7 @@ export function EnvironmentsPanel({
   environmentBusy,
   onToggleEnvironment,
 }: EnvironmentsPanelProps) {
+  const canWrite = useHasPermission('project:write');
   const { enabled, disabled } = partitionByEnabled(projectEnvironments);
 
   return (
@@ -76,20 +74,17 @@ export function EnvironmentsPanel({
           type="button"
           className="secondary"
           onClick={() => {
-            void loadProjectEnvironments(token, selectedProjectId);
+            void loadProjectEnvironments(selectedProjectId);
             if (envLookupId.trim() !== '') {
-              void loadEnvironmentDetail(token, envLookupId);
+              void loadEnvironmentDetail(envLookupId);
             }
           }}
         >
           Reload
         </button>
       </div>
-      {token === '' ? <p className="muted">Paste an operator token to load environments.</p> : null}
-      {token !== '' && selectedProjectId === '' ? (
-        <p className="muted">Select a project to list its environments.</p>
-      ) : null}
-      {token !== '' && selectedProjectId !== '' ? (
+      {selectedProjectId === '' ? <p className="muted">Select a project to list its environments.</p> : null}
+      {selectedProjectId !== '' ? (
         <>
           {envListState === 'loading' ? <p className="muted">Loading environments…</p> : null}
           {envListState === 'error' ? <p className="error-inline">{envListError}</p> : null}
@@ -103,7 +98,6 @@ export function EnvironmentsPanel({
                   <EnvironmentRow
                     key={environment.id}
                     environment={environment}
-                    token={token}
                     setEnvLookupId={setEnvLookupId}
                     loadEnvironmentDetail={loadEnvironmentDetail}
                   />
@@ -119,7 +113,6 @@ export function EnvironmentsPanel({
                     <EnvironmentRow
                       key={environment.id}
                       environment={environment}
-                      token={token}
                       setEnvLookupId={setEnvLookupId}
                       loadEnvironmentDetail={loadEnvironmentDetail}
                     />
@@ -133,7 +126,7 @@ export function EnvironmentsPanel({
             className="filters row"
             onSubmit={(event) => {
               event.preventDefault();
-              void loadEnvironmentDetail(token, envLookupId);
+              void loadEnvironmentDetail(envLookupId);
             }}
           >
             <label htmlFor="environment-id">Environment ID</label>
@@ -179,14 +172,16 @@ export function EnvironmentsPanel({
                   <dd>{formatTimestamp(environmentDetail.updatedAt)}</dd>
                 </div>
               </dl>
-              <button
-                type="button"
-                className={environmentDetail.enabled ? 'secondary' : undefined}
-                disabled={environmentBusy}
-                onClick={() => void onToggleEnvironment(environmentDetail)}
-              >
-                {environmentDetail.enabled ? 'Disable' : 'Enable'}
-              </button>
+              {canWrite ? (
+                <button
+                  type="button"
+                  className={environmentDetail.enabled ? 'secondary' : undefined}
+                  disabled={environmentBusy}
+                  onClick={() => void onToggleEnvironment(environmentDetail)}
+                >
+                  {environmentDetail.enabled ? 'Disable' : 'Enable'}
+                </button>
+              ) : null}
             </article>
           ) : null}
         </>
