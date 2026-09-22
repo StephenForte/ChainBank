@@ -189,6 +189,12 @@ export const environmentSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().trim().optional(),
   RATE_LIMIT_MAX: positiveInteger.default(120),
   RATE_LIMIT_WINDOW_SECONDS: positiveInteger.default(60),
+  LOGIN_RATE_LIMIT_MAX: positiveInteger.default(10),
+  LOGIN_RATE_LIMIT_WINDOW_SECONDS: positiveInteger.default(900),
+  /** 12 hours. Idle expiry slides `last_seen_at` and the cookie Max-Age. */
+  SESSION_IDLE_TTL_SECONDS: positiveInteger.default(43_200),
+  /** 7 days. Absolute expiry is fixed at login. */
+  SESSION_ABSOLUTE_TTL_SECONDS: positiveInteger.default(604_800),
   /**
    * Comma-separated addresses or CIDRs of peers allowed to set X-Forwarded-*.
    * Matched against the socket address. A hop count is not accepted: it

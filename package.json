@@ -23,6 +23,7 @@
     "db:migrate:built": "node dist/src/infrastructure/db/migrate.js",
     "db:check": "drizzle-kit check",
     "credential:issue": "tsx scripts/issue-credential.ts",
+    "user:create": "tsx scripts/create-dashboard-user.ts",
     "test": "vitest run --project unit",
     "test:unit": "vitest run --project unit",
     "test:dashboard": "vitest run --project dashboard",

@@ -91,17 +91,23 @@ cp .env.example .env
 # Migrate and start
 npm run db:migrate
 npm run credential:issue -- --name "operator-local" --role operator
+npm run user:create -- --email operator@example.com --name "Local operator" --role admin
 npm run dev
 ```
 
 The API listens on `http://localhost:3000` by default.
 
 Issue a credential once; the raw token is printed a single time and only the hash is stored.
+Create a dashboard user the same way. The password is read from stdin (not argv, not the environment), must be at least 12 characters, and is stored only as a scrypt hash. The command prints the user id and refuses an email that already exists.
+
+```bash
+npm run user:create -- --email operator@example.com --name "Local operator" --role admin
+```
 
 ### Endpoints
 
-All `/v1` routes require a bearer token. Wei quantities cross the API as decimal
-strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
+All `/v1` routes require a bearer token or a dashboard session, except `POST /v1/auth/login`.
+Wei quantities cross the API as decimal strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
 
 | Method  | Path                                | Auth                               | Purpose                                                                                                                                          |
 | ------- | ----------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -130,6 +136,13 @@ strings; timestamps are ISO 8601 UTC; list endpoints are paginated.
 | `GET`   | `/v1/admin/credentials`             | operator                           | List API credentials (paginated; no secrets)                                                                                                     |
 | `PATCH` | `/v1/admin/credentials/:id`         | operator                           | Disable, revoke, or re-enable a credential (`action`)                                                                                            |
 | `POST`  | `/v1/admin/email/test`              | operator                           | Send test email                                                                                                                                  |
+| `POST`  | `/v1/auth/login`                    | none                               | Dashboard login. Sets `chainbank_session` (HttpOnly, SameSite=Strict).                                                                           |
+| `POST`  | `/v1/auth/logout`                   | session or bearer                  | Revokes the presented dashboard session and clears the cookie.                                                                                   |
+| `GET`   | `/v1/auth/me`                       | dashboard session                  | Current user and permissions.                                                                                                                    |
+| `POST`  | `/v1/auth/password`                 | dashboard session                  | Change your own password. Revokes your other sessions.                                                                                           |
+| `GET`   | `/v1/admin/users`                   | dashboard admin                    | List dashboard users (no secrets).                                                                                                               |
+| `POST`  | `/v1/admin/users`                   | dashboard admin                    | Create a dashboard user.                                                                                                                         |
+| `PATCH` | `/v1/admin/users/:id`               | dashboard admin                    | Enable, change role, or reset a password. An admin cannot disable or demote themself.                                                            |
 
 Example:
 

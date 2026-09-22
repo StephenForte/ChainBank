@@ -78,6 +78,13 @@
       "when": 1788217468116,
       "tag": "0010_treasuries_one_enabled_kind_per_chain",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790097985580,
+      "tag": "0011_dashboard_users_sessions",
+      "breakpoints": true
     }
   ]
 }

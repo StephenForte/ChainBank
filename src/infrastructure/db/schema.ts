@@ -38,7 +38,10 @@ export const apiRoleEnum = pgEnum('api_role', [
   'cron-reconciler',
 ]);
 
-export const actorTypeEnum = pgEnum('actor_type', ['api_credential', 'cron', 'system']);
+export const actorTypeEnum = pgEnum('actor_type', ['api_credential', 'cron', 'system', 'dashboard_user']);
+
+/** Dashboard accounts (C31). Not the API credential `api_role` enum. */
+export const dashboardRoleEnum = pgEnum('dashboard_role', ['admin', 'operator', 'viewer']);
 
 /** Contract C4 — funding_operations.status */
 export const fundingOperationStatusEnum = pgEnum('funding_operation_status', [
@@ -212,6 +215,56 @@ export const apiCredentials = pgTable(
   (table) => [
     uniqueIndex('api_credentials_token_hash_key').on(table.tokenHash),
     uniqueIndex('api_credentials_name_key').on(table.name),
+  ],
+);
+
+/**
+ * Dashboard login accounts (C31). Password and session secrets are hashes
+ * only — AGENTS.md §7.6. No treasury key is stored here.
+ */
+export const dashboardUsers = pgTable(
+  'dashboard_users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    displayName: text('display_name').notNull(),
+    role: dashboardRoleEnum('role').notNull(),
+    /** Hex scrypt derived key. Never the password. */
+    passwordHash: text('password_hash').notNull(),
+    /**
+     * scrypt N/r/p, salt, and key length. Parameters live on the row so a
+     * later cost change does not require a second verification code path.
+     */
+    passwordParams: jsonb('password_params').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  },
+  (table) => [uniqueIndex('dashboard_users_email_lower_key').on(sql`lower(${table.email})`)],
+);
+
+/**
+ * Server-side dashboard sessions (C31). `token_hash` is SHA-256 of a 256-bit
+ * random token. The raw token exists only in the HttpOnly cookie.
+ * `expires_at` is the absolute lifetime and is not extended on use.
+ */
+export const dashboardSessions = pgTable(
+  'dashboard_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => dashboardUsers.id, { onDelete: 'restrict' }),
+    tokenHash: text('token_hash').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('dashboard_sessions_token_hash_key').on(table.tokenHash),
+    index('dashboard_sessions_user_id_idx').on(table.userId),
   ],
 );
 
@@ -580,6 +633,8 @@ export type TreasuryRow = typeof treasuries.$inferSelect;
 export type TreasuryFundingPolicyRow = typeof treasuryFundingPolicies.$inferSelect;
 export type BalanceObservationRow = typeof balanceObservations.$inferSelect;
 export type ApiCredentialRow = typeof apiCredentials.$inferSelect;
+export type DashboardUserRow = typeof dashboardUsers.$inferSelect;
+export type DashboardSessionRow = typeof dashboardSessions.$inferSelect;
 export type ApiCredentialScopeRow = typeof apiCredentialScopes.$inferSelect;
 export type AuditEventRow = typeof auditEvents.$inferSelect;
 export type ServiceHeartbeatRow = typeof serviceHeartbeats.$inferSelect;

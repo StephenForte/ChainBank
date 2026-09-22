@@ -105,6 +105,13 @@ export interface ApiSecurityConfig {
   readonly corsAllowedOrigins: readonly string[];
   readonly rateLimitMax: number;
   readonly rateLimitWindowSeconds: number;
+  /** Per-IP cap for POST /v1/auth/login. Tighter than the global limiter. */
+  readonly loginRateLimitMax: number;
+  readonly loginRateLimitWindowSeconds: number;
+  /** Sliding idle lifetime of a dashboard session cookie and `last_seen_at`. */
+  readonly sessionIdleTtlSeconds: number;
+  /** Absolute lifetime stored as `expires_at` at login. Not extended on use. */
+  readonly sessionAbsoluteTtlSeconds: number;
   /** Canonical `address/prefix` entries. X-Forwarded-* is honoured only for a peer in this set. */
   readonly trustedProxyCidrs: readonly string[];
   /**
@@ -968,10 +975,22 @@ function buildApiSecurityConfig(
     );
   }
 
+  if (env.SESSION_IDLE_TTL_SECONDS >= env.SESSION_ABSOLUTE_TTL_SECONDS) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'SESSION_IDLE_TTL_SECONDS must be shorter than SESSION_ABSOLUTE_TTL_SECONDS',
+      { publicMessage: 'The service is misconfigured.' },
+    );
+  }
+
   return {
     corsAllowedOrigins,
     rateLimitMax: env.RATE_LIMIT_MAX,
     rateLimitWindowSeconds: env.RATE_LIMIT_WINDOW_SECONDS,
+    loginRateLimitMax: env.LOGIN_RATE_LIMIT_MAX,
+    loginRateLimitWindowSeconds: env.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    sessionIdleTtlSeconds: env.SESSION_IDLE_TTL_SECONDS,
+    sessionAbsoluteTtlSeconds: env.SESSION_ABSOLUTE_TTL_SECONDS,
     trustedProxyCidrs,
     fundingHealthToken: env.FUNDING_HEALTH_TOKEN,
   };

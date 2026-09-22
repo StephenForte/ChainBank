@@ -1,3 +1,4 @@
+import type { DashboardRole } from './users.js';
 import { ChainBankError } from '../errors.js';
 
 /**
@@ -51,6 +52,11 @@ export const PERMISSIONS = [
    * read-only — acknowledgement is a human attestation, not a read.
    */
   'alert:acknowledge',
+  /**
+   * Manage dashboard user accounts (C31). Granted only to a dashboard `admin`,
+   * not to the API `operator` role — a machine credential must not create users.
+   */
+  'user:manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -81,6 +87,51 @@ const PERMISSIONS_BY_ROLE: Readonly<Record<Role, readonly Permission[]>> = {
   // Scheduled reconciliation only (C14). API roles cannot trigger the sweep.
   'cron-reconciler': ['reconciliation:run', 'treasury:replenish'],
 };
+
+/**
+ * Permissions a dashboard session carries (C31).
+ *
+ * `admin` is the operator set plus `user:manage`. `operator` is the operator
+ * set alone. `viewer` is read-only. API roles do not receive `user:manage`.
+ */
+export function permissionsForDashboardRole(role: DashboardRole): readonly Permission[] {
+  switch (role) {
+    case 'admin':
+      return [...PERMISSIONS_BY_ROLE.operator, 'user:manage'];
+    case 'operator':
+      return PERMISSIONS_BY_ROLE.operator;
+    case 'viewer':
+      return PERMISSIONS_BY_ROLE['read-only'];
+    default:
+      return assertNeverDashboardRole(role);
+  }
+}
+
+export interface ActorPermissionSource {
+  readonly kind?: 'api_credential' | 'dashboard_user';
+  readonly role: Role;
+  readonly dashboardRole?: DashboardRole;
+}
+
+/** Effective permissions for an actor. A missing dashboard role grants nothing. */
+export function permissionsForActor(actor: ActorPermissionSource): readonly Permission[] {
+  if (actor.kind === 'dashboard_user') {
+    return actor.dashboardRole === undefined ? [] : permissionsForDashboardRole(actor.dashboardRole);
+  }
+  return PERMISSIONS_BY_ROLE[actor.role];
+}
+
+export function assertActorPermission(actor: ActorPermissionSource, permission: Permission): void {
+  if (!permissionsForActor(actor).includes(permission)) {
+    throw new ChainBankError('INSUFFICIENT_ROLE', `Actor lacks permission "${permission}"`, {
+      context: { role: actor.role, permission, kind: actor.kind ?? 'api_credential' },
+    });
+  }
+}
+
+function assertNeverDashboardRole(role: never): never {
+  throw new Error(`Unhandled dashboard role: ${String(role)}`);
+}
 
 export function isRole(value: unknown): value is Role {
   return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
