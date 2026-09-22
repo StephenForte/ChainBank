@@ -5,20 +5,33 @@ export type StatCardProps = {
   readonly value: string;
   readonly hint?: string;
   readonly icon?: ReactNode;
+  /** Hash route. The whole card is the link. */
+  readonly href?: string;
+  /** Short marker, such as an unfiltered alert count. */
+  readonly badge?: string;
 };
 
-/** White stat tile. T10.4 fills the overview row; this is the shell primitive. */
-export function StatCard({ label, value, hint, icon }: StatCardProps) {
-  return (
-    <article className="stat-card">
+/** White stat tile. The overview row links each card to its page. */
+export function StatCard({ label, value, hint, icon, href, badge }: StatCardProps) {
+  const body = (
+    <>
       {icon !== undefined ? <span className="stat-card-icon">{icon}</span> : null}
       <div className="stat-card-copy">
         <p className="stat-card-value">{value}</p>
         <p className="stat-card-label">{label}</p>
         {hint !== undefined ? <p className="stat-card-hint">{hint}</p> : null}
       </div>
-    </article>
+      {badge !== undefined ? <span className="stat-card-badge">{badge}</span> : null}
+    </>
   );
+  if (href !== undefined) {
+    return (
+      <a className="stat-card" href={href}>
+        {body}
+      </a>
+    );
+  }
+  return <article className="stat-card">{body}</article>;
 }
 
 export type DataTableProps = {

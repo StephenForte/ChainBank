@@ -1,4 +1,5 @@
 import type { FundingTransactionResource } from '../../api';
+import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import {
   formatTimestamp,
   fundingTransactionKindLabel,
@@ -20,6 +21,8 @@ export type FundingHistoryPanelProps = {
   readonly fundingHistoryError: string | undefined;
   readonly fundingHistoryTotal: number;
   readonly fundingHistory: readonly FundingTransactionResource[];
+  /** Absent means every chain, so existing callers keep today's rows. */
+  readonly visibleChainIds?: VisibleChainIds;
 };
 
 export function FundingHistoryPanel({
@@ -34,8 +37,10 @@ export function FundingHistoryPanel({
   fundingHistoryError,
   fundingHistoryTotal,
   fundingHistory,
+  visibleChainIds = 'ALL',
 }: FundingHistoryPanelProps) {
-  const chainsMixed = listSpansMultipleChains(fundingHistory);
+  const visibleHistory = fundingHistory.filter((row) => matchesChainFilter(row, visibleChainIds));
+  const chainsMixed = listSpansMultipleChains(visibleHistory);
   return (
     <section className="panel">
       <div className="panel-head">
@@ -90,10 +95,17 @@ export function FundingHistoryPanel({
         {fundingHistoryState === 'empty' ? (
           <p className="muted">No funding transactions returned ({String(fundingHistoryTotal)} total).</p>
         ) : null}
-        {fundingHistoryState === 'ready' ? (
+        {fundingHistoryState === 'ready' && fundingHistory.length > 0 && visibleHistory.length === 0 ? (
+          <p className="muted">
+            {fundingHistoryTotal > fundingHistory.length
+              ? 'No funding transactions for this chain on the loaded page.'
+              : 'No funding transactions on this chain.'}
+          </p>
+        ) : null}
+        {fundingHistoryState === 'ready' && visibleHistory.length > 0 ? (
           <>
             <p className="muted">
-              Showing {String(fundingHistory.length)} of {String(fundingHistoryTotal)} transactions (newest
+              Showing {String(visibleHistory.length)} of {String(fundingHistoryTotal)} transactions (newest
               first).
             </p>
             <div className="table-wrap">
@@ -111,7 +123,7 @@ export function FundingHistoryPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {fundingHistory.map((row) => (
+                  {visibleHistory.map((row) => (
                     <tr key={row.id}>
                       <td>{fundingTransactionKindLabel(row)}</td>
                       <td>

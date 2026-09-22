@@ -1,4 +1,5 @@
 import type { AlertResource, ReconciliationRunResource, TreasuryResource } from '../../api';
+import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import { CollapsibleSection } from '../../collapsible-section';
 import * as dash from '../../dashboard-shared';
 import type { FindingView, LoadState } from '../../dashboard-shared';
@@ -34,6 +35,13 @@ export type ReconciliationPanelProps = {
   readonly onAcknowledgeFindingByEntity: (finding: FindingView, entityId: string) => Promise<void>;
   readonly reconciliationDetailExpanded: boolean;
   readonly onToggleReconciliationDetail: () => void;
+  /** Absent means every chain, so existing callers keep today's rows. */
+  readonly visibleChainIds?: VisibleChainIds;
+  /**
+   * Alerts page: unacknowledged criticals from every chain stay listed.
+   * Informational rows still follow the filter.
+   */
+  readonly listEveryCritical?: boolean;
 };
 
 export function ReconciliationPanel({
@@ -65,8 +73,18 @@ export function ReconciliationPanel({
   onAcknowledgeFindingByEntity,
   reconciliationDetailExpanded,
   onToggleReconciliationDetail,
+  visibleChainIds = 'ALL',
+  listEveryCritical = false,
 }: ReconciliationPanelProps) {
   const canAcknowledgeFindings = useHasPermission('alert:acknowledge');
+  const alertMatches = (alert: AlertResource): boolean =>
+    matchesChainFilter({ chainId: dash.chainIdForAlert(alert, treasuries) }, visibleChainIds);
+  const visibleOpenAlerts = listEveryCritical ? openFindingAlerts : openFindingAlerts.filter(alertMatches);
+  const visibleAcknowledgedAlerts = acknowledgedFindingAlerts.filter(alertMatches);
+  const chainNameForAlert = (alert: AlertResource): string | undefined => {
+    const chainId = dash.chainIdForAlert(alert, treasuries);
+    return chainId === undefined ? undefined : dash.chainDisplayNameForChainId(chainId, treasuries);
+  };
   return (
     <section className="panel">
       <div className="panel-head">
@@ -89,20 +107,21 @@ export function ReconciliationPanel({
 */}
         {findingAlertsState === 'loading' ? <p className="muted">Loading finding alerts…</p> : null}
         {findingAlertsState === 'error' ? <p className="error-inline">{findingAlertsError}</p> : null}
-        {openFindingAlerts.length > 0 ? (
+        {visibleOpenAlerts.length > 0 ? (
           <div className="finding-alert-banner" role="alert">
             <p className="finding-alert-banner-title">
-              {openFindingAlerts.length === 1
+              {visibleOpenAlerts.length === 1
                 ? '1 unacknowledged critical finding'
-                : `${String(openFindingAlerts.length)} unacknowledged critical findings`}
+                : `${String(visibleOpenAlerts.length)} unacknowledged critical findings`}
             </p>
             <p className="muted">
               These stay open until an operator records a note. Re-observation of the same transfer will not
               re-alert after acknowledgement.
             </p>
             <div className="finding-list recon-critical-always">
-              {openFindingAlerts.map((alert) => {
+              {visibleOpenAlerts.map((alert) => {
                 const meta = alert.metadata;
+                const chainName = chainNameForAlert(alert);
                 const transactionHash = dash.asOptionalString(meta.transactionHash) ?? alert.entityId;
                 const toAddress = dash.asOptionalString(meta.toAddress);
                 const valueWei = dash.asOptionalString(meta.valueWei);
@@ -115,6 +134,9 @@ export function ReconciliationPanel({
                     <div className="finding-head">
                       <span className="badge badge-bad badge-square">unacknowledged</span>
                       <code>{dash.asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                      {chainName !== undefined ? (
+                        <span className="finding-chain-name">{chainName}</span>
+                      ) : null}
                     </div>
                     <dl className="facts">
                       <div>
@@ -179,13 +201,13 @@ export function ReconciliationPanel({
             </div>
           </div>
         ) : null}
-        {acknowledgedFindingAlerts.length > 0 ? (
+        {visibleAcknowledgedAlerts.length > 0 ? (
           <div className="acknowledged-findings">
             <CollapsibleSection
               title={
-                acknowledgedFindingAlerts.length === 1
+                visibleAcknowledgedAlerts.length === 1
                   ? '1 acknowledged finding'
-                  : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`
+                  : `${String(visibleAcknowledgedAlerts.length)} acknowledged findings`
               }
               open={acknowledgedFindingsExpanded}
               onToggle={onToggleAcknowledgedFindings}
@@ -195,7 +217,7 @@ export function ReconciliationPanel({
                 Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
               </p>
               <div className="finding-list">
-                {acknowledgedFindingAlerts.map((alert) => {
+                {visibleAcknowledgedAlerts.map((alert) => {
                   const meta = alert.metadata;
                   const transactionHash = dash.asOptionalString(meta.transactionHash) ?? alert.entityId;
                   const href = dash.explorerTxUrl(
@@ -257,15 +279,18 @@ export function ReconciliationPanel({
         {reconciliationState === 'ready'
           ? (() => {
               const findings = dash.toFindingViews(reconciliationRuns);
+              const findingMatches = (item: FindingView): boolean =>
+                matchesChainFilter({ chainId: dash.chainIdForFinding(item, treasuries) }, visibleChainIds);
               const criticalFindings = findings.filter((item) => item.severity === 'critical');
-              const unavailableChainFindings = findings.filter((item) =>
-                dash.isUnavailableChainOutcome(item),
+              const unavailableChainFindings = findings.filter(
+                (item) => dash.isUnavailableChainOutcome(item) && findingMatches(item),
               );
               const warningFindings = findings.filter(
-                (item) => item.severity === 'warning' && !dash.isQuietChainOutcome(item),
+                (item) =>
+                  item.severity === 'warning' && !dash.isQuietChainOutcome(item) && findingMatches(item),
               );
               const otherFindings = findings.filter(
-                (item) => item.severity !== 'critical' && item.severity !== 'warning',
+                (item) => item.severity !== 'critical' && item.severity !== 'warning' && findingMatches(item),
               );
               // Truncated open pages cannot prove open-absence — treat like unresolved for demotion/summary.
               const alertsResolvedForDemotion =
@@ -278,20 +303,23 @@ export function ReconciliationPanel({
                     openFindingAlerts,
                     acknowledgedFindingAlerts,
                     openFindingAlertsComplete,
-                  ),
+                  ) &&
+                  (listEveryCritical || findingMatches(item)),
               );
-              const acknowledgedCriticalFindings = criticalFindings.filter((item) =>
-                dash.isCriticalFindingAcknowledged(
-                  item,
-                  findingAlertsState,
-                  openFindingAlerts,
-                  acknowledgedFindingAlerts,
-                  openFindingAlertsComplete,
-                ),
+              const acknowledgedCriticalFindings = criticalFindings.filter(
+                (item) =>
+                  dash.isCriticalFindingAcknowledged(
+                    item,
+                    findingAlertsState,
+                    openFindingAlerts,
+                    acknowledgedFindingAlerts,
+                    openFindingAlertsComplete,
+                  ) && findingMatches(item),
               );
               const newestRun = reconciliationRuns[0];
               const hasUnacknowledgedCritical = unacknowledgedCriticalFindings.length > 0;
-              const hasCritical = criticalFindings.length > 0;
+              const hasCritical =
+                unacknowledgedCriticalFindings.length + acknowledgedCriticalFindings.length > 0;
               const summaryNeedsAttention =
                 hasUnacknowledgedCritical || otherFindings.length > 0 || unavailableChainFindings.length > 0;
               const criticalLabel = dash.criticalFindingsSummaryLabel(
@@ -384,6 +412,9 @@ export function ReconciliationPanel({
                * collapsing never hides presence or summary count.
                */
               const renderUnacknowledgedCriticalFinding = (finding: FindingView, index: number) => {
+                const chainId = dash.chainIdForFinding(finding, treasuries);
+                const chainName =
+                  chainId === undefined ? undefined : dash.chainDisplayNameForChainId(chainId, treasuries);
                 const entityKey =
                   dash.findingAlertEntityId(finding) ?? `${finding.runId}:${finding.kind}:${String(index)}`;
                 const canAcknowledge =
@@ -419,6 +450,9 @@ export function ReconciliationPanel({
                       <code className="finding-compact-kind" title={finding.kind}>
                         {finding.kind}
                       </code>
+                      {chainName !== undefined ? (
+                        <span className="finding-chain-name">{chainName}</span>
+                      ) : null}
                       <span className="mono finding-compact-tx" title={displayId}>
                         {dash.TRANSACTION_HASH_PATTERN.test(displayId) ? (
                           href === undefined ? (

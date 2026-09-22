@@ -1,4 +1,5 @@
 import type { FundingTransactionResource, TreasuryResource } from '../../api';
+import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import {
   CollapsibleSection,
   COLLAPSE_STORAGE_KEYS,
@@ -27,6 +28,10 @@ export type TreasuriesPanelProps = {
   readonly treasuryFundingHistoryState: LoadState;
   readonly treasuryFundingHistoryError: string | undefined;
   readonly treasuryFundingHistory: readonly FundingTransactionResource[];
+  /** Absent means every chain, so existing callers keep today's rows. */
+  readonly visibleChainIds?: VisibleChainIds;
+  /** Compact is the overview card: collapsed detail, no auto-funding section. */
+  readonly presentation?: 'full' | 'compact';
 };
 
 function treasuryLabel(treasury: TreasuryResource): string {
@@ -92,31 +97,41 @@ export function TreasuriesPanel({
   treasuryFundingHistoryState,
   treasuryFundingHistoryError,
   treasuryFundingHistory,
+  visibleChainIds = 'ALL',
+  presentation = 'full',
 }: TreasuriesPanelProps) {
   const canCheckTreasury = useHasPermission('treasury:check');
-  const replenishRows = treasuryFundingHistory.filter(isTreasuryReplenish);
+  const visibleTreasuries = treasuries.filter((treasury) => matchesChainFilter(treasury, visibleChainIds));
+  const replenishAll = treasuryFundingHistory.filter(isTreasuryReplenish);
+  const replenishRows = replenishAll.filter((row) => matchesChainFilter(row, visibleChainIds));
+  const compact = presentation === 'compact';
 
   return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2 className="section-title">Treasuries</h2>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => {
-            void loadTreasuries();
-            void loadTreasuryFundingHistory();
-          }}
-        >
-          Reload
-        </button>
-      </div>
+    <section className={compact ? 'treasury-compact' : 'panel'}>
+      {compact ? null : (
+        <div className="panel-head">
+          <h2 className="section-title">Treasuries</h2>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              void loadTreasuries();
+              void loadTreasuryFundingHistory();
+            }}
+          >
+            Reload
+          </button>
+        </div>
+      )}
       {treasuriesState === 'loading' ? <p className="muted">Loading…</p> : null}
       {treasuriesState === 'error' ? <p className="error-inline">{treasuriesError}</p> : null}
       {treasuriesState === 'empty' ? <p className="muted">No enabled treasuries returned.</p> : null}
-      {treasuriesState === 'ready' ? (
+      {treasuriesState === 'ready' && treasuries.length > 0 && visibleTreasuries.length === 0 ? (
+        <p className="muted">No treasuries on this chain.</p>
+      ) : null}
+      {treasuriesState === 'ready' && visibleTreasuries.length > 0 ? (
         <div className="treasury-list">
-          {treasuries.map((treasury) => {
+          {visibleTreasuries.map((treasury) => {
             const isOperational = treasury.kind === 'operational';
             return (
               <article key={treasury.id} className={treasuryCardToneClass(treasury.status)}>
@@ -198,25 +213,34 @@ export function TreasuriesPanel({
         </div>
       ) : null}
 
-      <CollapsibleSection title="Auto-funding history" storageKey={COLLAPSE_STORAGE_KEYS.treasuryAutoFunding}>
-        <div className="history-mini">
-          <p className="muted">
-            Public → Private replenish only. Wallet top-ups stay in Funding history. Deposits into Public are
-            expected human refills and are not listed here.
-          </p>
-          {treasuryFundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
-          {treasuryFundingHistoryState === 'error' ? (
-            <p className="error-inline">{treasuryFundingHistoryError}</p>
-          ) : null}
-          {treasuryFundingHistoryState === 'empty' ||
-          (treasuryFundingHistoryState === 'ready' && replenishRows.length === 0) ? (
-            <p className="muted">No Public → Private auto-funding transactions yet.</p>
-          ) : null}
-          {treasuryFundingHistoryState === 'ready' && replenishRows.length > 0 ? (
-            <ReplenishRows rows={replenishRows} />
-          ) : null}
-        </div>
-      </CollapsibleSection>
+      {compact ? null : (
+        <CollapsibleSection
+          title="Auto-funding history"
+          storageKey={COLLAPSE_STORAGE_KEYS.treasuryAutoFunding}
+        >
+          <div className="history-mini">
+            <p className="muted">
+              Public → Private replenish only. Wallet top-ups stay in Funding history. Deposits into Public
+              are expected human refills and are not listed here.
+            </p>
+            {treasuryFundingHistoryState === 'loading' ? <p className="muted">Loading…</p> : null}
+            {treasuryFundingHistoryState === 'error' ? (
+              <p className="error-inline">{treasuryFundingHistoryError}</p>
+            ) : null}
+            {treasuryFundingHistoryState === 'empty' ||
+            (treasuryFundingHistoryState === 'ready' && replenishRows.length === 0) ? (
+              <p className="muted">
+                {replenishAll.length > 0
+                  ? 'No Public → Private auto-funding on this chain.'
+                  : 'No Public → Private auto-funding transactions yet.'}
+              </p>
+            ) : null}
+            {treasuryFundingHistoryState === 'ready' && replenishRows.length > 0 ? (
+              <ReplenishRows rows={replenishRows} />
+            ) : null}
+          </div>
+        </CollapsibleSection>
+      )}
     </section>
   );
 }

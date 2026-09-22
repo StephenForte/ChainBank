@@ -2038,6 +2038,78 @@ Local design choices (T10.3, 2026-09-22):
   that epoch, so a late 401 from the previous session does not sign out the
   new one.
 
+### C34 — Chain filter and compact overview (owner: T10.4)
+
+No migration. The filter is a view over data `App` already holds. Selecting a
+segment does not refetch.
+
+```ts
+const CHAIN_FILTER_STORAGE_KEY = 'chainbank.chainFilter';
+// 'ALL' or a decimal chainId. Absent, blank, non-decimal, or a chainId that
+// is not on a loaded treasury renders ALL. The unknown value stays in
+// storage until the operator picks a segment.
+
+type ChainSegment = { readonly chainId: number; readonly displayName: string };
+// One segment per distinct treasury chain.chainId, labelled with
+// chain.displayName, ordered by descending chainId. ALL is first and is
+// not a chain. Derived only from the loaded treasuries response.
+
+type VisibleChainIds = 'ALL' | readonly number[];
+
+function matchesChainFilter(
+  resource: { readonly chain?: { readonly chainId: number }; readonly chainId?: number },
+  visibleChainIds: VisibleChainIds,
+): boolean;
+// 'ALL' matches every row. A row with no chain id matches every selection.
+```
+
+What the selection filters, and the field:
+
+- Treasuries, and Public → Private replenish rows: `chain.chainId`.
+- Managed wallets: `chain.chainId`.
+- Funding history: `chain.chainId`. Wallets and funding history filter the
+  loaded page. There is no chain query on those routes. When `pagination.total`
+  is larger than the loaded page and the page has no row for the selection,
+  the empty copy says the loaded page has none.
+- Reconciliation chain outcomes and other findings: the finding's chain.
+  `finding.chainId` when C29 stored one, otherwise the treasury row for
+  `finding.treasuryId` (`chainIdForFinding`). The display name is
+  `chainDisplayNameForChainId`, the same rule as `chainDisplayNameForFinding`.
+- Service readiness components and heartbeats whose name or detail names a
+  loaded chain's display name or chain id. A row that names no chain stays.
+  The panel renders on `#/treasuries`.
+- Projects, environments, and funding policy are not filtered.
+- Email and Admin ignore the filter. The control stays in the top bar.
+
+C20 / C30 under a filter:
+
+- An unacknowledged critical finding badges its chain's segment with the
+  count, including when another chain is selected. The count is one per
+  finding key, from open `treasury_finding` alerts and from unacknowledged
+  critical findings in the loaded runs.
+- `#/alerts` lists every unacknowledged critical from every chain, with the
+  chain display name on each. The reconciliation page follows the filter.
+- A `chain_outcome` of `unavailable` badges that chain's segment. The
+  warning article follows the filter.
+
+Overview is four stat cards and the compact treasury cards for the visible
+chains:
+
+- Treasury health: counts of `status` healthy, warning, and critical among
+  visible treasuries (`GET /v1/treasuries`). Links to `#/treasuries`.
+- Wallets needing attention: visible wallets (`GET /v1/wallets`) whose
+  `reconciliationEnabled` is false, or whose observed balance wei is strictly
+  below `policy.minimumBalanceWei`. An unread or unavailable balance is not
+  below minimum. The count uses the unfiltered first page, not the Wallets
+  page project, environment, or enabled filters. Links to `#/wallets`.
+- Open alerts: unacknowledged `treasury_finding` rows (`GET /v1/alerts`,
+  state open), every chain. Links to `#/alerts`.
+- Last reconciler run: the newest `GET /v1/reconciliation-runs` row, its
+  `finishedAt`, and finished / error / unfinished. Links to `#/reconciliation`.
+
+Compact treasury cards are the collapsed C32 card (thresholds behind +/−)
+without the auto-funding section.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -2151,3 +2223,4 @@ Local design choices (T10.3, 2026-09-22):
 - 2026-09-22 — **T10.5 published C35:** `email_deliveries` (migration `0012`) records each send after the provider answers; a recording failure cannot change the send result. `GET /v1/admin/email/deliveries` and `GET /v1/admin/email/triggers` are `alert:read`. No message body, no API key. C36 stays reserved for the email page.
 - 2026-09-22 — **TX.34 amended C14 in place:** a null `last_outgoing_scan_nonce` may skip the outgoing body scan when the transaction counts at `fromBlock - 1` and `toBlock` are equal, and a zero-finding completion writes that treasury's watermark before the next treasury. A scan that produced any finding still waits until after escalation. No contract, no migration. TX.32 and TX.33 remain reserved.
 - 2026-09-22 — **T10.3 published C33:** the dashboard signs in with a user session (`X-ChainBank-Session: 1`, no bearer token), and admins manage users and API credentials from `#/admin`.
+- 2026-09-22 — **T10.4 published C34:** the dashboard chain filter is derived from loaded treasuries, stored in the browser, and badges unacknowledged criticals and dark chains on segments that are not selected. Overview is four stat cards plus compact treasury cards.

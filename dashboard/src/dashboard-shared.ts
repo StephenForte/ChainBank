@@ -2,6 +2,7 @@ import {
   ApiClientError,
   type AlertResource,
   type FundingTransactionResource,
+  type ManagedWalletResource,
   type ReconciliationRunResource,
   type TreasuryResource,
 } from './api';
@@ -191,6 +192,28 @@ export function balancePolicyChip(
   return { className: 'badge badge-ok', label: '≥ min' };
 }
 
+/**
+ * A wallet needs attention when reconciliation will not fund it, or when an
+ * observed balance is strictly below the policy minimum. An unread or
+ * unavailable balance is not treated as below minimum (C17 fail-closed).
+ */
+export function walletNeedsAttention(
+  wallet: ManagedWalletResource,
+  balance: WalletBalanceView | undefined,
+): boolean {
+  if (!wallet.reconciliationEnabled) {
+    return true;
+  }
+  if (wallet.policy === null || balance === undefined || balance.status !== 'observed') {
+    return false;
+  }
+  try {
+    return BigInt(balance.wei) < BigInt(wallet.policy.minimumBalanceWei);
+  } catch {
+    return false;
+  }
+}
+
 export type FindingView = {
   readonly severity: 'critical' | 'warning' | 'unknown';
   readonly kind: string;
@@ -316,15 +339,73 @@ export function isQuietChainOutcome(finding: FindingView): boolean {
   );
 }
 
+export function chainDisplayNameForChainId(
+  chainId: number | undefined,
+  treasuries: readonly { readonly chain: { readonly chainId: number; readonly displayName: string } }[],
+): string {
+  if (chainId === undefined) {
+    return 'Unknown chain';
+  }
+  const match = treasuries.find((treasury) => treasury.chain.chainId === chainId);
+  return match?.chain.displayName ?? `chain ${String(chainId)}`;
+}
+
 export function chainDisplayNameForFinding(
   finding: FindingView,
   treasuries: readonly { readonly chain: { readonly chainId: number; readonly displayName: string } }[],
 ): string {
-  if (finding.chainId === undefined) {
-    return 'Unknown chain';
+  return chainDisplayNameForChainId(finding.chainId, treasuries);
+}
+
+/**
+ * A finding's chain is its own `chainId` when C29 stored one, otherwise the
+ * treasury row named by `treasuryId`. Missing both stays undefined so the
+ * filter does not hide a finding it cannot place.
+ */
+export function chainIdForFinding(
+  finding: FindingView,
+  treasuries: readonly { readonly id: string; readonly chain: { readonly chainId: number } }[],
+): number | undefined {
+  if (finding.chainId !== undefined) {
+    return finding.chainId;
   }
-  const match = treasuries.find((treasury) => treasury.chain.chainId === finding.chainId);
-  return match?.chain.displayName ?? `chain ${String(finding.chainId)}`;
+  if (finding.treasuryId === undefined) {
+    return undefined;
+  }
+  return treasuries.find((treasury) => treasury.id === finding.treasuryId)?.chain.chainId;
+}
+
+/** Treasury id embedded in a C18 condition key. Event keys are transaction hashes. */
+function treasuryIdFromFindingEntityId(entityId: string): string | undefined {
+  const prefix = 'outgoing_scan_incomplete:';
+  if (!entityId.startsWith(prefix)) {
+    return undefined;
+  }
+  const rest = entityId.slice(prefix.length);
+  const splitAt = rest.lastIndexOf(':');
+  if (splitAt <= 0) {
+    return undefined;
+  }
+  return rest.slice(0, splitAt);
+}
+
+/**
+ * Chain for an open finding alert: metadata treasury, then the condition-key
+ * treasury, then metadata chainId. An alert with none of those is unscoped.
+ */
+export function chainIdForAlert(
+  alert: AlertResource,
+  treasuries: readonly { readonly id: string; readonly chain: { readonly chainId: number } }[],
+): number | undefined {
+  const treasuryId =
+    asOptionalString(alert.metadata.treasuryId) ?? treasuryIdFromFindingEntityId(alert.entityId);
+  if (treasuryId !== undefined) {
+    const match = treasuries.find((treasury) => treasury.id === treasuryId);
+    if (match !== undefined) {
+      return match.chain.chainId;
+    }
+  }
+  return asOptionalChainId(alert.metadata.chainId);
 }
 
 export function unavailableChainSentence(

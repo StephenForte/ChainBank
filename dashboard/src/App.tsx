@@ -43,6 +43,8 @@ import {
   type LoadState,
   type WalletBalanceView,
 } from './dashboard-shared';
+import { attentionByChain, useChainFilter } from './chain-filter';
+import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 import { AdminPage, AdminUnavailable } from './pages/admin';
 import { LoginPage } from './pages/login';
 import { AlertsPage } from './pages/alerts';
@@ -55,7 +57,10 @@ import type { FundingPolicyPanelProps } from './pages/panels/funding-policy-pane
 import type { ManagedWalletsPanelProps } from './pages/panels/managed-wallets-panel';
 import type { ProjectsPanelProps } from './pages/panels/projects-panel';
 import type { ReconciliationPanelProps } from './pages/panels/reconciliation-panel';
-import type { ServiceReadinessPanelProps } from './pages/panels/service-readiness-panel';
+import {
+  ServiceReadinessPanel,
+  type ServiceReadinessPanelProps,
+} from './pages/panels/service-readiness-panel';
 import type { TreasuriesPanelProps } from './pages/panels/treasuries-panel';
 import { ReconciliationPage } from './pages/reconciliation';
 import { TreasuriesPage } from './pages/treasuries';
@@ -150,10 +155,21 @@ export function App() {
   const [walletEnvironmentFilter, setWalletEnvironmentFilter] = useState('');
   const [walletEnabledFilter, setWalletEnabledFilter] = useState('');
   const [walletBalances, setWalletBalances] = useState<Readonly<Record<string, WalletBalanceView>>>({});
+  /**
+   * Unfiltered first page of GET /v1/wallets. Overview's attention count uses
+   * this, so the Wallets page project, environment, and enabled filters do
+   * not change it (C34).
+   */
+  const [catalogWallets, setCatalogWallets] = useState<readonly ManagedWalletResource[]>([]);
+  const [catalogWalletsState, setCatalogWalletsState] = useState<LoadState>('idle');
+  const [catalogBalances, setCatalogBalances] = useState<Readonly<Record<string, WalletBalanceView>>>({});
   const [balancesBusy, setBalancesBusy] = useState(false);
   /** Bumped to supersede in-flight balance reads when the listed set changes (TX.18). */
   const balanceFetchGenerationRef = useRef(0);
   const route = useHashRoute();
+  const treasuryListSettled =
+    treasuriesState === 'ready' || treasuriesState === 'empty' || treasuriesState === 'error';
+  const chainFilter = useChainFilter(treasuries, treasuryListSettled);
 
   const [policyWallets, setPolicyWallets] = useState<readonly ManagedWalletResource[]>([]);
   const [policyWalletsTotal, setPolicyWalletsTotal] = useState(0);
@@ -193,6 +209,9 @@ export function App() {
     setWallets([]);
     setWalletsState('idle');
     setWalletBalances({});
+    setCatalogWallets([]);
+    setCatalogWalletsState('idle');
+    setCatalogBalances({});
     setPolicyWallets([]);
     setPolicyState('idle');
     setMessage(undefined);
@@ -472,21 +491,41 @@ export function App() {
     }
   }
 
+  function walletPageFilters(): {
+    readonly projectId?: string;
+    readonly environmentId?: string;
+    readonly enabled?: boolean;
+  } {
+    return {
+      ...(walletProjectFilter.trim() === '' ? {} : { projectId: walletProjectFilter.trim() }),
+      ...(walletEnvironmentFilter.trim() === '' ? {} : { environmentId: walletEnvironmentFilter.trim() }),
+      ...(walletEnabledFilter === 'true'
+        ? { enabled: true }
+        : walletEnabledFilter === 'false'
+          ? { enabled: false }
+          : {}),
+    };
+  }
+
+  function rememberWallet(updated: ManagedWalletResource): void {
+    const replace = (current: readonly ManagedWalletResource[]): readonly ManagedWalletResource[] =>
+      current.map((item) => (item.id === updated.id ? updated : item));
+    setWallets(replace);
+    setPolicyWallets(replace);
+    setCatalogWallets(replace);
+  }
+
   async function loadWalletsPanel(): Promise<void> {
     // Supersede any in-flight balance burst before the list (and its filters) change.
     const generation = ++balanceFetchGenerationRef.current;
+    const pageFilters = walletPageFilters();
+    const isUnfiltered = Object.keys(pageFilters).length === 0;
     setWalletsState('loading');
     setWalletsError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const next = await listWallets({
-        ...(walletProjectFilter.trim() === '' ? {} : { projectId: walletProjectFilter.trim() }),
-        ...(walletEnvironmentFilter.trim() === '' ? {} : { environmentId: walletEnvironmentFilter.trim() }),
-        ...(walletEnabledFilter === 'true'
-          ? { enabled: true }
-          : walletEnabledFilter === 'false'
-            ? { enabled: false }
-            : {}),
+        ...pageFilters,
         limit: 50,
         offset: 0,
       });
@@ -496,11 +535,17 @@ export function App() {
       setWallets(next.data);
       setWalletsTotal(next.pagination.total);
       setWalletsState(next.data.length === 0 ? 'empty' : 'ready');
-      // List reload invalidates prior point-in-time samples.
+      if (isUnfiltered) {
+        setCatalogWallets(next.data);
+        setCatalogWalletsState(next.data.length === 0 ? 'empty' : 'ready');
+        setCatalogBalances({});
+      }
+      // List reload invalidates prior point-in-time samples for the page.
+      // The overview catalog keeps its own samples when a page filter reloads.
       setWalletBalances({});
       // Auto-load only for small listed pages — above the guard, button-only (C17 / TX.18).
       if (next.data.length > 0 && next.data.length <= BALANCE_AUTO_LOAD_MAX) {
-        void fetchListedWalletBalances(next.data, generation);
+        void fetchListedWalletBalances(next.data, generation, isUnfiltered);
       } else {
         setBalancesBusy(false);
       }
@@ -513,6 +558,11 @@ export function App() {
       setWalletsError(formatError(caught));
       setWalletsState('error');
       setWalletBalances({});
+      if (isUnfiltered) {
+        setCatalogWallets([]);
+        setCatalogWalletsState('error');
+        setCatalogBalances({});
+      }
       setBalancesBusy(false);
     }
   }
@@ -520,46 +570,54 @@ export function App() {
   async function fetchOneWalletBalance(
     walletId: string,
     generation: number = balanceFetchGenerationRef.current,
+    recordCatalog = false,
   ): Promise<void> {
-    if (generation !== balanceFetchGenerationRef.current) {
+    const pageStillCurrent = (): boolean => generation === balanceFetchGenerationRef.current;
+    if (!pageStillCurrent() && !recordCatalog) {
       return;
     }
-    setWalletBalances((previous) => ({ ...previous, [walletId]: { status: 'loading' } }));
+    const remember = (view: WalletBalanceView): void => {
+      if (pageStillCurrent()) {
+        setWalletBalances((previous) => ({ ...previous, [walletId]: view }));
+      }
+      if (recordCatalog) {
+        setCatalogBalances((previous) => ({ ...previous, [walletId]: view }));
+      }
+    };
+    remember({ status: 'loading' });
     try {
       const result = await getWalletBalance(walletId);
-      if (generation !== balanceFetchGenerationRef.current) {
+      if (!pageStillCurrent() && !recordCatalog) {
         return;
       }
       const balance = result.balance;
       if (balance.outcome === 'observed') {
-        const observed: WalletBalanceView = {
+        remember({
           status: 'observed',
           wei: balance.wei,
           ether: balance.ether,
           observedAt: balance.observedAt,
-        };
-        setWalletBalances((previous) => ({ ...previous, [walletId]: observed }));
+        });
         return;
       }
       // Fail closed: never invent a zero balance from an unreadable RPC (C17).
-      const unavailable: WalletBalanceView = {
+      remember({
         status: 'unavailable',
         errorCode: balance.errorCode,
         observedAt: balance.observedAt,
-      };
-      setWalletBalances((previous) => ({ ...previous, [walletId]: unavailable }));
+      });
     } catch (caught) {
-      if (generation !== balanceFetchGenerationRef.current) {
+      if (!pageStillCurrent() && !recordCatalog) {
         return;
       }
-      const failed: WalletBalanceView = { status: 'error', message: formatError(caught) };
-      setWalletBalances((previous) => ({ ...previous, [walletId]: failed }));
+      remember({ status: 'error', message: formatError(caught) });
     }
   }
 
   async function fetchListedWalletBalances(
     listed: readonly ManagedWalletResource[],
     generation: number,
+    recordCatalog = false,
   ): Promise<void> {
     if (listed.length === 0) {
       return;
@@ -570,7 +628,7 @@ export function App() {
     setBalancesBusy(true);
     try {
       // Fan out one live RPC-backed request per currently listed wallet only.
-      await Promise.all(listed.map((wallet) => fetchOneWalletBalance(wallet.id, generation)));
+      await Promise.all(listed.map((wallet) => fetchOneWalletBalance(wallet.id, generation, recordCatalog)));
     } finally {
       if (generation === balanceFetchGenerationRef.current) {
         setBalancesBusy(false);
@@ -623,6 +681,26 @@ export function App() {
     }
   }
 
+  async function loadCatalogWallets(): Promise<void> {
+    try {
+      const next = await listWallets({ limit: 50, offset: 0 });
+      setCatalogWallets(next.data);
+      setCatalogWalletsState(next.data.length === 0 ? 'empty' : 'ready');
+      setCatalogBalances({});
+      if (next.data.length > 0 && next.data.length <= BALANCE_AUTO_LOAD_MAX) {
+        await Promise.all(
+          next.data.map((wallet) =>
+            fetchOneWalletBalance(wallet.id, balanceFetchGenerationRef.current, true),
+          ),
+        );
+      }
+    } catch {
+      setCatalogWallets([]);
+      setCatalogWalletsState('error');
+      setCatalogBalances({});
+    }
+  }
+
   function refreshAll(): void {
     // Each panel loads and fails independently — do not Promise.all across panels.
     void loadReadiness();
@@ -633,6 +711,9 @@ export function App() {
     void loadFundingHistory();
     void loadProjectsPanel();
     void loadWalletsPanel();
+    if (Object.keys(walletPageFilters()).length > 0) {
+      void loadCatalogWallets();
+    }
     void loadPolicyPanel();
     if (selectedProjectId.trim() !== '') {
       void loadProjectEnvironments(selectedProjectId);
@@ -766,8 +847,7 @@ export function App() {
     setMessage(undefined);
     try {
       const updated = await setWalletEnabled(wallet.id, nextEnabled);
-      setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
-      setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
+      rememberWallet(updated);
       setMessage(`Wallet ${updated.role} is now ${updated.enabled ? 'enabled' : 'disabled'}.`);
     } catch (caught) {
       setWalletsError(formatError(caught));
@@ -792,8 +872,7 @@ export function App() {
     setMessage(undefined);
     try {
       const updated = await setWalletReconciliationEnabled(wallet.id, nextEnabled);
-      setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
-      setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
+      rememberWallet(updated);
       setMessage(
         `Reconciliation for wallet ${updated.role} is now ${updated.reconciliationEnabled ? 'on' : 'off'}.`,
       );
@@ -874,8 +953,7 @@ export function App() {
         targetBalanceWei: preview.targetBalanceWei,
         maximumTopUpWei: preview.maximumTopUpWei,
       });
-      setPolicyWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
-      setWallets((current) => current.map((item) => (item.id === wallet.id ? updated : item)));
+      rememberWallet(updated);
       setEditingWalletId(undefined);
       setMessage(`Updated funding policy for ${updated.role}.`);
     } catch (caught) {
@@ -892,6 +970,8 @@ export function App() {
     readinessState,
     readinessError,
     readiness,
+    chains: chainFilter.segments,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const treasuriesPanel: TreasuriesPanelProps = {
     loadTreasuries,
@@ -904,6 +984,7 @@ export function App() {
     treasuryFundingHistoryState,
     treasuryFundingHistoryError,
     treasuryFundingHistory,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const projectsPanel: ProjectsPanelProps = {
     loadProjectsPanel,
@@ -951,6 +1032,7 @@ export function App() {
     walletBusyId,
     onToggleWallet,
     onToggleWalletReconciliation,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const policyPanel: FundingPolicyPanelProps = {
     loadPolicyPanel,
@@ -986,6 +1068,7 @@ export function App() {
     fundingHistoryError,
     fundingHistoryTotal,
     fundingHistory,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const reconciliationPanel: ReconciliationPanelProps = {
     loadReconciliationRuns,
@@ -1016,6 +1099,7 @@ export function App() {
     onAcknowledgeFindingByEntity,
     reconciliationDetailExpanded,
     onToggleReconciliationDetail,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
 
   if (!signedIn || session.user === undefined) {
@@ -1029,6 +1113,15 @@ export function App() {
   }
 
   const user = session.user;
+  const chainAttention = attentionByChain({
+    segments: chainFilter.segments,
+    treasuries,
+    runs: reconciliationRuns,
+    openFindingAlerts,
+    acknowledgedFindingAlerts,
+    findingAlertsState,
+    openFindingAlertsComplete,
+  });
 
   return (
     <PermissionsProvider permissions={session.permissions}>
@@ -1045,11 +1138,32 @@ export function App() {
         openFindingAlertCount={openFindingAlerts.length}
         findingAlertsError={findingAlertsError}
         findingAlertsFailed={findingAlertsState === 'error'}
+        chainSegments={chainFilter.segments}
+        chainSelection={chainFilter.selection}
+        chainAttention={chainAttention}
+        onSelectChain={chainFilter.selectChain}
       >
         {route === 'overview' ? (
-          <OverviewPage readiness={readinessPanel} treasuries={treasuriesPanel} />
+          <OverviewPage
+            treasuries={treasuriesPanel}
+            wallets={catalogWallets}
+            walletsState={catalogWalletsState}
+            walletBalances={catalogBalances}
+            openFindingAlerts={openFindingAlerts}
+            findingAlertsState={findingAlertsState}
+            reconciliationRuns={reconciliationRuns}
+            reconciliationState={reconciliationState}
+            visibleChainIds={chainFilter.visibleChainIds}
+          />
         ) : null}
-        {route === 'treasuries' ? <TreasuriesPage treasuries={treasuriesPanel} /> : null}
+        {route === 'treasuries' ? (
+          <>
+            <TreasuriesPage treasuries={treasuriesPanel} />
+            <PanelErrorBoundary panelName="Service readiness" severity="elevated">
+              <PanelBody render={() => <ServiceReadinessPanel {...readinessPanel} />} />
+            </PanelErrorBoundary>
+          </>
+        ) : null}
         {route === 'wallets' ? (
           <WalletsPage
             projects={projectsPanel}
