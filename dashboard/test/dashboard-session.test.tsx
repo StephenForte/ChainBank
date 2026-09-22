@@ -159,10 +159,79 @@ describe('dashboard session (C33)', () => {
     expect(new Headers(logout?.[1]?.headers).get(SESSION_HEADER_NAME)).toBe(SESSION_HEADER_VALUE);
     expect(logout?.[1]?.credentials).toBe('same-origin');
   });
+
+  it('does not sign out the next session when a request from the previous one returns 401', async () => {
+    let releaseStale: ((response: Response) => void) | undefined;
+    let held = false;
+    installFetch((url, init) => {
+      if (url.includes('/v1/auth/login') && init?.method === 'POST') {
+        return emptyResponse(204);
+      }
+      if (url.includes('/v1/auth/logout') && init?.method === 'POST') {
+        return emptyResponse(204);
+      }
+      if (url.includes('/v1/treasuries') && !held) {
+        held = true;
+        return new Promise((resolve) => {
+          releaseStale = resolve;
+        });
+      }
+      return signedInResponse(url, 'admin', [...OPERATOR_PERMISSIONS, 'user:manage']);
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: 'Log out' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ada@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-horse' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+
+    const release = releaseStale;
+    expect(release).toBeTypeOf('function');
+    release?.(jsonResponse(401, errorBody('The supplied credential is not valid.')));
+
+    await waitFor(() => {
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+    });
+    expect(screen.queryByText('Your session ended, sign in again')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+  });
+
+  it('drops a previous account error when the next user signs in', async () => {
+    installFetch((url, init) => {
+      if (url.includes('/v1/auth/login') && init?.method === 'POST') {
+        return emptyResponse(204);
+      }
+      if (url.includes('/v1/auth/logout') && init?.method === 'POST') {
+        return emptyResponse(204);
+      }
+      if (url.includes('/v1/admin/email/test')) {
+        return jsonResponse(500, errorBody('inbox down'));
+      }
+      return signedInResponse(url, 'admin', [...OPERATOR_PERMISSIONS, 'user:manage']);
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: 'Test email' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Test email' }));
+    expect(await screen.findByText('INVALID_CREDENTIAL: inbox down (req-test)')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ada@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-horse' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+    expect(screen.queryByText('INVALID_CREDENTIAL: inbox down (req-test)')).toBeNull();
+  });
 });
 
 function installFetch(
-  respond: (url: string, init: RequestInit | undefined) => Response,
+  respond: (url: string, init: RequestInit | undefined) => Response | Promise<Response>,
 ): ReturnType<typeof vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>> {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);

@@ -78,13 +78,26 @@ const CURRENT_PASSWORD_REJECTED = 'The current password is not valid.';
 type UnauthorizedHandler = () => void;
 
 let unauthorizedHandler: UnauthorizedHandler | undefined;
+let sessionEpoch = 0;
+
+/**
+ * Invalidates 401s from requests that started in an earlier session. An
+ * in-flight call can return 401 after the next login; that response belongs
+ * to the session that started it.
+ */
+export function bumpDashboardSessionEpoch(): void {
+  sessionEpoch += 1;
+}
 
 /** Installed by `useSession` for the signed-in → signed-out transition. */
 export function setDashboardUnauthorizedHandler(handler: UnauthorizedHandler | undefined): void {
   unauthorizedHandler = handler;
 }
 
-function notifyUnauthorized(path: string, message: string): void {
+function notifyUnauthorized(path: string, message: string, epoch: number): void {
+  if (epoch !== sessionEpoch) {
+    return;
+  }
   // Login has no session yet. A wrong current password is 401 while the cookie
   // remains valid (change-password.ts). `GET /v1/auth/me` is the probe that
   // decides unknown → signed-out and must not announce "session ended".
@@ -425,6 +438,7 @@ export interface PaginatedListResponse<T> {
 }
 
 async function authorizedJson(path: string, init: RequestInit = {}): Promise<unknown> {
+  const epoch = sessionEpoch;
   const headers = new Headers(init.headers);
   headers.set(SESSION_HEADER_NAME, SESSION_HEADER_VALUE);
   if (init.body !== undefined && !headers.has('Content-Type')) {
@@ -449,12 +463,12 @@ async function authorizedJson(path: string, init: RequestInit = {}): Promise<unk
     if (isApiErrorBody(body)) {
       const error = new ApiClientError(response.status, body);
       if (response.status === 401) {
-        notifyUnauthorized(path, error.message);
+        notifyUnauthorized(path, error.message, epoch);
       }
       throw error;
     }
     if (response.status === 401) {
-      notifyUnauthorized(path, '');
+      notifyUnauthorized(path, '', epoch);
     }
     throw new Error(`Request failed (${String(response.status)})`);
   }

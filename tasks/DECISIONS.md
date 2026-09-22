@@ -2033,6 +2033,10 @@ Local design choices (T10.3, 2026-09-22):
   enable-treasury capability; this UI has no such control.
 - **Deny by default.** A panel rendered without `PermissionsProvider` shows
   no write action. Tests that still expect Check now pass `treasury:check`.
+- **A 401 belongs to the session that sent it.** `authorizedJson` records a
+  session epoch when the request starts. Logout and the next login advance
+  that epoch, so a late 401 from the previous session does not sign out the
+  new one.
 
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 

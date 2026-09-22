@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ApiClientError,
+  bumpDashboardSessionEpoch,
   fetchCurrentUser,
   loginWithPassword,
   logoutSession,
@@ -32,6 +33,7 @@ export function useSession(): SessionController {
   const statusRef = useRef<SessionStatus>('unknown');
 
   const applySignedOut = useCallback((reason: string | undefined, fromSignedIn: boolean) => {
+    bumpDashboardSessionEpoch();
     setUser(undefined);
     setPermissions([]);
     setSignedOutReason(fromSignedIn ? (reason ?? SESSION_ENDED_MESSAGE) : reason);
@@ -76,6 +78,7 @@ export function useSession(): SessionController {
 
   const login = useCallback(
     async (email: string, password: string): Promise<void> => {
+      bumpDashboardSessionEpoch();
       await loginWithPassword(email, password);
       const next = await loadMe();
       if (next !== 'signed-in') {

@@ -196,6 +196,19 @@ export function App() {
     setPolicyWallets([]);
     setPolicyState('idle');
     setMessage(undefined);
+    setSessionError(undefined);
+    setReadinessError(undefined);
+    setTreasuriesError(undefined);
+    setFundingHistoryError(undefined);
+    setTreasuryFundingHistoryError(undefined);
+    setReconciliationError(undefined);
+    setFindingAlertsError(undefined);
+    setProjectsError(undefined);
+    setEnvListError(undefined);
+    setEnvironmentError(undefined);
+    setWalletsError(undefined);
+    setPolicyError(undefined);
+    setPolicyPreviewError(undefined);
   }
 
   async function loadReadiness(): Promise<void> {
