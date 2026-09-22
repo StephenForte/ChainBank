@@ -253,7 +253,7 @@ describe('chain filter (C34)', () => {
 
     window.location.hash = '#/email';
     fireEvent(window, new HashChangeEvent('hashchange'));
-    expect(await screen.findByText(/T10\.6/)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Delivery log' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'ALL' }));
     window.location.hash = '#/overview';

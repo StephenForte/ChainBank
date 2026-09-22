@@ -17,7 +17,6 @@ import {
 } from './icons';
 import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 import { ChangePasswordForm } from './session/change-password-form';
-import { useHasPermission } from './session/permissions';
 import type { SessionUser } from './session/use-session';
 import type { DashboardRoute } from './use-hash-route';
 
@@ -114,7 +113,6 @@ export type TopBarProps = {
   readonly title: string;
   readonly sessionBusy: boolean;
   readonly onRefresh: () => void;
-  readonly onTestEmail: () => Promise<void>;
   readonly sessionError: string | undefined;
   readonly chainSegments: readonly ChainSegment[];
   readonly chainSelection: ChainFilterSelection;
@@ -126,14 +124,12 @@ export function TopBar({
   title,
   sessionBusy,
   onRefresh,
-  onTestEmail,
   sessionError,
   chainSegments,
   chainSelection,
   chainAttention,
   onSelectChain,
 }: TopBarProps) {
-  const canTestEmail = useHasPermission('email:test');
   return (
     <header className="top-bar">
       <h1 className="page-title">{title}</h1>
@@ -147,18 +143,6 @@ export function TopBar({
         <button type="button" className="secondary" disabled={sessionBusy} onClick={onRefresh}>
           Refresh
         </button>
-        {canTestEmail ? (
-          <button
-            type="button"
-            className="secondary"
-            disabled={sessionBusy}
-            onClick={() => {
-              void onTestEmail();
-            }}
-          >
-            Test email
-          </button>
-        ) : null}
         {sessionError !== undefined ? <p className="error-inline">{sessionError}</p> : null}
       </div>
     </header>
@@ -176,7 +160,6 @@ export type ShellProps = {
   readonly onLogout: () => Promise<void>;
   readonly sessionError: string | undefined;
   readonly onRefresh: () => void;
-  readonly onTestEmail: () => Promise<void>;
   /**
    * Open treasury-finding alerts already loaded by App. Shown on pages that do
    * not mount the reconciliation panel, so a critical is not page-gated (C20).
@@ -198,7 +181,6 @@ export function Shell({
   onLogout,
   sessionError,
   onRefresh,
-  onTestEmail,
   openFindingAlertCount,
   findingAlertsError,
   findingAlertsFailed,
@@ -222,7 +204,6 @@ export function Shell({
           title={PAGE_TITLES[route]}
           sessionBusy={sessionBusy}
           onRefresh={onRefresh}
-          onTestEmail={onTestEmail}
           sessionError={sessionError}
           chainSegments={chainSegments}
           chainSelection={chainSelection}

@@ -163,6 +163,127 @@ export async function sendTestEmail(): Promise<void> {
   });
 }
 
+/** C35 template names, plus `unknown` for a send that omitted kind. */
+export const EMAIL_DELIVERY_KINDS = [
+  'treasury_warning',
+  'treasury_critical',
+  'treasury_recovery',
+  'treasury_unresolved_reminder',
+  'treasury_finding',
+  'reconciliation_failure',
+  'funding_unavailable_reserve',
+  'test_email',
+] as const;
+
+export const UNKNOWN_EMAIL_DELIVERY_KIND = 'unknown';
+
+export const EMAIL_DELIVERY_KIND_FILTERS = [...EMAIL_DELIVERY_KINDS, UNKNOWN_EMAIL_DELIVERY_KIND] as const;
+
+export type EmailDeliveryKindFilter = (typeof EMAIL_DELIVERY_KIND_FILTERS)[number];
+
+export type EmailDeliveryStatus = 'sent' | 'failed';
+
+/** Same page size the funding history list requests. */
+export const EMAIL_DELIVERY_PAGE_LIMIT = 50;
+
+export interface EmailDeliveryResource {
+  readonly id: string;
+  readonly sentAt: string;
+  readonly kind: string;
+  readonly recipients: readonly string[];
+  readonly subject: string;
+  readonly status: EmailDeliveryStatus;
+  readonly providerMessageId: string | null;
+  readonly errorCode: string | null;
+  readonly errorSummary: string | null;
+  readonly relatedEntityType: string | null;
+  readonly relatedEntityId: string | null;
+  readonly correlationId: string | null;
+  readonly serviceRole: string;
+  readonly createdAt: string;
+}
+
+export interface EmailTriggerRow {
+  readonly trigger: string;
+  readonly scope: string;
+  readonly condition: string;
+  readonly recipients: readonly string[];
+}
+
+export interface EmailTriggersResource {
+  readonly triggers: readonly EmailTriggerRow[];
+  readonly recipients: readonly string[];
+  readonly fromAddress: string;
+  readonly provider: 'resend' | 'log-only';
+}
+
+export async function listEmailDeliveries(
+  query: {
+    readonly status?: EmailDeliveryStatus;
+    readonly kind?: string;
+    readonly limit?: number;
+    readonly offset?: number;
+  } = {},
+): Promise<PaginatedListResponse<EmailDeliveryResource>> {
+  const params = new URLSearchParams();
+  if (query.status !== undefined) {
+    params.set('status', query.status);
+  }
+  if (query.kind !== undefined) {
+    params.set('kind', query.kind);
+  }
+  if (query.limit !== undefined) {
+    params.set('limit', String(query.limit));
+  }
+  if (query.offset !== undefined) {
+    params.set('offset', String(query.offset));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const body = await authorizedJson(`/v1/admin/email/deliveries${suffix}`);
+  return body as PaginatedListResponse<EmailDeliveryResource>;
+}
+
+export async function getEmailTriggers(): Promise<EmailTriggersResource> {
+  const body = await authorizedJson('/v1/admin/email/triggers');
+  if (!isRecord(body) || !isEmailTriggersResource(body.data)) {
+    throw new Error('Email triggers response was not the expected shape.');
+  }
+  return body.data;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isEmailTriggersResource(value: unknown): value is EmailTriggersResource {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (!Array.isArray(value.triggers) || !value.triggers.every(isEmailTriggerRow)) {
+    return false;
+  }
+  if (!isStringArray(value.recipients) || typeof value.fromAddress !== 'string') {
+    return false;
+  }
+  return value.provider === 'resend' || value.provider === 'log-only';
+}
+
+function isEmailTriggerRow(value: unknown): value is EmailTriggerRow {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.trigger === 'string' &&
+    typeof value.scope === 'string' &&
+    typeof value.condition === 'string' &&
+    isStringArray(value.recipients)
+  );
+}
+
 export interface FundingTransactionResource {
   readonly id: string;
   readonly operation: {

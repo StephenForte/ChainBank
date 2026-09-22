@@ -3,23 +3,28 @@ import {
   acknowledgeAlert,
   acknowledgeFinding,
   checkTreasury,
+  EMAIL_DELIVERY_PAGE_LIMIT,
   fetchReadiness,
+  getEmailTriggers,
   getEnvironment,
   getWalletBalance,
   listAlerts,
+  listEmailDeliveries,
   listFundingTransactions,
   listProjectEnvironments,
   listProjects,
   listReconciliationRuns,
   listTreasuries,
   listWallets,
-  sendTestEmail,
   setEnvironmentEnabled,
   setProjectEnabled,
   setWalletEnabled,
   setWalletPolicy,
   setWalletReconciliationEnabled,
   type AlertResource,
+  type EmailDeliveryResource,
+  type EmailDeliveryStatus,
+  type EmailTriggersResource,
   type EnvironmentResource,
   type FundingTransactionResource,
   type ManagedWalletResource,
@@ -75,7 +80,7 @@ export function App() {
   const signedIn = session.status === 'signed-in';
   const [message, setMessage] = useState<string | undefined>();
   const [sessionError, setSessionError] = useState<string | undefined>();
-  const [sessionBusy, setSessionBusy] = useState(false);
+  const sessionBusy = false;
 
   const [readiness, setReadiness] = useState<ReadinessResponse | undefined>();
   const [readinessState, setReadinessState] = useState<LoadState>('idle');
@@ -182,6 +187,18 @@ export function App() {
   const [maximumEtherInput, setMaximumEtherInput] = useState('');
   const [policyPreviewError, setPolicyPreviewError] = useState<string | undefined>();
 
+  const [emailTriggers, setEmailTriggers] = useState<EmailTriggersResource | undefined>();
+  const [emailTriggersState, setEmailTriggersState] = useState<LoadState>('idle');
+  const [emailTriggersError, setEmailTriggersError] = useState<string | undefined>();
+  const [emailDeliveries, setEmailDeliveries] = useState<readonly EmailDeliveryResource[]>([]);
+  const [emailDeliveriesTotal, setEmailDeliveriesTotal] = useState(0);
+  const [emailDeliveriesLimit, setEmailDeliveriesLimit] = useState(EMAIL_DELIVERY_PAGE_LIMIT);
+  const [emailDeliveriesOffset, setEmailDeliveriesOffset] = useState(0);
+  const [emailDeliveriesState, setEmailDeliveriesState] = useState<LoadState>('idle');
+  const [emailDeliveriesError, setEmailDeliveriesError] = useState<string | undefined>();
+  const [emailStatusFilter, setEmailStatusFilter] = useState<'' | EmailDeliveryStatus>('');
+  const [emailKindFilter, setEmailKindFilter] = useState('');
+
   // Drop the previous account's rows before paint when the signed-in user changes.
   const activeUserId = session.user?.id;
   const [dataUserId, setDataUserId] = useState<string | undefined>(undefined);
@@ -228,6 +245,16 @@ export function App() {
     setWalletsError(undefined);
     setPolicyError(undefined);
     setPolicyPreviewError(undefined);
+    setEmailTriggers(undefined);
+    setEmailTriggersState('idle');
+    setEmailTriggersError(undefined);
+    setEmailDeliveries([]);
+    setEmailDeliveriesTotal(0);
+    setEmailDeliveriesState('idle');
+    setEmailDeliveriesError(undefined);
+    setEmailDeliveriesOffset(0);
+    setEmailStatusFilter('');
+    setEmailKindFilter('');
   }
 
   async function loadReadiness(): Promise<void> {
@@ -701,6 +728,52 @@ export function App() {
     }
   }
 
+  async function loadEmailTriggers(): Promise<void> {
+    setEmailTriggersState('loading');
+    setEmailTriggersError(undefined);
+    try {
+      const next = await getEmailTriggers();
+      setEmailTriggers(next);
+      setEmailTriggersState(next.triggers.length === 0 ? 'empty' : 'ready');
+    } catch (caught) {
+      setEmailTriggers(undefined);
+      setEmailTriggersError(formatError(caught));
+      setEmailTriggersState('error');
+    }
+  }
+
+  async function loadEmailDeliveries(): Promise<void> {
+    setEmailDeliveriesState('loading');
+    setEmailDeliveriesError(undefined);
+    try {
+      const next = await listEmailDeliveries({
+        limit: EMAIL_DELIVERY_PAGE_LIMIT,
+        offset: emailDeliveriesOffset,
+        ...(emailStatusFilter === '' ? {} : { status: emailStatusFilter }),
+        ...(emailKindFilter === '' ? {} : { kind: emailKindFilter }),
+      });
+      setEmailDeliveries(next.data);
+      setEmailDeliveriesTotal(next.pagination.total);
+      setEmailDeliveriesLimit(next.pagination.limit);
+      setEmailDeliveriesState(next.data.length === 0 ? 'empty' : 'ready');
+    } catch (caught) {
+      setEmailDeliveries([]);
+      setEmailDeliveriesTotal(0);
+      setEmailDeliveriesError(formatError(caught));
+      setEmailDeliveriesState('error');
+    }
+  }
+
+  function onEmailStatusFilter(value: '' | EmailDeliveryStatus): void {
+    setEmailStatusFilter(value);
+    setEmailDeliveriesOffset(0);
+  }
+
+  function onEmailKindFilter(value: string): void {
+    setEmailKindFilter(value);
+    setEmailDeliveriesOffset(0);
+  }
+
   function refreshAll(): void {
     // Each panel loads and fails independently — do not Promise.all across panels.
     void loadReadiness();
@@ -709,6 +782,8 @@ export function App() {
     void loadReconciliationRuns();
     void loadFindingAlerts();
     void loadFundingHistory();
+    void loadEmailTriggers();
+    void loadEmailDeliveries();
     void loadProjectsPanel();
     void loadWalletsPanel();
     if (Object.keys(walletPageFilters()).length > 0) {
@@ -733,7 +808,15 @@ export function App() {
     void loadProjectsPanel();
     void loadReconciliationRuns();
     void loadFindingAlerts();
+    void loadEmailTriggers();
   }, [signedIn]);
+
+  useEffect(() => {
+    if (!signedIn) {
+      return;
+    }
+    void loadEmailDeliveries();
+  }, [signedIn, emailStatusFilter, emailKindFilter, emailDeliveriesOffset]);
 
   useEffect(() => {
     if (!signedIn) {
@@ -778,20 +861,6 @@ export function App() {
       setTreasuriesState('error');
     } finally {
       setTreasuryBusyId(undefined);
-    }
-  }
-
-  async function onTestEmail(): Promise<void> {
-    setSessionBusy(true);
-    setMessage(undefined);
-    setSessionError(undefined);
-    try {
-      await sendTestEmail();
-      setMessage('Test email requested. Check the operator inbox (or server logs if provider is log-only).');
-    } catch (caught) {
-      setSessionError(formatError(caught));
-    } finally {
-      setSessionBusy(false);
     }
   }
 
@@ -1134,7 +1203,6 @@ export function App() {
         onRefresh={() => {
           refreshAll();
         }}
-        onTestEmail={onTestEmail}
         openFindingAlertCount={openFindingAlerts.length}
         findingAlertsError={findingAlertsError}
         findingAlertsFailed={findingAlertsState === 'error'}
@@ -1175,7 +1243,30 @@ export function App() {
         {route === 'funding' ? <FundingPage history={historyPanel} /> : null}
         {route === 'reconciliation' ? <ReconciliationPage panel={reconciliationPanel} /> : null}
         {route === 'alerts' ? <AlertsPage panel={reconciliationPanel} /> : null}
-        {route === 'email' ? <EmailPage /> : null}
+        {route === 'email' ? (
+          <EmailPage
+            triggersState={emailTriggersState}
+            triggersError={emailTriggersError}
+            triggers={emailTriggers}
+            deliveriesState={emailDeliveriesState}
+            deliveriesError={emailDeliveriesError}
+            deliveries={emailDeliveries}
+            deliveriesTotal={emailDeliveriesTotal}
+            deliveriesLimit={emailDeliveriesLimit}
+            deliveriesOffset={emailDeliveriesOffset}
+            statusFilter={emailStatusFilter}
+            kindFilter={emailKindFilter}
+            onStatusFilter={onEmailStatusFilter}
+            onKindFilter={onEmailKindFilter}
+            onPreviousPage={() => {
+              setEmailDeliveriesOffset((current) => Math.max(0, current - emailDeliveriesLimit));
+            }}
+            onNextPage={() => {
+              setEmailDeliveriesOffset((current) => current + emailDeliveriesLimit);
+            }}
+            onDeliveriesReload={loadEmailDeliveries}
+          />
+        ) : null}
         {route === 'admin' ? (
           user.role === 'admin' ? (
             <AdminPage currentUserId={user.id} />

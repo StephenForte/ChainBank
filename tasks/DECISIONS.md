@@ -2110,6 +2110,52 @@ chains:
 Compact treasury cards are the collapsed C32 card (thresholds behind +/−)
 without the auto-funding section.
 
+### C36 — Email page (owner: T10.6)
+
+No migration. `#/email` renders C35. It ignores the chain filter (C34): the
+page does not read `visibleChainIds`, and neither request sends a chain.
+
+```ts
+export async function getEmailTriggers(): Promise<EmailTriggersResource>;
+// EmailTriggersResource: triggers[{ trigger, scope, condition, recipients }],
+// recipients, fromAddress, provider 'resend' | 'log-only'.
+
+export async function listEmailDeliveries(query: {
+  status?: 'sent' | 'failed'; // omitted when the control is All
+  kind?: EmailDeliveryKind | 'unknown'; // omitted when the control is All
+  limit?: number; // page requests 50
+  offset?: number;
+}): Promise<PaginatedListResponse<EmailDeliveryResource>>;
+// EmailDeliveryResource: id, sentAt, kind, recipients, subject, status,
+// providerMessageId, errorCode, errorSummary, relatedEntityType,
+// relatedEntityId, correlationId, serviceRole, createdAt.
+// Both functions go through authorizedJson (X-ChainBank-Session: 1,
+// credentials: 'same-origin').
+
+// Status pills, the C32 badge classes: sent → 'badge badge-ok' (success),
+// failed → 'badge badge-bad' (danger).
+
+// Send test email is on #/email, above the delivery log, present only when
+// permissions include email:test. It calls sendTestEmail, then reloads the
+// log. TopBar no longer takes onTestEmail and no longer renders the button.
+// Refresh stays.
+
+// Empty log: pagination.total === 0 → "No emails have been sent yet"
+//            otherwise, when this page has no rows →
+//            "No deliveries match these filters"
+```
+
+Trigger rows stay in API order. A condition's integer wei amounts (the
+`warning 750000000000000000 wei` form from C35) render with `formatWeiAsEther`
+and an `ETH` suffix, the same precision as the treasury cards. Subject,
+recipients, and error summary are React text, never HTML.
+
+The delivery log pages with Previous / Next over `pagination.limit`, `offset`,
+and `total`. Funding history reads that same object and does not render a
+pager; this page does, because the log is the collection an operator walks.
+Each row's +/− is an uncontrolled `CollapsibleSection` with no storage key.
+One `PanelErrorBoundary` per section, severity `quiet`.
+
 ## 3. Configuration registry (new env vars — add rows as you add vars)
 
 | Var                                         | Service roles                  | Required                     | Default                                          | Owner task                                |
@@ -2224,3 +2270,4 @@ without the auto-funding section.
 - 2026-09-22 — **TX.34 amended C14 in place:** a null `last_outgoing_scan_nonce` may skip the outgoing body scan when the transaction counts at `fromBlock - 1` and `toBlock` are equal, and a zero-finding completion writes that treasury's watermark before the next treasury. A scan that produced any finding still waits until after escalation. No contract, no migration. TX.32 and TX.33 remain reserved.
 - 2026-09-22 — **T10.3 published C33:** the dashboard signs in with a user session (`X-ChainBank-Session: 1`, no bearer token), and admins manage users and API credentials from `#/admin`.
 - 2026-09-22 — **T10.4 published C34:** the dashboard chain filter is derived from loaded treasuries, stored in the browser, and badges unacknowledged criticals and dark chains on segments that are not selected. Overview is four stat cards plus compact treasury cards.
+- 2026-09-22 — **T10.6 published C36:** `#/email` lists C35 triggers and the delivery log; Send test email moved there from the top bar, still gated on `email:test`.
