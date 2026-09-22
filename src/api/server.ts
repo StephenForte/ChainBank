@@ -6,6 +6,7 @@ import {
   requireRegisteredChain,
   summarizeRegisteredTreasuries,
 } from '../app/bootstrap/register-configured-treasury.js';
+import { proveConfiguredChainIds } from '../app/health/prove-configured-chain-ids.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { describeUnknownError, isChainBankError } from '../domain/errors.js';
 import { buildApp } from './app.js';
@@ -20,6 +21,9 @@ async function main(): Promise<void> {
   const { logger } = container;
 
   try {
+    // C28: a wrong-chain RPC refuses startup before listen, so no request can
+    // reach a signer. An unreadable RPC is not that failure.
+    await proveConfiguredChainIds(container.chainAdapters, logger);
     const treasuries = await registerConfiguredTreasuries(
       { chains: container.repositories.chains, treasuries: container.repositories.treasuries },
       config,

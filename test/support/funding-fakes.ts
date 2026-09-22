@@ -820,7 +820,8 @@ export interface TestChainRegistration {
 
 /**
  * One-chain registry for tests that used to pass a single balance reader and signer.
- * Extra chains exist only inside a test fixture — production `SUPPORTED_CHAINS` stays at one.
+ * Extra chains exist only inside a test fixture. Production `SUPPORTED_CHAINS` is
+ * Ethereum Sepolia and Base Sepolia; this helper does not consult that catalog.
  */
 export function emptyChainAdapterRegistry(): ChainAdapterRegistry {
   return createChainAdapterRegistry([]);

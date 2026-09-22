@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { isNull } from 'drizzle-orm';
 import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
+import { proveConfiguredChainIds } from '../app/health/prove-configured-chain-ids.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import {
   reconcileWallets,
@@ -291,6 +292,8 @@ async function main(): Promise<void> {
   container.logger.info({ correlationId }, 'Wallet reconciler run started');
 
   try {
+    // C28: prove each RPC's chain id before this run can dispatch a transfer.
+    await proveConfiguredChainIds(container.chainAdapters, container.logger);
     const outcome = await runWalletReconciler(container, correlationId);
     container.logger.info(
       {

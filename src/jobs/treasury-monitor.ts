@@ -4,6 +4,7 @@ import {
   requireRegisteredChain,
   summarizeRegisteredTreasuries,
 } from '../app/bootstrap/register-configured-treasury.js';
+import { proveConfiguredChainIds } from '../app/health/prove-configured-chain-ids.js';
 import { recordHeartbeat } from '../app/health/record-heartbeat.js';
 import { checkTreasuryBalance } from '../app/treasury/check-treasury-balance.js';
 import { loadConfig } from '../config/index.js';
@@ -146,6 +147,10 @@ async function main(): Promise<void> {
   container.logger.info({ operationId }, 'Treasury monitor run started');
 
   try {
+    // C28: a mismatched RPC fails this process before any balance is recorded.
+    // Unreachable is a separate outcome and does not change the run's own
+    // per-treasury availability handling.
+    await proveConfiguredChainIds(container.chainAdapters, container.logger);
     await run(container, operationId);
     container.logger.info(
       { operationId, durationMs: Date.now() - startedAt },

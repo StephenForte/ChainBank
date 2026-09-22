@@ -4,7 +4,7 @@ import { createTestChainAdapterRegistry, createFakeBalanceReader } from '../../.
 import { createFixedClock } from '../../../support/clock.js';
 
 const SEPOLIA = 11_155_111;
-/** Fixture chain only. Not registered in SUPPORTED_CHAINS. */
+/** Second registry key in this fixture. The test does not read SUPPORTED_CHAINS. */
 const FIXTURE_CHAIN = 84_532;
 
 describe('checkReadiness', () => {
