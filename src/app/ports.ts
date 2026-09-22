@@ -1,6 +1,8 @@
 import type { AlertSeverity } from '../domain/alerts/treasury-alert.js';
 import type { BalanceReading } from '../domain/balance-reading.js';
+import type { ScryptPasswordParams } from '../domain/auth/password.js';
 import type { Role } from '../domain/auth/roles.js';
+import type { DashboardRole } from '../domain/auth/users.js';
 import type { FundingOperationStatus, FundingTransactionStatus } from '../domain/funding/statuses.js';
 import type { TreasuryKind } from '../domain/treasury/treasury-kind.js';
 import type { TreasuryStatus, TreasuryThresholds } from '../domain/treasury/treasury-status.js';
@@ -181,8 +183,88 @@ export interface ApiCredentialRepository {
   touchLastUsed(id: string, at: Date): Promise<void>;
 }
 
+export interface DashboardUserSummary {
+  readonly id: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: DashboardRole;
+  readonly enabled: boolean;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly lastLoginAt: Date | undefined;
+}
+
+/** Includes the password hash. Never return this from an HTTP handler. */
+export interface DashboardUserRecord extends DashboardUserSummary {
+  readonly passwordHash: string;
+  readonly passwordParams: ScryptPasswordParams;
+}
+
+export interface DashboardUserListPage {
+  readonly items: readonly DashboardUserSummary[];
+  readonly total: number;
+}
+
+export interface DashboardUserInsert {
+  readonly email: string;
+  readonly displayName: string;
+  readonly role: DashboardRole;
+  readonly passwordHash: string;
+  readonly passwordParams: ScryptPasswordParams;
+  readonly now: Date;
+}
+
+export interface DashboardUserPatch {
+  readonly role?: DashboardRole;
+  readonly enabled?: boolean;
+  readonly passwordHash?: string;
+  readonly passwordParams?: ScryptPasswordParams;
+  readonly updatedAt: Date;
+}
+
+export interface DashboardUserRepository {
+  findByEmail(email: string): Promise<DashboardUserRecord | undefined>;
+  findById(id: string): Promise<DashboardUserRecord | undefined>;
+  list(pagination: { readonly limit: number; readonly offset: number }): Promise<DashboardUserListPage>;
+  insert(input: DashboardUserInsert): Promise<DashboardUserSummary>;
+  update(id: string, patch: DashboardUserPatch): Promise<DashboardUserSummary | undefined>;
+  recordLogin(id: string, at: Date): Promise<void>;
+}
+
+export interface DashboardSessionRecord {
+  readonly id: string;
+  readonly userId: string;
+  readonly createdAt: Date;
+  readonly expiresAt: Date;
+  readonly lastSeenAt: Date;
+  readonly revokedAt: Date | undefined;
+}
+
+export interface DashboardSessionRepository {
+  insert(input: {
+    readonly userId: string;
+    readonly tokenHash: string;
+    readonly createdAt: Date;
+    readonly expiresAt: Date;
+    readonly lastSeenAt: Date;
+  }): Promise<DashboardSessionRecord>;
+  findByTokenHash(tokenHash: string): Promise<DashboardSessionRecord | undefined>;
+  /**
+   * Slides `last_seen_at` only while the row is unrevoked, inside absolute
+   * expiry, and inside the idle window. Zero rows means do not resurrect.
+   */
+  touchIfActive(input: {
+    readonly id: string;
+    readonly now: Date;
+    readonly idleCutoff: Date;
+  }): Promise<boolean>;
+  revoke(id: string, at: Date): Promise<void>;
+  /** Revokes every other live session for the user. The current session stays. */
+  revokeOthers(userId: string, exceptSessionId: string, at: Date): Promise<void>;
+}
+
 export interface AuditEventInput {
-  readonly actorType: 'api_credential' | 'cron' | 'system';
+  readonly actorType: 'api_credential' | 'cron' | 'system' | 'dashboard_user';
   readonly actorId: string | undefined;
   readonly action: string;
   readonly entityType: string;
@@ -897,6 +979,8 @@ export interface OperatorMutationUnitOfWork {
   readonly projects: ProjectRepository;
   readonly environments: EnvironmentRepository;
   readonly chains: ChainRepository;
+  readonly dashboardUsers: DashboardUserRepository;
+  readonly dashboardSessions: DashboardSessionRepository;
 }
 
 /**

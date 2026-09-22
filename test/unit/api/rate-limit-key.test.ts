@@ -45,4 +45,24 @@ describe('rateLimitKeyOf', () => {
       `tok:${hashApiToken('cb_lowercase-scheme')}`,
     );
   });
+
+  it('keys a session cookie by the token hash when no Authorization header is present', () => {
+    const key = rateLimitKeyOf(request({ cookie: 'chainbank_session=session-token-value' }));
+    expect(key).toBe(`sess:${hashApiToken('session-token-value')}`);
+    expect(key).not.toContain('session-token-value');
+    expect(key).not.toContain('203.0.113.10');
+  });
+
+  it('ignores a valid session cookie when an Authorization header is present', () => {
+    const headers = {
+      authorization: 'Bearer cb_real',
+      cookie: 'chainbank_session=session-token-value',
+    };
+    expect(rateLimitKeyOf(request(headers))).toBe(`tok:${hashApiToken('cb_real')}`);
+    expect(
+      rateLimitKeyOf(
+        request({ authorization: 'Basic abc', cookie: 'chainbank_session=session-token-value' }),
+      ),
+    ).toBe('ip:203.0.113.10');
+  });
 });

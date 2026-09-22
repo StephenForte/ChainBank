@@ -6,6 +6,8 @@ import type {
   ChainAdapterRegistry,
   ChainRepository,
   CredentialScopeRepository,
+  DashboardSessionRepository,
+  DashboardUserRepository,
   EmailSender,
   EnvironmentRepository,
   FundingPolicyRepository,
@@ -39,6 +41,8 @@ import { createAuditEventRepository } from './infrastructure/db/repositories/aud
 import { createBalanceObservationRepository } from './infrastructure/db/repositories/balance-observation-repository.js';
 import { createChainRepository } from './infrastructure/db/repositories/chain-repository.js';
 import { createCredentialScopeRepository } from './infrastructure/db/repositories/credential-scope-repository.js';
+import { createDashboardSessionRepository } from './infrastructure/db/repositories/dashboard-session-repository.js';
+import { createDashboardUserRepository } from './infrastructure/db/repositories/dashboard-user-repository.js';
 import { createEnvironmentRepository } from './infrastructure/db/repositories/environment-repository.js';
 import { createFundingPolicyRepository } from './infrastructure/db/repositories/funding-policy-repository.js';
 import { createManagedWalletRepository } from './infrastructure/db/repositories/managed-wallet-repository.js';
@@ -98,6 +102,13 @@ export interface Container {
     readonly reconciliationRuns: ReconciliationRunRepository;
     readonly reconciliationFunding: ReconciliationFundingQuery;
     readonly fundingHealth: FundingHealthQuery;
+    /**
+     * Dashboard accounts (C31). `buildContainer` always sets both. Optional on
+     * the type so a container assembled for a route that never touches users
+     * still typechecks; callers that need them fail closed when absent.
+     */
+    readonly dashboardUsers?: DashboardUserRepository;
+    readonly dashboardSessions?: DashboardSessionRepository;
   };
   /**
    * Chain-keyed adapters (C26). One registration per `config.chains` entry.
@@ -159,6 +170,8 @@ export function buildContainer(options: BuildContainerOptions): Container {
       reconciliationRuns: createReconciliationRunRepository(database.db),
       reconciliationFunding: createReconciliationFundingQuery(database.db),
       fundingHealth: createFundingHealthQuery(database.db),
+      dashboardUsers: createDashboardUserRepository(database.db),
+      dashboardSessions: createDashboardSessionRepository(database.db),
     },
     chainAdapters: buildChainAdapters(config, clock, logger),
     fundingDispatchLock: createFundingDispatchLock(database.db),

@@ -95,6 +95,14 @@ describe('loadConfig', () => {
     expect(monitor.apiSecurity).toBeUndefined();
   });
 
+  it('defaults dashboard session lifetimes and the login rate limit', () => {
+    const config = loadConfig({ serviceRole: 'web', env: validWebEnv() });
+    expect(config.apiSecurity?.sessionIdleTtlSeconds).toBe(43_200);
+    expect(config.apiSecurity?.sessionAbsoluteTtlSeconds).toBe(604_800);
+    expect(config.apiSecurity?.loginRateLimitMax).toBe(10);
+    expect(config.apiSecurity?.loginRateLimitWindowSeconds).toBe(900);
+  });
+
   it('requires email credentials for the treasury monitor', () => {
     expect(() =>
       loadConfig({

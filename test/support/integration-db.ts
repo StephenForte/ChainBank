@@ -91,6 +91,8 @@ export async function truncatePhase1Tables(pool: pg.Pool): Promise<void> {
   await pool.query(`
     TRUNCATE TABLE
       audit_events,
+      dashboard_sessions,
+      dashboard_users,
       alerts,
       reconciliation_runs,
       funding_transactions,
