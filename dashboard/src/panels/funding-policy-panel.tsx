@@ -1,6 +1,12 @@
 import type { ManagedWalletResource } from '../api';
 import { CollapsibleSection } from '../collapsible-section';
-import { formatTimestamp, formatWeiAsEther, partitionByEnabled, type LoadState } from '../dashboard-shared';
+import {
+  formatTimestamp,
+  formatWeiAsEther,
+  listSpansMultipleChains,
+  partitionByEnabled,
+  type LoadState,
+} from '../dashboard-shared';
 
 export type FundingPolicyPanelProps = {
   readonly loadPolicyPanel: (activeToken: string) => Promise<void>;
@@ -58,6 +64,7 @@ export function FundingPolicyPanel({
   setPolicyPreviewError,
 }: FundingPolicyPanelProps) {
   const { enabled, disabled } = partitionByEnabled(policyWallets);
+  const chainsMixed = listSpansMultipleChains(policyWallets);
 
   function renderPolicyCard(wallet: ManagedWalletResource) {
     const isEditing = editingWalletId === wallet.id;
@@ -68,6 +75,7 @@ export function FundingPolicyPanel({
             {wallet.role}{' '}
             <span className="muted">
               · {wallet.project.slug}/{wallet.environment.slug}
+              {chainsMixed ? ` · ${wallet.chain.displayName}` : ''}
             </span>
           </h3>
         </div>

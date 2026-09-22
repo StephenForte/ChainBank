@@ -2,6 +2,7 @@ import type { FundingTransactionResource } from '../api';
 import {
   formatTimestamp,
   fundingTransactionKindLabel,
+  listSpansMultipleChains,
   shortAddress,
   statusClass,
   type LoadState,
@@ -36,6 +37,7 @@ export function FundingHistoryPanel({
   fundingHistoryTotal,
   fundingHistory,
 }: FundingHistoryPanelProps) {
+  const chainsMixed = listSpansMultipleChains(fundingHistory);
   return (
     <section className="panel">
       <div className="panel-head">
@@ -136,6 +138,7 @@ export function FundingHistoryPanel({
                         </td>
                         <td className="mono">
                           {row.amountEther} {row.chain.nativeSymbol}
+                          {chainsMixed ? ` · ${row.chain.displayName}` : ''}
                         </td>
                         <td>
                           <span className={statusClass(row.status)}>{row.status}</span>

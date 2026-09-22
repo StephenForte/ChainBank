@@ -51,6 +51,7 @@ export function ManagedWalletsPanel({
   const { enabled, disabled } = dash.partitionByEnabled(wallets);
   const showDisabledInline = walletEnabledFilter === 'false';
   const visibleWallets = showDisabledInline ? wallets : enabled;
+  const chainsMixed = dash.listSpansMultipleChains(wallets);
 
   function renderWalletRow(wallet: ManagedWalletResource) {
     const balanceView = walletBalances[wallet.id];
@@ -60,7 +61,10 @@ export function ManagedWalletsPanel({
           <strong>{wallet.project.slug}</strong>
           <span className="muted"> / {wallet.environment.slug}</span>
         </td>
-        <td>{wallet.role}</td>
+        <td>
+          {wallet.role}
+          {chainsMixed ? <div className="muted tiny">{wallet.chain.displayName}</div> : null}
+        </td>
         <td className="mono">
           <a href={wallet.explorerUrl} target="_blank" rel="noreferrer" title={wallet.address}>
             {dash.shortAddress(wallet.address)}

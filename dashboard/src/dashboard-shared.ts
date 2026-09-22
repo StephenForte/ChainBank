@@ -224,6 +224,13 @@ export type FindingView = {
   readonly nonce: number | undefined;
   readonly blockNumber: string | undefined;
   readonly reason: string | undefined;
+  /**
+   * EVM chain id from a `chain_outcome` finding (C29). Absent on every other
+   * kind, and absent when the stored finding omitted it — never thrown.
+   */
+  readonly chainId: number | undefined;
+  /** `chain_outcome.status` when it is a string. Absent otherwise. */
+  readonly chainStatus: string | undefined;
   readonly raw: Record<string, unknown>;
 };
 
@@ -233,6 +240,14 @@ export function asOptionalString(value: unknown): string | undefined {
 
 export function asOptionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/** EVM chain id. A missing or non-integer value is absent, not an exception. */
+export function asOptionalChainId(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+  return value;
 }
 
 export function findingSeverity(value: unknown): FindingView['severity'] {
@@ -258,6 +273,8 @@ export function toFindingViews(runs: readonly ReconciliationRunResource[]): read
         nonce: asOptionalNumber(raw.nonce),
         blockNumber: asOptionalString(raw.blockNumber),
         reason: asOptionalString(raw.reason),
+        chainId: asOptionalChainId(raw.chainId),
+        chainStatus: asOptionalString(raw.status),
         raw,
       });
     }
@@ -302,6 +319,59 @@ export function findingAlertMatchKey(finding: FindingView): string | undefined {
  * Alerts fetch succeeded. Only then may a critical leave the always-visible block.
  * `loading` / `error` / `idle` must never quietly demote (TX.20 fail-closed).
  */
+/**
+ * C29 records one `chain_outcome` per chain, including healthy ones, at
+ * warning severity so a healthy chain does not open a C18 alert. `processed`
+ * is bookkeeping. `unavailable` is the dark-chain signal and is rendered
+ * outside the collapsed warning list.
+ */
+export function isUnavailableChainOutcome(finding: FindingView): boolean {
+  return finding.kind === 'chain_outcome' && finding.chainStatus === 'unavailable';
+}
+
+/** Not an operator warning: either healthy bookkeeping, or already shown as a dark chain. */
+export function isQuietChainOutcome(finding: FindingView): boolean {
+  return (
+    finding.kind === 'chain_outcome' &&
+    (finding.chainStatus === 'processed' || finding.chainStatus === 'unavailable')
+  );
+}
+
+export function chainDisplayNameForFinding(
+  finding: FindingView,
+  treasuries: readonly { readonly chain: { readonly chainId: number; readonly displayName: string } }[],
+): string {
+  if (finding.chainId === undefined) {
+    return 'Unknown chain';
+  }
+  const match = treasuries.find((treasury) => treasury.chain.chainId === finding.chainId);
+  return match?.chain.displayName ?? `chain ${String(finding.chainId)}`;
+}
+
+export function unavailableChainSentence(
+  finding: FindingView,
+  treasuries: readonly { readonly chain: { readonly chainId: number; readonly displayName: string } }[],
+): string {
+  return `${chainDisplayNameForFinding(finding, treasuries)} was unavailable`;
+}
+
+/** True when the rows the operator is looking at are not all one chain. */
+export function listSpansMultipleChains(
+  rows: readonly { readonly chain: { readonly chainId: number } }[],
+): boolean {
+  let seen: number | undefined;
+  for (const row of rows) {
+    if (seen === undefined) {
+      seen = row.chain.chainId;
+      continue;
+    }
+    if (row.chain.chainId !== seen) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function areFindingAlertsResolved(state: LoadState): boolean {
   return state === 'ready' || state === 'empty';
 }

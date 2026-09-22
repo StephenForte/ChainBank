@@ -1,6 +1,22 @@
 import type { GetOperationStatusResult } from '../../app/funding/get-operation-status.js';
 import type { FundingTransaction } from '../../app/ports.js';
 
+export interface FundingOperationChainResource {
+  readonly slug: string;
+  readonly chainId: number;
+  readonly displayName: string;
+  readonly nativeSymbol: string;
+}
+
+/**
+ * Chain facts for the treasury that signed this operation's transaction.
+ * Taken from that treasury row. Never the process default chain.
+ */
+export interface FundingOperationChainContext extends FundingOperationChainResource {
+  readonly explorerBaseUrl: string;
+  readonly treasuryAddress: string;
+}
+
 export interface FundingOperationTransactionResource {
   readonly id: string;
   readonly status: string;
@@ -12,6 +28,10 @@ export interface FundingOperationTransactionResource {
   readonly createdAt: string;
   readonly submittedAt: string | null;
   readonly confirmedAt: string | null;
+  /** Address of the treasury that signed the transaction. Null when that row is gone. */
+  readonly treasuryAddress: string | null;
+  /** Chain of the signing treasury. Null when that row is gone. */
+  readonly chain: FundingOperationChainResource | null;
 }
 
 /**
@@ -38,7 +58,7 @@ export interface FundingOperationResource {
 
 export function serializeFundingOperation(
   result: GetOperationStatusResult,
-  transactionChainExplorerBaseUrl: string | undefined,
+  transactionChain: FundingOperationChainContext | undefined,
 ): FundingOperationResource {
   const { operation, transaction, status, reason } = result;
   return {
@@ -53,15 +73,13 @@ export function serializeFundingOperation(
     startedAt: operation.startedAt.toISOString(),
     completedAt: operation.completedAt?.toISOString() ?? null,
     transaction:
-      transaction === undefined
-        ? null
-        : serializeFundingTransaction(transaction, transactionChainExplorerBaseUrl),
+      transaction === undefined ? null : serializeFundingTransaction(transaction, transactionChain),
   };
 }
 
 function serializeFundingTransaction(
   transaction: FundingTransaction,
-  transactionChainExplorerBaseUrl: string | undefined,
+  transactionChain: FundingOperationChainContext | undefined,
 ): FundingOperationTransactionResource {
   const hash = transaction.transactionHash ?? null;
   return {
@@ -70,14 +88,24 @@ function serializeFundingTransaction(
     amountWei: transaction.amountWei.toString(),
     hash,
     explorerUrl:
-      hash === null || transactionChainExplorerBaseUrl === undefined
+      hash === null || transactionChain === undefined
         ? null
-        : `${stripTrailingSlash(transactionChainExplorerBaseUrl)}/tx/${hash}`,
+        : `${stripTrailingSlash(transactionChain.explorerBaseUrl)}/tx/${hash}`,
     nonce: transaction.nonce ?? null,
     errorCode: transaction.errorCode ?? null,
     createdAt: transaction.createdAt.toISOString(),
     submittedAt: transaction.submittedAt?.toISOString() ?? null,
     confirmedAt: transaction.confirmedAt?.toISOString() ?? null,
+    treasuryAddress: transactionChain?.treasuryAddress ?? null,
+    chain:
+      transactionChain === undefined
+        ? null
+        : {
+            slug: transactionChain.slug,
+            chainId: transactionChain.chainId,
+            displayName: transactionChain.displayName,
+            nativeSymbol: transactionChain.nativeSymbol,
+          },
   };
 }
 
