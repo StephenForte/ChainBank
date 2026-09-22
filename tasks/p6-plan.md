@@ -153,6 +153,20 @@ pulled.
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
   between the two. Fail-closed worked; the fleet rule in D23 covers it.
 
+- **TX.34 — a first Base outgoing scan must finish inside one cron run and inside the heap.**
+  The TX.29 note that "only the first scan is heavy" assumed a completed scan writes the
+  watermark. It does not, on a null `last_outgoing_scan_nonce`: TX.14 treats null as
+  cannot-skip, and the watermark is written only after the whole run finishes. The
+  2026-09-22 18:00 UTC reconciler (`runId` `2f586bbc…`) body-scanned Base `0x16ca…`
+  (20 001 blocks, 0 transfers, 828 s) and then died with a heap OOM while scanning
+  `0x5128…`, leaving `finished_at` NULL. The completed scan was discarded, so every
+  later run repeats both 20 001-block scans. Fix: when the stored nonce is null, equal
+  transaction counts at `fromBlock - 1` and `toBlock` are a complete empty scan and
+  advance the watermark the way a TX.14 skip does; a zero-finding completion is
+  written before the next treasury; any finding still waits until after escalation.
+  A per-chain lookback is not required once an empty window is two nonce reads.
+  `render.yaml` and `NODE_OPTIONS` stay operator-owned (TX.33 is held).
+
 **Exit condition, stated once:** TX.29 (merged 2026-09-22) deployed, then one scheduled (not manual)
 `chainbank-wallet-reconciler` run whose log shows `outgoingScanStatus: complete`, both Base
 `watermark_advanced` lines, and `chainOutcomes` both `processed` — plus TX.30 merged and both QuickNode

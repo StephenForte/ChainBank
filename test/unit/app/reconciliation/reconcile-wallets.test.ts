@@ -1,5 +1,6 @@
 import { Writable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { custom, type Transport } from 'viem';
 import { reconcileWallets } from '../../../../src/app/reconciliation/reconcile-wallets.js';
 import { ChainBankError } from '../../../../src/domain/errors.js';
 
@@ -28,11 +29,13 @@ import type {
   RecordOutgoingScanCompleteInput,
   StoredOpenAlert,
   Treasury,
+  TreasuryOutgoingScanner,
   TreasuryRepository,
 } from '../../../../src/app/ports.js';
 import { classifyReconciliationRun } from '../../../../src/app/alerts/notify-reconciliation-failure.js';
 import { classifyReconcilerExit, reconcilerExitCode } from '../../../../src/jobs/wallet-reconciler.js';
 import { createLogger } from '../../../../src/observability/logger.js';
+import { createTreasuryOutgoingScanner } from '../../../../src/infrastructure/evm/treasury-outgoing-scanner.js';
 import { createFixedClock } from '../../../support/clock.js';
 import {
   createFakeBalanceReader,
@@ -61,6 +64,78 @@ function collectLogs(): { stream: Writable; lines: () => Array<Record<string, un
         .split('\n')
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line) as Record<string, unknown>),
+  };
+}
+
+function countingRpc(options: {
+  readonly tip: bigint;
+  readonly countAt: (blockNumber: bigint) => number;
+  readonly unavailableAt?: bigint;
+}): {
+  readonly scanner: TreasuryOutgoingScanner;
+  readonly getBlockCount: number;
+  readonly countBlocks: readonly bigint[];
+} {
+  const counts = { getBlock: 0, countBlocks: [] as bigint[] };
+  let now = 0;
+  const transport: Transport = custom(
+    {
+      request({ method, params }) {
+        switch (method) {
+          case 'eth_chainId':
+            return Promise.resolve('0xaa36a7');
+          case 'eth_blockNumber':
+            return Promise.resolve(`0x${options.tip.toString(16)}`);
+          case 'eth_getTransactionCount': {
+            const blockTag = (params as [string, string])[1];
+            const blockNumber = BigInt(blockTag);
+            counts.countBlocks.push(blockNumber);
+            if (options.unavailableAt === blockNumber) {
+              return Promise.reject(new Error('edge unavailable'));
+            }
+            return Promise.resolve(`0x${options.countAt(blockNumber).toString(16)}`);
+          }
+          case 'eth_getBlockByNumber': {
+            counts.getBlock += 1;
+            const blockNumber = BigInt((params as [string, boolean])[0]);
+            return Promise.resolve({
+              number: `0x${blockNumber.toString(16)}`,
+              hash: `0x${'11'.repeat(32)}`,
+              timestamp: '0x1',
+              transactions: [],
+            });
+          }
+          default:
+            return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
+        }
+      },
+    },
+    { retryCount: 0 },
+  );
+  const scanner = createTreasuryOutgoingScanner({
+    chain: {
+      slug: 'sepolia',
+      chainId: 11_155_111,
+      displayName: 'Sepolia',
+      nativeSymbol: 'ETH',
+      rpcUrl: 'https://rpc.example.test/sepolia',
+      explorerBaseUrl: 'https://sepolia.etherscan.io',
+    },
+    logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+    maxRequestsPerSecond: 1_000,
+    transport,
+    nowMs: () => now,
+    sleep: (ms) => {
+      now += ms;
+      return Promise.resolve();
+    },
+  });
+  return {
+    scanner,
+    get getBlockCount() {
+      return counts.getBlock;
+    },
+    countBlocks: counts.countBlocks,
   };
 }
 
@@ -651,7 +726,10 @@ describe('reconcileWallets sweep decisions', () => {
 describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
   it('resumes incrementally from a stored marker and advances it on success', async () => {
     const stores = createInMemoryFundingStores();
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 1_050n });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      countAtBlock: (blockNumber) => (blockNumber >= 1_050n ? 1 : 0),
+    });
     const deps = buildDeps(
       stores,
       [],
@@ -672,7 +750,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
       treasuryId: 'treasury-1',
       scannedToBlock: 1_050n,
-      scannedNonce: 0,
+      scannedNonce: 1,
       scannedAt: now,
     });
     expect(result.outgoingScanStatus).toBe('complete');
@@ -680,7 +758,12 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
 
   it('uses a tip-relative capped window when no marker exists', async () => {
     const stores = createInMemoryFundingStores();
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 50_000n });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 50_000n,
+      // Null nonce with equal edges would skip (TX.34). A rise at the tip
+      // keeps this test on the body scan that proves the capped window.
+      countAtBlock: (blockNumber) => (blockNumber >= 50_000n ? 1 : 0),
+    });
     const deps = buildDeps(stores, [], buildTreasury(), {
       outgoingScanner: scanner,
       outgoingLookbackBlocks: 20_000n,
@@ -703,7 +786,10 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     // Rewritten (TX.9 round 2): tip-facing skip-ahead was fail-closed inverted —
     // marker advanced past an unscanned window. Forward-contiguous is required.
     const stores = createInMemoryFundingStores();
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 50_000n });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 50_000n,
+      countAtBlock: (blockNumber) => (blockNumber >= 21_000n ? 1 : 0),
+    });
     const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
       outgoingScanner: scanner,
       outgoingLookbackBlocks: 20_000n,
@@ -737,6 +823,7 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
     const orphanHash = `0x${'aa'.repeat(32)}`;
     const scanner = createFakeOutgoingScanner({
       latestBlockNumber: 50_000n,
+      countAtBlock: (blockNumber) => (blockNumber >= 21_000n ? 1 : 0),
       transfers: [
         {
           transactionHash: orphanHash,
@@ -799,9 +886,16 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
       }),
     ).rejects.toThrow('forced markFinished failure');
 
-    // TX.14: skip path queues watermark+nonce, but neither flushes without markFinished.
+    // A TX.14 skip is a zero-finding complete scan, so TX.34 persists the
+    // watermark before markFinished. A later failure cannot undo a window
+    // that was proved empty.
     expect(scanner.listCalls).toHaveLength(0);
-    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 1_050n,
+      scannedNonce: 7,
+      scannedAt: now,
+    });
   });
 
   it('records not-run when there are zero enabled treasuries', async () => {
@@ -822,7 +916,10 @@ describe('reconcileWallets outgoing scan bookkeeping (TX.9)', () => {
 
   it('does not advance the marker when the scan fails', async () => {
     const stores = createInMemoryFundingStores();
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: 2_000n });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 2_000n,
+      countAtBlock: (blockNumber) => (blockNumber >= 2_000n ? 1 : 0),
+    });
     scanner.setListIncomplete('RPC_UNAVAILABLE', 'partial failure');
     const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanBlock: 1_000n }), {
       outgoingScanner: scanner,
@@ -1182,11 +1279,11 @@ describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {
     ).toBe(false);
   });
 
-  it('full-scans when stored nonce is null, records nonce, then skips on the next run', async () => {
+  it('full-scans when stored nonce is null and the edge counts differ, records nonce, then skips on the next run', async () => {
     const stores = createInMemoryFundingStores();
     const scanner = createFakeOutgoingScanner({
       latestBlockNumber: 1_050n,
-      confirmedNonce: 4,
+      countAtBlock: (blockNumber) => (blockNumber >= 1_050n ? 4 : 3),
     });
     const deps = buildDeps(
       stores,
@@ -1236,6 +1333,166 @@ describe('reconcileWallets nonce-gated outgoing scan (TX.14)', () => {
       scannedAt: now,
     });
     expect(second.outgoingScanStatus).toBe('complete');
+  });
+
+  it('does not advance the watermark when an unexplained transfer is found and markFinished fails', async () => {
+    const stores = createInMemoryFundingStores();
+    const orphanHash = `0x${'cc'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 1_050n,
+      countAtBlock: (blockNumber) => (blockNumber >= 1_050n ? 5 : 4),
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A,
+          valueWei: ONE_ETH / 2n,
+          nonce: 4,
+          blockNumber: 1_025n,
+        },
+      ],
+    });
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 1_000n,
+        lastOutgoingScanNonce: undefined,
+      }),
+      { outgoingScanner: scanner },
+    );
+    deps.reconciliationRuns.markFinished = () => Promise.reject(new Error('forced markFinished failure'));
+
+    await expect(
+      reconcileWallets(deps, {
+        role: 'cron-reconciler',
+        credentialId: 'cron-cred',
+        correlationId: 'corr-finding-mark-fail',
+        runId: 'run-finding-mark-fail',
+      }),
+    ).rejects.toThrow('forced markFinished failure');
+
+    expect(scanner.listCalls).toHaveLength(1);
+    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
+  });
+
+  it('skips a null stored nonce when edge counts match and issues zero getBlock calls', async () => {
+    const rpc = countingRpc({
+      tip: 14n,
+      countAt: () => 4,
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 10n,
+        lastOutgoingScanNonce: undefined,
+      }),
+      { outgoingScanner: rpc.scanner, outgoingLookbackBlocks: 100n },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-null-equal',
+      runId: 'run-null-equal',
+    });
+
+    expect(rpc.getBlockCount).toBe(0);
+    expect(rpc.countBlocks).toEqual([10n, 14n]);
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith({
+      treasuryId: 'treasury-1',
+      scannedToBlock: 14n,
+      scannedNonce: 4,
+      scannedAt: now,
+    });
+    expect(result.outgoingScanStatus).toBe('complete');
+  });
+
+  it('body-scans a null stored nonce when edge counts differ, one getBlock per block', async () => {
+    const rpc = countingRpc({
+      tip: 14n,
+      countAt: (blockNumber) => (blockNumber >= 14n ? 6 : 4),
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 10n,
+        lastOutgoingScanNonce: undefined,
+      }),
+      { outgoingScanner: rpc.scanner, outgoingLookbackBlocks: 100n },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-null-unequal',
+      runId: 'run-null-unequal',
+    });
+
+    // Window is [11, 14].
+    expect(rpc.getBlockCount).toBe(4);
+    expect(result.outgoingScanStatus).toBe('complete');
+    expect(deps.treasuries.recordOutgoingScanComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ scannedToBlock: 14n, scannedNonce: 6 }),
+    );
+  });
+
+  it('leaves the watermark unchanged when a null-nonce edge read is unavailable', async () => {
+    const rpc = countingRpc({
+      tip: 14n,
+      countAt: () => 4,
+      unavailableAt: 10n,
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(
+      stores,
+      [],
+      buildTreasury({
+        lastOutgoingScanBlock: 10n,
+        lastOutgoingScanNonce: undefined,
+      }),
+      { outgoingScanner: rpc.scanner, outgoingLookbackBlocks: 100n },
+    );
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-null-unavailable',
+      runId: 'run-null-unavailable',
+    });
+
+    expect(rpc.getBlockCount).toBe(0);
+    expect(rpc.countBlocks).toEqual([10n]);
+    expect(result.outgoingScanStatus).toBe('incomplete');
+    expect(result.findings.some((finding) => finding.kind === 'outgoing_scan_incomplete')).toBe(true);
+    expect(deps.treasuries.recordOutgoingScanComplete).not.toHaveBeenCalled();
+  });
+
+  it('body-scans from block zero and does not read a count below zero', async () => {
+    const rpc = countingRpc({
+      tip: 3n,
+      countAt: () => 0,
+    });
+    const stores = createInMemoryFundingStores();
+    const deps = buildDeps(stores, [], buildTreasury({ lastOutgoingScanNonce: undefined }), {
+      outgoingScanner: rpc.scanner,
+      outgoingLookbackBlocks: 100n,
+    });
+
+    const result = await reconcileWallets(deps, {
+      role: 'cron-reconciler',
+      credentialId: 'cron-cred',
+      correlationId: 'corr-null-genesis',
+      runId: 'run-null-genesis',
+    });
+
+    expect(rpc.countBlocks.some((block) => block < 0n)).toBe(false);
+    expect(rpc.getBlockCount).toBe(4);
+    expect(result.outgoingScanStatus).toBe('complete');
   });
 });
 
@@ -1477,7 +1734,7 @@ function buildDeps(
     readonly externalSigner?: ReturnType<typeof createFakeSigner>;
     readonly extraChainIds?: readonly number[];
     readonly balanceReader?: ReturnType<typeof createFakeBalanceReader>;
-    readonly outgoingScanner?: ReturnType<typeof createFakeOutgoingScanner>;
+    readonly outgoingScanner?: TreasuryOutgoingScanner;
     readonly outgoingLookbackBlocks?: bigint;
     readonly isFundingEnabled?: boolean;
     readonly isFundingKillSwitchActive?: boolean;

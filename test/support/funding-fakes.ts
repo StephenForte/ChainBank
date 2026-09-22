@@ -646,6 +646,12 @@ export function createInMemoryReconciliationRunRepository(): ReconciliationRunRe
 export function createFakeOutgoingScanner(options?: {
   readonly confirmedNonce?: number | (() => number);
   readonly latestBlockNumber?: bigint;
+  /**
+   * Per-block confirmed nonce. When set, count-at-block reads use it instead of
+   * the single `confirmedNonce`. TX.34 tests use this so a null stored nonce
+   * with unequal edges still body-scans.
+   */
+  readonly countAtBlock?: (blockNumber: bigint) => number;
   readonly transfers?: readonly TreasuryOutgoingTransfer[];
   readonly findByNonce?: (nonce: number) => FindByNonceResult;
   readonly listResult?: OutgoingScanResult;
@@ -744,6 +750,12 @@ export function createFakeOutgoingScanner(options?: {
       }
       if (nonceOverride !== undefined) {
         return Promise.resolve(nonceOverride);
+      }
+      if (options?.countAtBlock !== undefined) {
+        return Promise.resolve({
+          kind: 'ok' as const,
+          confirmedNonce: options.countAtBlock(input.blockNumber),
+        });
       }
       return Promise.resolve({ kind: 'ok' as const, confirmedNonce });
     },

@@ -867,6 +867,40 @@ TX.14 amendment (2026-08-02) — nonce-gated outgoing-scan skip (no new contract
 - **Out of scope:** bisecting the k consumption points when the delta is small
   (k·log(window) instead of a full body scan).
 
+TX.34 amendment (2026-09-22) — null-nonce edge gate and per-treasury watermark (no new contract number):
+
+Amends the TX.14 rule "null stored nonce means cannot-skip" and the TX.9 / TX.14
+rule that every watermark waits until after `markFinished` and escalation.
+TX.14's gate for a **non-null** stored nonce is unchanged.
+
+- **Null-nonce edge gate** (after `planOutgoingScanWindow`, only when
+  `last_outgoing_scan_nonce` is null). Read the confirmed count at
+  `fromBlock - 1` and at `toBlock`. Equal counts prove the address sent
+  nothing in the window — every outgoing transaction consumes one nonce —
+  so the body scan is skipped and the watermark (block and nonce) advances
+  exactly as a TX.14 skip does, including the coverage-behind finding and
+  incomplete status when the plan cannot reach the tip. Counts that differ
+  are not interpreted; the body scan runs. Either read unavailable is
+  incomplete and the watermark stays put — an unavailable read is never zero
+  and never a clean scan. `fromBlock === 0` has no predecessor, so there is
+  no edge read and the body scan runs.
+- **Do not** treat "the counts differ by the number of transactions we
+  already know about" as a skip. That is inference. TX.14 rejects it, and
+  this amendment does too.
+- **Per-treasury durability.** A scan that is complete and produced zero
+  findings (a TX.34 edge skip, a TX.14 skip with no coverage-behind finding,
+  or a body scan that found nothing) writes the watermark before the
+  reconciler moves to the next treasury. A later crash in the same run must
+  not undo it. A scan that produced any finding — unexplained transfer,
+  coverage-behind, incomplete, anything else — keeps the TX.9 ordering:
+  findings logged, alerts and email escalation done, then the watermark.
+  Early persistence is safe only when there is nothing to lose. A duplicate
+  finding is better than a lost key-compromise signal.
+- **Run-level** `outgoingScanStatus`, `chainOutcomes`, and C29 per-chain
+  isolation are unchanged, apart from windows this gate skips.
+- **Out of scope:** a per-chain lookback, raising the RPC rate limit, and
+  removing the operator's `NODE_OPTIONS` heap cap. TX.32 stays reserved.
+
 ### C15 — Reconciliation failure alert (owner: T4.3)
 
 ```ts
@@ -2050,3 +2084,4 @@ Local design choices (T10.5, 2026-09-22):
 - 2026-09-22 — **T10.1 published C31:** dashboard users and server-side sessions (migration `0011`). Login sets `chainbank_session` (`HttpOnly`, `SameSite=Strict`, `Secure` when hosted). A present Authorization header is the only credential; the cookie is accepted only with `X-ChainBank-Session: 1`. `user:manage` is dashboard-admin only. C32–C36 stay reserved by the Phase 10 plan.
 - 2026-09-22 — T10.2 published C32: dashboard hash routes, design tokens, shell primitives, and localStorage collapse keys; unacknowledged critical findings and dark-chain warnings stay outside collapse.
 - 2026-09-22 — **T10.5 published C35:** `email_deliveries` (migration `0012`) records each send after the provider answers; a recording failure cannot change the send result. `GET /v1/admin/email/deliveries` and `GET /v1/admin/email/triggers` are `alert:read`. No message body, no API key. C36 stays reserved for the email page.
+- 2026-09-22 — **TX.34 amended C14 in place:** a null `last_outgoing_scan_nonce` may skip the outgoing body scan when the transaction counts at `fromBlock - 1` and `toBlock` are equal, and a zero-finding completion writes that treasury's watermark before the next treasury. A scan that produced any finding still waits until after escalation. No contract, no migration. TX.32 and TX.33 remain reserved.

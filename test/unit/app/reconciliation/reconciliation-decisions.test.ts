@@ -12,6 +12,8 @@ import {
   RECONCILE_BLOCK_TIME_MS,
   reconciliationIdempotencyKey,
   shouldSkipOutgoingBodyScan,
+  decideNullNonceEdgeGate,
+  shouldPersistOutgoingWatermarkImmediately,
 } from '../../../../src/app/reconciliation/reconciliation-decisions.js';
 import type { ManagedWallet, TreasuryOutgoingTransfer } from '../../../../src/app/ports.js';
 import { findSupportedChainById, SUPPORTED_CHAINS } from '../../../../src/config/supported-chains.js';
@@ -290,6 +292,89 @@ describe('reconciliation decisions', () => {
       expect(shouldSkipOutgoingBodyScan({ storedNonce: 7, tipNonce: 7 })).toBe(true);
       expect(shouldSkipOutgoingBodyScan({ storedNonce: 7, tipNonce: 8 })).toBe(false);
       expect(shouldSkipOutgoingBodyScan({ storedNonce: undefined, tipNonce: 0 })).toBe(false);
+    });
+  });
+
+  describe('decideNullNonceEdgeGate', () => {
+    it('skips when the edge counts are equal and fromBlock is past zero', () => {
+      expect(
+        decideNullNonceEdgeGate({
+          fromBlock: 1_001n,
+          countBeforeWindow: 4,
+          countAtToBlock: 4,
+          edgeReadUnavailable: false,
+        }),
+      ).toEqual({ kind: 'skip', nonce: 4 });
+    });
+
+    it('body-scans when the edge counts differ, without inferring the delta', () => {
+      expect(
+        decideNullNonceEdgeGate({
+          fromBlock: 1_001n,
+          countBeforeWindow: 4,
+          countAtToBlock: 6,
+          edgeReadUnavailable: false,
+        }),
+      ).toEqual({ kind: 'body-scan' });
+    });
+
+    it('is incomplete when an edge read is unavailable', () => {
+      expect(
+        decideNullNonceEdgeGate({
+          fromBlock: 1_001n,
+          countBeforeWindow: undefined,
+          countAtToBlock: undefined,
+          edgeReadUnavailable: true,
+        }),
+      ).toEqual({ kind: 'incomplete' });
+    });
+
+    it('body-scans when fromBlock is zero and does not require an edge count', () => {
+      expect(
+        decideNullNonceEdgeGate({
+          fromBlock: 0n,
+          countBeforeWindow: undefined,
+          countAtToBlock: undefined,
+          edgeReadUnavailable: false,
+        }),
+      ).toEqual({ kind: 'body-scan' });
+    });
+  });
+
+  describe('shouldPersistOutgoingWatermarkImmediately', () => {
+    it('persists only a complete scan that produced no findings', () => {
+      expect(
+        shouldPersistOutgoingWatermarkImmediately({
+          scanStatus: 'complete',
+          findingCount: 0,
+          unexplainedCount: 0,
+          hasPendingAdvance: true,
+        }),
+      ).toBe(true);
+      expect(
+        shouldPersistOutgoingWatermarkImmediately({
+          scanStatus: 'complete',
+          findingCount: 1,
+          unexplainedCount: 1,
+          hasPendingAdvance: true,
+        }),
+      ).toBe(false);
+      expect(
+        shouldPersistOutgoingWatermarkImmediately({
+          scanStatus: 'incomplete',
+          findingCount: 1,
+          unexplainedCount: 0,
+          hasPendingAdvance: true,
+        }),
+      ).toBe(false);
+      expect(
+        shouldPersistOutgoingWatermarkImmediately({
+          scanStatus: 'complete',
+          findingCount: 0,
+          unexplainedCount: 0,
+          hasPendingAdvance: false,
+        }),
+      ).toBe(false);
     });
   });
 

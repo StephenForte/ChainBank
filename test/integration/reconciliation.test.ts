@@ -476,7 +476,10 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
       },
     );
     expect(first.outgoingScanStatus).toBe('complete');
-    expect(scanner.listCalls[0]).toMatchObject({ fromBlock: 4_000n, toBlock: 5_000n });
+    // Null nonce, equal edge counts: TX.34 skips the body scan and still
+    // records the watermark. The incremental window is proved on the nonce
+    // delta below.
+    expect(scanner.listCalls).toHaveLength(0);
 
     const treasuryRepo = createTreasuryRepository(handle.db);
     const afterFirst = await treasuryRepo.findById(seed.treasuryId);
@@ -564,6 +567,118 @@ describe.skipIf(!integrationEnabled)('reconciliation use case (integration)', ()
     const afterSkip = await treasuryRepo.findById(seed.treasuryId);
     expect(afterSkip?.lastOutgoingScanBlock).toBe(5_100n);
     expect(afterSkip?.lastOutgoingScanNonce).toBe(4);
+  });
+
+  it('persists a clean treasury watermark before a later treasury crashes', async () => {
+    const treasuryBAddress = '0x5555555555555555555555555555555555555555';
+    const [treasuryB] = await handle.db
+      .insert(treasuries)
+      .values({
+        chainId: seed.chainId,
+        address: treasuryBAddress,
+        addressDisplay: treasuryBAddress,
+        kind: 'operational',
+        warningBalanceWei: ONE_ETH.toString(),
+        criticalBalanceWei: (ONE_ETH / 4n).toString(),
+        recoveryBalanceWei: (2n * ONE_ETH).toString(),
+        minimumReserveWei: (ONE_ETH / 10n).toString(),
+      })
+      .returning({ id: treasuries.id });
+    if (treasuryB === undefined) {
+      throw new Error('failed to seed the second treasury');
+    }
+
+    const inner = createFakeOutgoingScanner({ latestBlockNumber: 80n, confirmedNonce: 0 });
+    const treasuryRepo = createTreasuryRepository(handle.db);
+    let tips = 0;
+    let watermarkWhenBStarted: bigint | undefined;
+    const scanner = {
+      ...inner,
+      getLatestBlockNumber: () => {
+        tips += 1;
+        if (tips === 2) {
+          return treasuryRepo.findById(seed.treasuryId).then((row) => {
+            watermarkWhenBStarted = row?.lastOutgoingScanBlock;
+            throw new Error('crash during treasury B');
+          });
+        }
+        return inner.getLatestBlockNumber();
+      },
+    };
+
+    const result = await reconcileWallets(
+      buildReconcileDeps({
+        signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+        balanceReader: createFakeBalanceReader({
+          balances: {
+            [TREASURY_ADDRESS]: 20n * ONE_ETH,
+            [treasuryBAddress]: 20n * ONE_ETH,
+            [WALLET_A_ADDRESS]: ONE_ETH,
+          },
+        }),
+        outgoingScanner: scanner,
+        // Tip above the lookback so fromBlock > 0 and equal edge counts skip
+        // the body scan — the production first-scan shape, persisted early.
+        outgoingLookbackBlocks: 10n,
+      }),
+      {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-crash-b-${randomUUID()}`,
+      },
+    );
+
+    expect(result.run.errorCode).toBe('INTERNAL_ERROR');
+    expect(inner.listCalls).toHaveLength(0);
+    expect(watermarkWhenBStarted).toBe(80n);
+    const afterA = await treasuryRepo.findById(seed.treasuryId);
+    const afterB = await treasuryRepo.findById(treasuryB.id);
+    expect(afterA?.lastOutgoingScanBlock).toBe(80n);
+    expect(afterA?.lastOutgoingScanNonce).toBe(0);
+    expect(afterB?.lastOutgoingScanBlock).toBeUndefined();
+    expect(afterB?.lastOutgoingScanNonce).toBeUndefined();
+  });
+
+  it('does not advance the watermark when an unexplained transfer is found and the run throws before escalation', async () => {
+    const orphanHash = `0x${'ab'.repeat(32)}`;
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: 40n,
+      transfers: [
+        {
+          transactionHash: orphanHash,
+          fromAddress: TREASURY_ADDRESS,
+          toAddress: WALLET_A_ADDRESS,
+          valueWei: ONE_ETH / 2n,
+          nonce: 1,
+          blockNumber: 10n,
+        },
+      ],
+    });
+    const deps = buildReconcileDeps({
+      signer: createFakeSigner({ address: TREASURY_ADDRESS }),
+      balanceReader: createFakeBalanceReader({
+        balances: {
+          [TREASURY_ADDRESS]: 20n * ONE_ETH,
+          [WALLET_A_ADDRESS]: ONE_ETH,
+        },
+      }),
+      outgoingScanner: scanner,
+    });
+    deps.reconciliationRuns.markFinished = () => Promise.reject(new Error('before escalation'));
+
+    await expect(
+      reconcileWallets(deps, {
+        role: 'cron-reconciler',
+        credentialId: cronCredentialId,
+        correlationId: `corr-${randomUUID()}`,
+        runId: `run-finding-throw-${randomUUID()}`,
+      }),
+    ).rejects.toThrow('before escalation');
+
+    const after = await createTreasuryRepository(handle.db).findById(seed.treasuryId);
+    expect(after?.lastOutgoingScanBlock).toBeUndefined();
+    expect(after?.lastOutgoingScanNonce).toBeUndefined();
   });
 
   it('records not-run scan status for a policy-disabled early exit', async () => {
