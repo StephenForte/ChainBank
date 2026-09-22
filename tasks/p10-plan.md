@@ -152,6 +152,17 @@ imports.
 
 ### T10.3 🟢 Login page, session wiring, Admin page — **C33** `[T10.1, T10.2]`
 
+**Status 2026-09-22: ✅ reviewed and approved in
+[#141](https://github.com/StephenForte/ChainBank/pull/141); operator merges.** Run 🔴 in practice, and
+sequenced before T10.4 because both rewrite `App.tsx`, `shell.tsx` and `api.ts` (the plan's "parallel"
+was wrong; corrected at dispatch). Planner verification: scratch-clone gate 687 unit / 59 dashboard /
+143 integration, bundle greps `Authorization` 0 and `operatorToken` 0; probes: every fetch after sign-in
+carries the session header and same-origin credentials with no Authorization; only `/v1/auth/me` is
+fetched while the session is unknown; per-role button inventory (viewer has no Check now / Test email
+/ Acknowledge, no Admin link); the change-password 401 exception holds. Bugbot's stale-401 finding was
+fixed with a session epoch and a test. **Operator action after merge:** `npm run user:create` against
+the hosted database for the first admin (docs/runbooks/create-dashboard-user.md).
+
 Owns: `dashboard/src/pages/{login,admin}*.tsx` (new), `dashboard/src/session/*` (new); additive on
 `dashboard/src/api.ts`, `dashboard/src/App.tsx` (route table).
 
