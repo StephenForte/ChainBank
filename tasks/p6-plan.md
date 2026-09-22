@@ -15,7 +15,7 @@ Baseline at plan write: `origin/main` **`3a3fbcd`** (merge of PR #112, merged 20
 ## Phase 6 is code-complete and Base Sepolia is LIVE (2026-09-22)
 
 All five tasks merged: T6.1/**C26**, T6.2/**C27**, T6.3/**C28**, T6.4/**C29**, T6.5/**C30**. `main` at
-`a9ccf1c`. Next free contract **C31**, decision **D24**, task **TX.33** (**TX.29**–**TX.32** are reserved
+`a9ccf1c`. Next free contract **C31**, decision **D24**, task **TX.34** (**TX.29**–**TX.33** are reserved
 below); migrations through `0010` and Phase 6 consumed none.
 
 **Base Sepolia (84532) is registered and running.** `chainbank-web` went live with both chains at
@@ -132,10 +132,26 @@ pulled.
   retry loop that owns viem's transient set too, a per-minute-aware budget. Not blocking exit; the
   default 25 leaves 2× headroom.
 
-**Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
-startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
+- **TX.33 (reserved) — `render.yaml` still declares the singular chain env on all three services.**
+  Found 2026-09-22 while verifying the operator's env cleanup. The Blueprint declares literal
+  `CHAIN_ID: '11155111'` and literal `TREASURY_WARNING/CRITICAL/RECOVERY_BALANCE_ETH` +
+  `TREASURY_MINIMUM_RESERVE_ETH`, plus `sync: false` `CHAIN_RPC_URL` / `TREASURY_ADDRESS`, on web,
+  treasury-monitor and wallet-reconciler — and `test/unit/config/render-blueprint-thresholds.test.ts`
+  asserts exactly that (it requires `CHAIN_ID === '11155111'` and forbids `CHAINS` in the file). Every
+  one of those keys is in `SINGULAR_CHAIN_ENV_KEYS`, and `loadConfig` refuses to start when any of them
+  is present beside `CHAINS`. CB-04 established that Render reapplies literal values on every Blueprint
+  sync and re-syncs on any commit touching `render.yaml`. So the next edit to that file — for any reason
+  — re-adds `CHAIN_ID` and the four thresholds to all three services and every service refuses to
+  boot: a full outage from a docs-grade change. Live env is clean today (proof: all three services
+  booted with `CHAINS` after the cutover, which the refusal makes impossible with a singular key
+  present). Fix: declare `CHAINS` as `sync: false` on all three, drop the singular keys, rewrite the
+  blueprint test to load the multi-chain form, keep the CB-04 funding-gate assertions. Note the fix
+  commit itself triggers a sync; with the singular keys gone from the file, Render preserves but does
+  not re-create them. Dispatch before anyone touches `render.yaml` for another reason.
+  **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
+  startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
-between the two. Fail-closed worked; the fleet rule in D23 covers it.
+  between the two. Fail-closed worked; the fleet rule in D23 covers it.
 
 **Exit condition, stated once:** TX.29 (merged 2026-09-22) deployed, then one scheduled (not manual)
 `chainbank-wallet-reconciler` run whose log shows `outgoingScanStatus: complete`, both Base
