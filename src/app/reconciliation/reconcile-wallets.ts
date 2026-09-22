@@ -66,7 +66,10 @@ import {
   nonceSearchLookbackBlocks,
   planOutgoingScanWindow,
   reconciliationIdempotencyKey,
+  decideNullNonceEdgeGate,
+  shouldPersistOutgoingWatermarkImmediately,
   shouldSkipOutgoingBodyScan,
+  type OutgoingScanWindowPlan,
   type SweepCounters,
   classifyOutgoingAgainstRecords,
 } from './reconciliation-decisions.js';
@@ -246,7 +249,22 @@ export async function reconcileWallets(
           unexplainedTransferCount += orphanScan.unexplained.length;
           findings.push(...orphanScan.findings);
           if (orphanScan.pendingAdvance !== undefined) {
-            pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+            // Zero-finding completion is durable before the next treasury.
+            // A finding stays queued until escalation has run: a crash after
+            // an early advance would let the nonce gate skip the only
+            // evidence of a drained treasury.
+            if (
+              shouldPersistOutgoingWatermarkImmediately({
+                scanStatus: orphanScan.scanStatus,
+                findingCount: orphanScan.findings.length,
+                unexplainedCount: orphanScan.unexplained.length,
+                hasPendingAdvance: true,
+              })
+            ) {
+              await persistOutgoingWatermark(dependencies, orphanScan.pendingAdvance, input.correlationId);
+            } else {
+              pendingWatermarkAdvances.push(orphanScan.pendingAdvance);
+            }
           }
         }
 
@@ -607,26 +625,13 @@ export async function reconcileWallets(
     correlationId: input.correlationId,
   });
 
-  // Findings + escalation are done; now advance watermarks. A failure here
-  // leaves the next run re-scanning the same window (fail closed — duplicate
-  // findings beat a lost key-compromise signal).
+  // Findings + escalation are done; now advance watermarks that were held
+  // because the scan produced a finding. A failure here leaves the next run
+  // re-scanning the same window (fail closed — duplicate findings beat a
+  // lost key-compromise signal). Zero-finding scans were written before the
+  // next treasury and are not in this list.
   for (const advance of pendingWatermarkAdvances) {
-    await dependencies.treasuries.recordOutgoingScanComplete({
-      treasuryId: advance.treasuryId,
-      scannedToBlock: advance.scannedToBlock,
-      scannedNonce: advance.scannedNonce,
-      scannedAt: dependencies.clock.now(),
-    });
-    dependencies.logger.info(
-      {
-        event: 'reconciliation.outgoing_scan.watermark_advanced',
-        correlationId: input.correlationId,
-        treasuryId: advance.treasuryId,
-        scannedToBlock: advance.scannedToBlock.toString(),
-        scannedNonce: advance.scannedNonce,
-      },
-      'Treasury outgoing-scan watermark advanced',
-    );
+    await persistOutgoingWatermark(dependencies, advance, input.correlationId);
   }
 
   return {
@@ -1490,6 +1495,101 @@ function isTerminalOp(status: string): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'abandoned';
 }
 
+async function persistOutgoingWatermark(
+  dependencies: ReconcileWalletsDependencies,
+  advance: {
+    readonly treasuryId: string;
+    readonly scannedToBlock: bigint;
+    readonly scannedNonce: number;
+  },
+  correlationId: string,
+): Promise<void> {
+  await dependencies.treasuries.recordOutgoingScanComplete({
+    treasuryId: advance.treasuryId,
+    scannedToBlock: advance.scannedToBlock,
+    scannedNonce: advance.scannedNonce,
+    scannedAt: dependencies.clock.now(),
+  });
+  dependencies.logger.info(
+    {
+      event: 'reconciliation.outgoing_scan.watermark_advanced',
+      correlationId,
+      treasuryId: advance.treasuryId,
+      scannedToBlock: advance.scannedToBlock.toString(),
+      scannedNonce: advance.scannedNonce,
+    },
+    'Treasury outgoing-scan watermark advanced',
+  );
+}
+
+type CrashOrphanScan = {
+  readonly scanStatus: 'complete' | 'incomplete';
+  readonly chainReachable: boolean;
+  readonly unexplained: readonly ReconciliationFinding[];
+  readonly findings: readonly ReconciliationFinding[];
+  readonly pendingAdvance:
+    | {
+        readonly treasuryId: string;
+        readonly scannedToBlock: bigint;
+        readonly scannedNonce: number;
+      }
+    | undefined;
+};
+
+function provenEmptyWindow(
+  treasuryId: string,
+  plan: Extract<OutgoingScanWindowPlan, { kind: 'scan' }>,
+  nonce: number,
+): CrashOrphanScan {
+  const findings: ReconciliationFinding[] = [];
+  if (plan.isCoverageBehind) {
+    const markerBefore = plan.lastScannedBlock ?? plan.fromBlock - 1n;
+    findings.push({
+      kind: 'outgoing_scan_coverage_behind',
+      severity: 'warning',
+      treasuryId,
+      lastScannedBlock: markerBefore.toString(),
+      scannedFromBlock: plan.fromBlock.toString(),
+      scannedToBlock: plan.toBlock.toString(),
+      tip: plan.tip.toString(),
+      blocksRemaining: plan.blocksRemaining.toString(),
+      reason:
+        'Outgoing scan backlog exceeds the per-run cap; advanced forward-contiguously and coverage remains behind the tip.',
+    });
+  }
+  // Proven-empty window is a complete scan of the plan; backlog still
+  // reports incomplete while tip coverage remains behind (TX.9).
+  return {
+    scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
+    chainReachable: true,
+    unexplained: [],
+    findings,
+    pendingAdvance: {
+      treasuryId,
+      scannedToBlock: plan.advanceMarkerTo,
+      scannedNonce: nonce,
+    },
+  };
+}
+
+function incompleteEdgeRead(treasuryId: string, errorCode: string, reason: string): CrashOrphanScan {
+  return {
+    scanStatus: 'incomplete',
+    chainReachable: true,
+    unexplained: [],
+    findings: [
+      {
+        kind: 'outgoing_scan_incomplete',
+        severity: 'critical',
+        treasuryId,
+        errorCode,
+        reason,
+      },
+    ],
+    pendingAdvance: undefined,
+  };
+}
+
 async function detectCrashOrphansForTreasury(
   dependencies: ReconcileWalletsDependencies,
   input: {
@@ -1548,9 +1648,12 @@ async function detectCrashOrphansForTreasury(
     };
   }
 
-  // TX.14: nonce gate after plan, before the body scan. Null stored nonce never
-  // skips. Count is read at plan.toBlock (not latest) so a tip that moves during
-  // the sweep cannot mask a transaction inside the next window.
+  // TX.14: nonce gate after plan, before the body scan. A stored nonce skips
+  // when the count at plan.toBlock still equals it. Count is read at
+  // plan.toBlock (not latest) so a tip that moves during the sweep cannot
+  // mask a transaction inside the next window.
+  // TX.34: a null stored nonce may skip when the counts at the window edges
+  // are equal. fromBlock 0 cannot be proved that way and body-scans.
   const storedNonce = input.treasury.lastOutgoingScanNonce;
   let tipNonce: number | undefined;
 
@@ -1577,40 +1680,61 @@ async function detectCrashOrphansForTreasury(
           },
           'Outgoing scan skipped: treasury nonce unchanged since watermark',
         );
-
-        const findings: ReconciliationFinding[] = [];
-        if (plan.isCoverageBehind) {
-          const markerBefore = plan.lastScannedBlock ?? plan.fromBlock - 1n;
-          findings.push({
-            kind: 'outgoing_scan_coverage_behind',
-            severity: 'warning',
-            treasuryId: input.treasury.id,
-            lastScannedBlock: markerBefore.toString(),
-            scannedFromBlock: plan.fromBlock.toString(),
-            scannedToBlock: plan.toBlock.toString(),
-            tip: plan.tip.toString(),
-            blocksRemaining: plan.blocksRemaining.toString(),
-            reason:
-              'Outgoing scan backlog exceeds the per-run cap; advanced forward-contiguously and coverage remains behind the tip.',
-          });
-        }
-
-        // Proven-empty window is a complete scan of the plan; backlog still
-        // reports incomplete while tip coverage remains behind (TX.9).
-        return {
-          scanStatus: plan.isCoverageBehind ? 'incomplete' : 'complete',
-          chainReachable: true,
-          unexplained: [],
-          findings,
-          pendingAdvance: {
-            treasuryId: input.treasury.id,
-            scannedToBlock: plan.advanceMarkerTo,
-            scannedNonce: tipNonce,
-          },
-        };
+        return provenEmptyWindow(input.treasury.id, plan, tipNonce);
       }
     }
     // Count unavailable or nonce delta → fall through to today's full scan.
+  } else if (plan.fromBlock > 0n) {
+    const countBeforeWindow = await outgoingScannerFor(
+      dependencies,
+      input.treasury.chain.chainId,
+    ).getTransactionCountAtBlock({
+      address: input.treasury.addressDisplay,
+      blockNumber: plan.fromBlock - 1n,
+    });
+    if (countBeforeWindow.kind !== 'ok') {
+      return incompleteEdgeRead(input.treasury.id, countBeforeWindow.errorCode, countBeforeWindow.reason);
+    }
+    const countAtEnd = await outgoingScannerFor(
+      dependencies,
+      input.treasury.chain.chainId,
+    ).getTransactionCountAtBlock({
+      address: input.treasury.addressDisplay,
+      blockNumber: plan.toBlock,
+    });
+    if (countAtEnd.kind !== 'ok') {
+      return incompleteEdgeRead(input.treasury.id, countAtEnd.errorCode, countAtEnd.reason);
+    }
+    const decision = decideNullNonceEdgeGate({
+      fromBlock: plan.fromBlock,
+      countBeforeWindow: countBeforeWindow.confirmedNonce,
+      countAtToBlock: countAtEnd.confirmedNonce,
+      edgeReadUnavailable: false,
+    });
+    if (decision.kind === 'incomplete') {
+      return incompleteEdgeRead(
+        input.treasury.id,
+        'RPC_UNAVAILABLE',
+        'Transaction count at a scan-window edge could not be read from the RPC endpoint.',
+      );
+    }
+    if (decision.kind === 'skip') {
+      dependencies.logger.info(
+        {
+          event: 'reconciliation.outgoing_scan.skipped_null_nonce_edges',
+          correlationId: input.correlationId,
+          treasuryId: input.treasury.id,
+          countBeforeWindow: countBeforeWindow.confirmedNonce,
+          countAtToBlock: countAtEnd.confirmedNonce,
+          fromBlock: plan.fromBlock.toString(),
+          toBlock: plan.toBlock.toString(),
+        },
+        'Outgoing scan skipped: nonce unchanged across the unscanned window',
+      );
+      return provenEmptyWindow(input.treasury.id, plan, decision.nonce);
+    }
+    // Counts differ. The end count is the nonce a completed body scan records.
+    tipNonce = countAtEnd.confirmedNonce;
   }
 
   const scan = await outgoingScannerFor(dependencies, input.treasury.chain.chainId).listOutgoingTransfers({
@@ -1709,7 +1833,9 @@ async function detectCrashOrphansForTreasury(
     tipNonce = countAtTip.confirmedNonce;
   }
 
-  // Planned advance only — flushed after markFinished so findings are durable first.
+  // Planned advance. A zero-finding completion is written before the next
+  // treasury. A finding stays queued until after escalation: dying before the
+  // alert must leave this window re-scannable.
   const pendingAdvance = {
     treasuryId: input.treasury.id,
     scannedToBlock: plan.advanceMarkerTo,

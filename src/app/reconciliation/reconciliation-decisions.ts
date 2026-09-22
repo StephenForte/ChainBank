@@ -246,13 +246,76 @@ export function planOutgoingScanWindow(input: {
  * nonce. Equality of the confirmed count at the planned tip with the count
  * recorded when the watermark last advanced proves the planned window contains
  * zero outgoing transactions — a skip on proven equality is a complete scan of
- * that window. A null/undefined stored nonce never skips.
+ * that window. A null/undefined stored nonce never skips here. TX.34 proves
+ * that case from the window edges instead; it does not relax this predicate.
  */
 export function shouldSkipOutgoingBodyScan(input: {
   readonly storedNonce: number | undefined;
   readonly tipNonce: number;
 }): boolean {
   return input.storedNonce !== undefined && input.storedNonce === input.tipNonce;
+}
+
+export type NullNonceEdgeGateDecision =
+  | { readonly kind: 'body-scan' }
+  | { readonly kind: 'incomplete' }
+  | { readonly kind: 'skip'; readonly nonce: number };
+
+/**
+ * TX.34 null-nonce edge gate. Only for a treasury that has no stored nonce.
+ *
+ * Equal transaction counts at `fromBlock - 1` and at `toBlock` prove the
+ * address sent nothing in `[fromBlock, toBlock]`: every send consumes one
+ * nonce, so a flat count is an empty window. That is a complete scan, same
+ * as a TX.14 skip. Counts that differ are not interpreted — the caller
+ * body-scans. An unavailable edge is incomplete, never a clean skip and
+ * never a zero. `fromBlock === 0` has no predecessor block, so the edge
+ * read is impossible and the caller must body-scan.
+ */
+export function decideNullNonceEdgeGate(input: {
+  readonly fromBlock: bigint;
+  readonly countBeforeWindow: number | undefined;
+  readonly countAtToBlock: number | undefined;
+  readonly edgeReadUnavailable: boolean;
+}): NullNonceEdgeGateDecision {
+  if (input.fromBlock <= 0n) {
+    return { kind: 'body-scan' };
+  }
+  if (input.edgeReadUnavailable) {
+    return { kind: 'incomplete' };
+  }
+  if (!isNonNegativeInteger(input.countBeforeWindow) || !isNonNegativeInteger(input.countAtToBlock)) {
+    return { kind: 'incomplete' };
+  }
+  if (input.countBeforeWindow === input.countAtToBlock) {
+    return { kind: 'skip', nonce: input.countAtToBlock };
+  }
+  return { kind: 'body-scan' };
+}
+
+function isNonNegativeInteger(value: number | undefined): value is number {
+  return value !== undefined && Number.isInteger(value) && value >= 0;
+}
+
+/**
+ * TX.34. A completed scan with nothing to report may persist its watermark
+ * before the next treasury. Any finding — unexplained transfer,
+ * coverage-behind, incomplete — stays on the post-escalation write, because
+ * advancing the marker and then dying before the alert would let the next
+ * run skip the only evidence.
+ */
+export function shouldPersistOutgoingWatermarkImmediately(input: {
+  readonly scanStatus: 'complete' | 'incomplete';
+  readonly findingCount: number;
+  readonly unexplainedCount: number;
+  readonly hasPendingAdvance: boolean;
+}): boolean {
+  return (
+    input.hasPendingAdvance &&
+    input.scanStatus === 'complete' &&
+    input.findingCount === 0 &&
+    input.unexplainedCount === 0
+  );
 }
 
 /**

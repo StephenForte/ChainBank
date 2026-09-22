@@ -595,7 +595,10 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
         [WALLET_A_ADDRESS]: ONE_ETH / 10n,
       },
     });
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: tip });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: tip,
+      countAtBlock: (blockNumber) => (blockNumber >= tip ? 1 : 0),
+    });
     const signer = createFakeSigner({
       address: TREASURY_ADDRESS,
       rejectReusedNonce: true,
@@ -675,7 +678,10 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
         [WALLET_A_ADDRESS]: ONE_ETH,
       },
     });
-    const scanner = createFakeOutgoingScanner({ latestBlockNumber: tip });
+    const scanner = createFakeOutgoingScanner({
+      latestBlockNumber: tip,
+      countAtBlock: (blockNumber) => (blockNumber >= 1_100n ? 1 : 0),
+    });
     const signer = createFakeSigner({ address: TREASURY_ADDRESS });
 
     const result = await reconcileWallets(
@@ -703,13 +709,12 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
   });
 
   /**
-   * TX.9: watermark advances only after the run row is durable. When the
-   * lock-holding reconciler is terminated mid-dispatch, the in-lock funding
-   * work rolls back; the run may still finish on another pool connection.
-   * Assert the marker never advances past what was scanned, and never advances
-   * when no finished run exists for this race.
+   * A null stored nonce and equal edge counts prove the window empty, so
+   * TX.34 commits the watermark before dispatch. Terminating the lock holder
+   * mid-send rolls back the in-lock funding work; it must not roll back that
+   * already-committed watermark, whether or not the run row finishes.
    */
-  it('interrupted reconciler mid-dispatch does not advance watermark without a durable run', async () => {
+  it('interrupted reconciler mid-dispatch keeps a proved-empty watermark', async () => {
     const markerBefore = 2_000n;
     const tip = 2_050n;
     const cap = 100n;
@@ -791,16 +796,10 @@ describe.skipIf(!integrationEnabled)('cron-vs-API concurrency (integration, C16)
 
     const treasuryRepo = createTreasuryRepository(handle.db);
     const after = await treasuryRepo.findById(seed.treasuryId);
-    const runs = await handle.db.select().from(reconciliationRuns);
-    const durableFinished = runs.filter((run) => run.finishedAt !== null);
-
-    if (durableFinished.length === 0) {
-      // TX.9: no durable run ⇒ marker must not move.
-      expect(after?.lastOutgoingScanBlock).toBe(markerBefore);
-    } else {
-      // Run finished after the interrupted send: advance only to the scanned tip.
-      expect(after?.lastOutgoingScanBlock).toBe(tip);
-    }
+    // TX.34: the outgoing window was proved empty before dispatch started, so
+    // the watermark is already committed. Killing the lock holder mid-send
+    // must not roll that write back, whether or not the run row finishes.
+    expect(after?.lastOutgoingScanBlock).toBe(tip);
   });
 
   function readErrorCode(reason: unknown): string | undefined {
