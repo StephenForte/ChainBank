@@ -1,6 +1,6 @@
-import type { ProjectResource } from '../api';
-import { CollapsibleSection } from '../collapsible-section';
-import { enabledBadge, partitionByEnabled, type LoadState } from '../dashboard-shared';
+import type { ProjectResource } from '../../api';
+import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
+import { enabledBadge, partitionByEnabled, type LoadState } from '../../dashboard-shared';
 
 export type ProjectsPanelProps = {
   readonly loadProjectsPanel: (activeToken: string) => Promise<void>;
@@ -105,7 +105,11 @@ export function ProjectsPanel({
               />
             ))}
           </div>
-          <CollapsibleSection title="Disabled projects" count={disabled.length}>
+          <CollapsibleSection
+            title="Disabled projects"
+            count={disabled.length}
+            storageKey={COLLAPSE_STORAGE_KEYS.disabledProjects}
+          >
             <div className="entity-grid">
               {disabled.map((project) => (
                 <ProjectCard

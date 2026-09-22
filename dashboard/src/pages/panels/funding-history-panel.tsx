@@ -1,4 +1,4 @@
-import type { FundingTransactionResource } from '../api';
+import type { FundingTransactionResource } from '../../api';
 import {
   formatTimestamp,
   fundingTransactionKindLabel,
@@ -6,7 +6,7 @@ import {
   shortAddress,
   statusClass,
   type LoadState,
-} from '../dashboard-shared';
+} from '../../dashboard-shared';
 
 export type FundingHistoryPanelProps = {
   readonly loadFundingHistory: (activeToken: string) => Promise<void>;

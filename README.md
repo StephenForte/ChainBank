@@ -209,6 +209,14 @@ MVP views (PRD §12.2 / P2-US1):
 Panels load and fail independently. Mutations confirm before firing. The dashboard
 never renders private keys, seed phrases, or raw credential material.
 
+Pages are hash routes, written in the dashboard with no router dependency:
+`#/overview` (readiness and treasuries), `#/treasuries`, `#/wallets` (projects,
+environments, managed wallets, funding policy), `#/funding`, `#/reconciliation`,
+`#/alerts` (the same reconciliation findings — not a second feed), `#/email`, and
+`#/admin`. An unknown hash shows Overview. Detail that is not an unacknowledged
+critical finding or a dark-chain warning sits behind +/− and remembers its state
+in this browser.
+
 ## Testing
 
 Every pull request and push to `main` runs the [CI workflow](.github/workflows/ci.yml) (format, lint, typecheck, unit tests, build, dependency audit, secret scan, migration validation, and integration tests).

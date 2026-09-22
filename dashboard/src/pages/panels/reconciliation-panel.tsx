@@ -1,6 +1,7 @@
-import type { AlertResource, ReconciliationRunResource, TreasuryResource } from '../api';
-import * as dash from '../dashboard-shared';
-import type { FindingView, LoadState } from '../dashboard-shared';
+import type { AlertResource, ReconciliationRunResource, TreasuryResource } from '../../api';
+import { CollapsibleSection } from '../../collapsible-section';
+import * as dash from '../../dashboard-shared';
+import type { FindingView, LoadState } from '../../dashboard-shared';
 import type { Dispatch, SetStateAction } from 'react';
 
 export type ReconciliationPanelProps = {
@@ -179,87 +180,73 @@ export function ReconciliationPanel({
           ) : null}
           {acknowledgedFindingAlerts.length > 0 ? (
             <div className="acknowledged-findings">
-              <div className="acknowledged-findings-head">
-                <button
-                  type="button"
-                  className="recon-toggle"
-                  aria-expanded={acknowledgedFindingsExpanded}
-                  aria-controls="acknowledged-findings-list"
-                  title={
-                    acknowledgedFindingsExpanded
-                      ? 'Collapse acknowledged findings'
-                      : 'Expand acknowledged findings'
-                  }
-                  onClick={onToggleAcknowledgedFindings}
-                >
-                  {acknowledgedFindingsExpanded ? '−' : '+'}
-                </button>
-                <h3 className="subsection-title">
-                  {acknowledgedFindingAlerts.length === 1
+              <CollapsibleSection
+                title={
+                  acknowledgedFindingAlerts.length === 1
                     ? '1 acknowledged finding'
-                    : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`}
-                </h3>
-              </div>
-              {acknowledgedFindingsExpanded ? (
-                <>
-                  <p className="muted">
-                    Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
-                  </p>
-                  <div className="finding-list" id="acknowledged-findings-list">
-                    {acknowledgedFindingAlerts.map((alert) => {
-                      const meta = alert.metadata;
-                      const transactionHash = dash.asOptionalString(meta.transactionHash) ?? alert.entityId;
-                      const href = dash.explorerTxUrl(
-                        treasuries,
-                        dash.asOptionalString(meta.treasuryId),
-                        transactionHash,
-                      );
-                      return (
-                        <article key={alert.id} className="finding finding-acknowledged">
-                          <div className="finding-head">
-                            <span className="badge badge-ok badge-square">acknowledged</span>
-                            <code>{dash.asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                    : `${String(acknowledgedFindingAlerts.length)} acknowledged findings`
+                }
+                open={acknowledgedFindingsExpanded}
+                onToggle={onToggleAcknowledgedFindings}
+                bodyId="acknowledged-findings-list"
+              >
+                <p className="muted">
+                  Acknowledged incidents stay visible with their note — there is no un-acknowledge path.
+                </p>
+                <div className="finding-list">
+                  {acknowledgedFindingAlerts.map((alert) => {
+                    const meta = alert.metadata;
+                    const transactionHash = dash.asOptionalString(meta.transactionHash) ?? alert.entityId;
+                    const href = dash.explorerTxUrl(
+                      treasuries,
+                      dash.asOptionalString(meta.treasuryId),
+                      transactionHash,
+                    );
+                    return (
+                      <article key={alert.id} className="finding finding-acknowledged">
+                        <div className="finding-head">
+                          <span className="badge badge-ok badge-square">acknowledged</span>
+                          <code>{dash.asOptionalString(meta.findingKind) ?? alert.alertType}</code>
+                        </div>
+                        <dl className="facts">
+                          <div>
+                            <dt>{dash.findingEntityLabel(transactionHash)}</dt>
+                            <dd className="mono">
+                              {href === undefined ? (
+                                <span title={transactionHash}>{transactionHash}</span>
+                              ) : (
+                                <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
+                                  {dash.shortAddress(transactionHash)}
+                                </a>
+                              )}
+                            </dd>
                           </div>
-                          <dl className="facts">
-                            <div>
-                              <dt>{dash.findingEntityLabel(transactionHash)}</dt>
-                              <dd className="mono">
-                                {href === undefined ? (
-                                  <span title={transactionHash}>{transactionHash}</span>
-                                ) : (
-                                  <a href={href} target="_blank" rel="noreferrer" title={transactionHash}>
-                                    {dash.shortAddress(transactionHash)}
-                                  </a>
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Acknowledged</dt>
-                              <dd>
-                                {alert.acknowledgedAt === null
-                                  ? '—'
-                                  : dash.formatTimestamp(alert.acknowledgedAt)}
-                                {alert.acknowledgedBy !== null ? (
-                                  <span className="muted">
-                                    {' '}
-                                    · by{' '}
-                                    <code title={alert.acknowledgedBy}>
-                                      {dash.shortAddress(alert.acknowledgedBy)}
-                                    </code>
-                                  </span>
-                                ) : null}
-                              </dd>
-                            </div>
-                          </dl>
-                          {alert.acknowledgementNote !== null ? (
-                            <p className="ack-note-display">{alert.acknowledgementNote}</p>
-                          ) : null}
-                        </article>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : null}
+                          <div>
+                            <dt>Acknowledged</dt>
+                            <dd>
+                              {alert.acknowledgedAt === null
+                                ? '—'
+                                : dash.formatTimestamp(alert.acknowledgedAt)}
+                              {alert.acknowledgedBy !== null ? (
+                                <span className="muted">
+                                  {' '}
+                                  · by{' '}
+                                  <code title={alert.acknowledgedBy}>
+                                    {dash.shortAddress(alert.acknowledgedBy)}
+                                  </code>
+                                </span>
+                              ) : null}
+                            </dd>
+                          </div>
+                        </dl>
+                        {alert.acknowledgementNote !== null ? (
+                          <p className="ack-note-display">{alert.acknowledgementNote}</p>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </CollapsibleSection>
             </div>
           ) : null}
 
@@ -518,20 +505,6 @@ export function ReconciliationPanel({
                         summaryNeedsAttention ? 'recon-summary recon-summary-alert' : 'recon-summary'
                       }
                     >
-                      <button
-                        type="button"
-                        className="recon-toggle"
-                        aria-expanded={reconciliationDetailExpanded}
-                        aria-controls="reconciliation-detail"
-                        title={
-                          reconciliationDetailExpanded
-                            ? 'Collapse acknowledged findings, warnings, and run history'
-                            : 'Expand acknowledged findings, warnings, and run history'
-                        }
-                        onClick={onToggleReconciliationDetail}
-                      >
-                        {reconciliationDetailExpanded ? '−' : '+'}
-                      </button>
                       <p className="recon-summary-text">
                         <span>
                           {String(reconciliationRunsTotal)} run
@@ -659,129 +632,132 @@ export function ReconciliationPanel({
                       </div>
                     ) : null}
 
-                    {reconciliationDetailExpanded ? (
-                      <div id="reconciliation-detail">
-                        <p className="muted">
-                          Showing {String(reconciliationRuns.length)} of {String(reconciliationRunsTotal)}{' '}
-                          runs (newest first). Findings below are from this page only — older critical
-                          findings outside the window will not appear here.
-                        </p>
+                    <CollapsibleSection
+                      title="Warnings, acknowledged findings, and run history"
+                      open={reconciliationDetailExpanded}
+                      onToggle={onToggleReconciliationDetail}
+                      bodyId="reconciliation-detail"
+                    >
+                      <p className="muted">
+                        Showing {String(reconciliationRuns.length)} of {String(reconciliationRunsTotal)} runs
+                        (newest first). Findings below are from this page only — older critical findings
+                        outside the window will not appear here.
+                      </p>
 
-                        {!hasCritical ? (
-                          <p className="muted">No critical findings in the loaded runs.</p>
-                        ) : null}
+                      {!hasCritical ? (
+                        <p className="muted">No critical findings in the loaded runs.</p>
+                      ) : null}
 
-                        {acknowledgedCriticalFindings.length > 0 ? (
-                          <>
-                            <h3 className="subsection-title">Acknowledged critical findings</h3>
-                            <p className="muted">
-                              Acknowledged findings stay in the run record with their note — collapsing hides
-                              them from the always-visible block only after an operator stands them down (C20
-                              / TX.20).
-                            </p>
-                            <div className="finding-list">
-                              {acknowledgedCriticalFindings.map((finding, index) =>
-                                renderAcknowledgedCriticalFinding(
-                                  finding,
-                                  index,
-                                  dash.matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),
-                                ),
-                              )}
-                            </div>
-                          </>
-                        ) : null}
-
-                        <h3 className="subsection-title">Warning findings</h3>
-                        {warningFindings.length === 0 ? (
-                          <p className="muted">No warning findings in the loaded runs.</p>
-                        ) : (
+                      {acknowledgedCriticalFindings.length > 0 ? (
+                        <>
+                          <h3 className="subsection-title">Acknowledged critical findings</h3>
+                          <p className="muted">
+                            Acknowledged findings stay in the run record with their note — collapsing hides
+                            them from the always-visible block only after an operator stands them down (C20 /
+                            TX.20).
+                          </p>
                           <div className="finding-list">
-                            {warningFindings.map((finding, index) => (
-                              <article
-                                key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
-                                className={
-                                  finding.severity === 'warning'
-                                    ? 'finding finding-warning'
-                                    : 'finding finding-unknown'
-                                }
-                              >
-                                <div className="finding-head">
-                                  <span
-                                    className={
-                                      finding.severity === 'warning'
-                                        ? 'badge badge-warn'
-                                        : 'badge badge-unknown'
-                                    }
-                                  >
-                                    {finding.severity}
-                                  </span>
-                                  <code>{finding.kind}</code>
-                                </div>
-                                <p className="muted">
-                                  Run <code>{finding.runId}</code> ·{' '}
-                                  {dash.formatTimestamp(finding.runStartedAt)}
-                                  {finding.kind === 'chain_outcome'
-                                    ? ` · ${dash.chainDisplayNameForFinding(finding, treasuries)} · ${finding.chainStatus ?? 'unknown status'}`
-                                    : ''}
-                                  {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
-                                </p>
-                              </article>
-                            ))}
+                            {acknowledgedCriticalFindings.map((finding, index) =>
+                              renderAcknowledgedCriticalFinding(
+                                finding,
+                                index,
+                                dash.matchingAcknowledgedAlert(finding, acknowledgedFindingAlerts),
+                              ),
+                            )}
                           </div>
-                        )}
+                        </>
+                      ) : null}
 
-                        <h3 className="subsection-title">Run history</h3>
-                        <div className="table-wrap">
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th>Started</th>
-                                <th>Finished</th>
-                                <th>Assessed</th>
-                                <th>Funded</th>
-                                <th>Blocked</th>
-                                <th>Failed</th>
-                                <th>Transferred</th>
-                                <th>Scan</th>
-                                <th>Status</th>
-                                <th>Error</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {reconciliationRuns.map((run) => {
-                                const completion = dash.runCompletionLabel(run);
-                                return (
-                                  <tr key={run.id}>
-                                    <td>{dash.formatTimestamp(run.startedAt)}</td>
-                                    <td>
-                                      {run.finishedAt === null ? (
-                                        <span className="badge badge-warn">unfinished</span>
-                                      ) : (
-                                        dash.formatTimestamp(run.finishedAt)
-                                      )}
-                                    </td>
-                                    <td className="mono">{String(run.walletsAssessed)}</td>
-                                    <td className="mono">{String(run.walletsFunded)}</td>
-                                    <td className="mono">{String(run.walletsBlocked)}</td>
-                                    <td className="mono">{String(run.walletsFailed)}</td>
-                                    <td className="mono">{run.weiTransferredEther} ETH</td>
-                                    <td>
-                                      <span className={dash.statusClass(run.outgoingScanStatus)}>
-                                        {run.outgoingScanStatus}
-                                      </span>
-                                    </td>
-                                    <td>
-                                      <span className={completion.className}>{completion.label}</span>
-                                    </td>
-                                    <td className="mono">{run.errorCode ?? '—'}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                      <h3 className="subsection-title">Warning findings</h3>
+                      {warningFindings.length === 0 ? (
+                        <p className="muted">No warning findings in the loaded runs.</p>
+                      ) : (
+                        <div className="finding-list">
+                          {warningFindings.map((finding, index) => (
+                            <article
+                              key={`warn-${finding.runId}-${finding.kind}-${String(index)}`}
+                              className={
+                                finding.severity === 'warning'
+                                  ? 'finding finding-warning'
+                                  : 'finding finding-unknown'
+                              }
+                            >
+                              <div className="finding-head">
+                                <span
+                                  className={
+                                    finding.severity === 'warning'
+                                      ? 'badge badge-warn'
+                                      : 'badge badge-unknown'
+                                  }
+                                >
+                                  {finding.severity}
+                                </span>
+                                <code>{finding.kind}</code>
+                              </div>
+                              <p className="muted">
+                                Run <code>{finding.runId}</code> ·{' '}
+                                {dash.formatTimestamp(finding.runStartedAt)}
+                                {finding.kind === 'chain_outcome'
+                                  ? ` · ${dash.chainDisplayNameForFinding(finding, treasuries)} · ${finding.chainStatus ?? 'unknown status'}`
+                                  : ''}
+                                {finding.reason !== undefined ? ` · ${finding.reason}` : ''}
+                              </p>
+                            </article>
+                          ))}
                         </div>
+                      )}
+
+                      <h3 className="subsection-title">Run history</h3>
+                      <div className="table-wrap">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Started</th>
+                              <th>Finished</th>
+                              <th>Assessed</th>
+                              <th>Funded</th>
+                              <th>Blocked</th>
+                              <th>Failed</th>
+                              <th>Transferred</th>
+                              <th>Scan</th>
+                              <th>Status</th>
+                              <th>Error</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reconciliationRuns.map((run) => {
+                              const completion = dash.runCompletionLabel(run);
+                              return (
+                                <tr key={run.id}>
+                                  <td>{dash.formatTimestamp(run.startedAt)}</td>
+                                  <td>
+                                    {run.finishedAt === null ? (
+                                      <span className="badge badge-warn">unfinished</span>
+                                    ) : (
+                                      dash.formatTimestamp(run.finishedAt)
+                                    )}
+                                  </td>
+                                  <td className="mono">{String(run.walletsAssessed)}</td>
+                                  <td className="mono">{String(run.walletsFunded)}</td>
+                                  <td className="mono">{String(run.walletsBlocked)}</td>
+                                  <td className="mono">{String(run.walletsFailed)}</td>
+                                  <td className="mono">{run.weiTransferredEther} ETH</td>
+                                  <td>
+                                    <span className={dash.statusClass(run.outgoingScanStatus)}>
+                                      {run.outgoingScanStatus}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <span className={completion.className}>{completion.label}</span>
+                                  </td>
+                                  <td className="mono">{run.errorCode ?? '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
-                    ) : null}
+                    </CollapsibleSection>
                   </>
                 );
               })()
