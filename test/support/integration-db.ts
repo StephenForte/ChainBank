@@ -1,7 +1,7 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type pg from 'pg';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
-import { MIGRATIONS_FOLDER } from '../../src/infrastructure/db/migrate.js';
+import { MIGRATIONS_FOLDER } from '../../src/infrastructure/db/migrations-folder.js';
 import {
   chains,
   environments,
