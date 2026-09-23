@@ -210,6 +210,11 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   One `execArgv: ['--no-experimental-webstorage']` line in the dashboard project block. Planner re-run on
   Node 26 in a scratch clone: dashboard 77/77 with no warning, unit 710. CI's dashboard job ran on
   node 22.23.2 and passed. Next free task id is **TX.40**.
+- **TX.36 hosted marking — observed.** Dashboard (operator screenshot, 2026-09-23): the three
+  deploy-killed runs of 2026-09-22 (started 18:00:31, 18:29:32, 19:53:08 UTC) now read `ABORTED` /
+  `RUN_ABORTED`, finished 2026-09-23 06:00:37 UTC, which is the first scheduled run after the deploy.
+  Scan status stays `not-run` and counters stay 0, so marking left them unchanged. The 2026-08-02 row is
+  older than the screenshot and was not seen.
 
 **Environment facts from 2026-09-22/23, recorded so nobody re-derives them:**
 
