@@ -1,4 +1,5 @@
 import type { ManagedWalletResource } from '../../api';
+import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS, policyDetailStorageKey } from '../../collapsible-section';
 import {
   formatTimestamp,
@@ -38,6 +39,8 @@ export type FundingPolicyPanelProps = {
   readonly onSavePolicy: (wallet: ManagedWalletResource) => Promise<void>;
   readonly setEditingWalletId: (value: string | undefined) => void;
   readonly setPolicyPreviewError: (value: string | undefined) => void;
+  /** Absent means every chain, so existing callers keep today's rows. */
+  readonly visibleChainIds?: VisibleChainIds;
 };
 
 export function FundingPolicyPanel({
@@ -61,10 +64,12 @@ export function FundingPolicyPanel({
   onSavePolicy,
   setEditingWalletId,
   setPolicyPreviewError,
+  visibleChainIds = 'ALL',
 }: FundingPolicyPanelProps) {
   const canWrite = useHasPermission('wallet:write');
-  const { enabled, disabled } = partitionByEnabled(policyWallets);
-  const chainsMixed = listSpansMultipleChains(policyWallets);
+  const listed = policyWallets.filter((wallet) => matchesChainFilter(wallet, visibleChainIds));
+  const { enabled, disabled } = partitionByEnabled(listed);
+  const chainsMixed = listSpansMultipleChains(listed);
 
   function renderPolicyCard(wallet: ManagedWalletResource) {
     const isEditing = editingWalletId === wallet.id;
@@ -218,7 +223,14 @@ export function FundingPolicyPanel({
         {policyState === 'empty' ? (
           <p className="muted">No wallets returned for policy view ({String(policyWalletsTotal)} total).</p>
         ) : null}
-        {policyState === 'ready' ? (
+        {policyState === 'ready' && policyWallets.length > 0 && listed.length === 0 ? (
+          <p className="muted">
+            {policyWalletsTotal > policyWallets.length
+              ? 'No funding policies for this chain on the loaded page.'
+              : 'No funding policies on this chain.'}
+          </p>
+        ) : null}
+        {policyState === 'ready' && listed.length > 0 ? (
           <>
             <div className="policy-list">{enabled.map(renderPolicyCard)}</div>
             <CollapsibleSection
