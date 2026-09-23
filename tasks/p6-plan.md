@@ -214,6 +214,20 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   dashboard session (the session carries `wallet:write`; the dashboard has no register form). Policy:
   min 0.001, target 0.002, max top-up 0.002 ETH. Trigger the reconciler, verify the funding row and the
   Base Sepolia transaction, then disable reconcile on the probe (no delete, AGENTS.md §9).
+- **TX.42 (reserved) — register a managed wallet from the dashboard.** TX.40 had to register the probe
+  through a browser-console `fetch`, because the dashboard has no form for it, although an admin or operator
+  session carries `wallet:write`. Dashboard-only: a form (project, environment, chain, role, address), a
+  confirm step showing the checksummed address and chain, and reconcile left off. Funding starts only after
+  a policy is set and reconcile is enabled explicitly, which is today's flow. Operator requested
+  2026-09-23; SettlementOS Base onboarding is the first real use.
+- **TX.43 (reserved) — audit rows misattribute dashboard actions.** A session actor is
+  `kind: 'dashboard_user'` with `credentialId` = the user id (`resolve-session.ts:55`). But `registerWallet`,
+  `setWalletPolicy`, `updateWallet`, the project/environment/treasury enable and create services,
+  `mutateCredential`, alert acknowledgements, `sendTestEmail`, and `ensureWalletFunded` write
+  `actorType: 'api_credential'` unconditionally. Every dashboard mutation since Phase 10 (C31) is audited
+  as an API credential with a user id in `actor_id`, the TX.40 probe registration included. AGENTS.md §7.1 /
+  §7.7 require the audit trail. Server-only; historical rows are not rewritten (append-only). Next free
+  task id is **TX.44**.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
