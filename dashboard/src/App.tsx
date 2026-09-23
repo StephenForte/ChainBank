@@ -62,7 +62,7 @@ import type { FundingPolicyPanelProps } from './pages/panels/funding-policy-pane
 import type { ManagedWalletsPanelProps } from './pages/panels/managed-wallets-panel';
 import type { ProjectsPanelProps } from './pages/panels/projects-panel';
 import type { ReconciliationPanelProps } from './pages/panels/reconciliation-panel';
-import type { RegisteredWallet } from './pages/panels/register-wallet-panel';
+import type { RegisterWalletPanelProps, RegisteredWallet } from './pages/panels/register-wallet-panel';
 import {
   ServiceReadinessPanel,
   type ServiceReadinessPanelProps,
@@ -70,6 +70,7 @@ import {
 import type { TreasuriesPanelProps } from './pages/panels/treasuries-panel';
 import { ReconciliationPage } from './pages/reconciliation';
 import { TreasuriesPage } from './pages/treasuries';
+import { AddWalletPage } from './pages/add-wallet';
 import { WalletsPage } from './pages/wallets';
 import { PermissionsProvider } from './session/permissions';
 import { useSession } from './session/use-session';
@@ -1097,12 +1098,27 @@ export function App() {
     setWalletProjectFilter(registered.projectId);
     setWalletEnvironmentFilter(registered.environmentId);
     setWalletEnabledFilter('');
+    setMessage('Wallet registered. Set a policy, then enable auto-funding.');
+    window.location.hash = '#/wallets';
     void loadWalletsPanel({
       projectId: registered.projectId,
       environmentId: registered.environmentId,
     });
     void loadPolicyPanel(registered.projectId);
   }
+
+  const registration: RegisterWalletPanelProps = {
+    projects,
+    projectId: selectedProjectId,
+    onProjectChange: (projectId: string) => {
+      setSelectedProjectId(projectId);
+    },
+    environments: projectEnvironments,
+    environmentsState: envListState,
+    environmentsError: envListError,
+    chains: chainFilter.segments,
+    onRegistered: onWalletRegistered,
+  };
 
   const walletsPanel: ManagedWalletsPanelProps = {
     checkListedWalletBalances,
@@ -1260,22 +1276,11 @@ export function App() {
           <WalletsPage
             projects={projectsPanel}
             environments={environmentsPanel}
-            registration={{
-              projects,
-              projectId: selectedProjectId,
-              onProjectChange: (projectId: string) => {
-                setSelectedProjectId(projectId);
-              },
-              environments: projectEnvironments,
-              environmentsState: envListState,
-              environmentsError: envListError,
-              chains: chainFilter.segments,
-              onRegistered: onWalletRegistered,
-            }}
             wallets={walletsPanel}
             policy={policyPanel}
           />
         ) : null}
+        {route === 'add-wallet' ? <AddWalletPage registration={registration} /> : null}
         {route === 'funding' ? <FundingPage history={historyPanel} /> : null}
         {route === 'reconciliation' ? <ReconciliationPage panel={reconciliationPanel} /> : null}
         {route === 'alerts' ? <AlertsPage panel={reconciliationPanel} /> : null}

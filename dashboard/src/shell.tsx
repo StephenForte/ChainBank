@@ -6,6 +6,7 @@ import {
   type ChainFilterSelection,
 } from './chain-filter';
 import {
+  IconAddWallet,
   IconAdmin,
   IconAlerts,
   IconEmail,
@@ -17,6 +18,7 @@ import {
 } from './icons';
 import { PanelBody, PanelErrorBoundary } from './panel-error-boundary';
 import { ChangePasswordForm } from './session/change-password-form';
+import { useHasPermission } from './session/permissions';
 import type { SessionUser } from './session/use-session';
 import type { DashboardRoute } from './use-hash-route';
 
@@ -24,6 +26,7 @@ export const PAGE_TITLES: Record<DashboardRoute, string> = {
   overview: 'Overview',
   treasuries: 'Treasuries',
   wallets: 'Wallets',
+  'add-wallet': 'Add wallet',
   funding: 'Funding',
   reconciliation: 'Reconciliation',
   alerts: 'Alerts',
@@ -39,6 +42,7 @@ const NAV_ITEMS: readonly {
   { id: 'overview', label: 'Overview', Icon: IconOverview },
   { id: 'treasuries', label: 'Treasuries', Icon: IconTreasuries },
   { id: 'wallets', label: 'Wallets', Icon: IconWallets },
+  { id: 'add-wallet', label: 'Add wallet', Icon: IconAddWallet },
   { id: 'funding', label: 'Funding', Icon: IconFunding },
   { id: 'reconciliation', label: 'Reconciliation', Icon: IconReconciliation },
   { id: 'alerts', label: 'Alerts', Icon: IconAlerts },
@@ -54,7 +58,16 @@ export type SidebarProps = {
 };
 
 export function Sidebar({ route, user, sessionBusy, onLogout }: SidebarProps) {
-  const items = NAV_ITEMS.filter((item) => item.id !== 'admin' || user.role === 'admin');
+  const canRegisterWallet = useHasPermission('wallet:write');
+  const items = NAV_ITEMS.filter((item) => {
+    if (item.id === 'admin') {
+      return user.role === 'admin';
+    }
+    if (item.id === 'add-wallet') {
+      return canRegisterWallet;
+    }
+    return true;
+  });
   return (
     <aside className="sidebar">
       <p className="sidebar-brand">ChainBank</p>
