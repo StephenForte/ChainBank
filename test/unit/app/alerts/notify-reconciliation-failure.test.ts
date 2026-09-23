@@ -484,6 +484,41 @@ describe('classifyReconciliationRun / countConsecutiveFailures', () => {
     ];
     expect(countConsecutiveFailures(recent)).toBe(2);
   });
+
+  it('counts a real failure as 1 when two RUN_ABORTED rows sit between it and a success', () => {
+    // Newest first: one RPC failure, two deploy-killed runs marked aborted, then a success.
+    // Marking sets finishedAt, but an aborted run is not a reconciler failure.
+    const recent = [
+      makeRun({
+        id: '4',
+        runId: 'r4',
+        startedAt: new Date('2026-08-01T12:04:00.000Z'),
+        errorCode: 'RPC_UNAVAILABLE',
+        errorSummary: 'rpc down',
+      }),
+      makeRun({
+        id: '3',
+        runId: 'r3',
+        startedAt: new Date('2026-08-01T12:03:00.000Z'),
+        errorCode: 'RUN_ABORTED',
+        errorSummary: 'Process exited before finish',
+      }),
+      makeRun({
+        id: '2',
+        runId: 'r2',
+        startedAt: new Date('2026-08-01T12:02:00.000Z'),
+        errorCode: 'RUN_ABORTED',
+        errorSummary: 'Process exited before finish',
+      }),
+      makeRun({
+        id: '1',
+        runId: 'r1',
+        startedAt: new Date('2026-08-01T12:01:00.000Z'),
+        errorCode: undefined,
+      }),
+    ];
+    expect(countConsecutiveFailures(recent)).toBe(1);
+  });
 });
 
 describe('maybeNotifyReconciliationFailure', () => {
