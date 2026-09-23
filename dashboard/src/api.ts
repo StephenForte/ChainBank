@@ -689,6 +689,33 @@ export async function listWallets(
   return body as PaginatedListResponse<ManagedWalletResource>;
 }
 
+/**
+ * Registers a managed wallet. The body is only the five confirmed fields.
+ * Reconciliation and startup criticality stay at the server default (off) so
+ * funding still requires a policy and an explicit reconcile enable afterwards.
+ */
+export interface RegisterWalletRequest {
+  readonly projectId: string;
+  readonly environmentId: string;
+  readonly chainId: number;
+  readonly role: string;
+  readonly address: string;
+}
+
+export async function registerWallet(input: RegisterWalletRequest): Promise<ManagedWalletResource> {
+  const body = await authorizedJson('/v1/wallets', {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId: input.projectId,
+      environmentId: input.environmentId,
+      chainId: input.chainId,
+      role: input.role,
+      address: input.address,
+    }),
+  });
+  return (body as { data: ManagedWalletResource }).data;
+}
+
 /** C17 — live on-chain balance. `unavailable` has no wei/ether (never treat as 0). */
 export type WalletBalanceResponse =
   | {

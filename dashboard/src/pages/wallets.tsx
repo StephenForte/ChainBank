@@ -3,15 +3,17 @@ import { EnvironmentsPanel, type EnvironmentsPanelProps } from './panels/environ
 import { FundingPolicyPanel, type FundingPolicyPanelProps } from './panels/funding-policy-panel';
 import { ManagedWalletsPanel, type ManagedWalletsPanelProps } from './panels/managed-wallets-panel';
 import { ProjectsPanel, type ProjectsPanelProps } from './panels/projects-panel';
+import { RegisterWalletPanel, type RegisterWalletPanelProps } from './panels/register-wallet-panel';
 
 export type WalletsPageProps = {
   readonly projects: ProjectsPanelProps;
   readonly environments: EnvironmentsPanelProps;
+  readonly registration: RegisterWalletPanelProps;
   readonly wallets: ManagedWalletsPanelProps;
   readonly policy: FundingPolicyPanelProps;
 };
 
-export function WalletsPage({ projects, environments, wallets, policy }: WalletsPageProps) {
+export function WalletsPage({ projects, environments, registration, wallets, policy }: WalletsPageProps) {
   return (
     <>
       <div className="workspace-split">
@@ -22,6 +24,9 @@ export function WalletsPage({ projects, environments, wallets, policy }: Wallets
           <PanelBody render={() => <EnvironmentsPanel {...environments} />} />
         </PanelErrorBoundary>
       </div>
+      <PanelErrorBoundary panelName="Register wallet" severity="quiet">
+        <PanelBody render={() => <RegisterWalletPanel {...registration} />} />
+      </PanelErrorBoundary>
       <PanelErrorBoundary panelName="Managed wallets" severity="elevated">
         <PanelBody render={() => <ManagedWalletsPanel {...wallets} />} />
       </PanelErrorBoundary>
