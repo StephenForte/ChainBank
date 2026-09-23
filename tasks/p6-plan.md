@@ -157,6 +157,16 @@ pulled.
     stops a null stored nonce from forcing a full-lookback body scan every run. Planner did not review it;
     the exit-evidence run must be read with it deployed. Next free task id is therefore **TX.35**.
 
+- **TX.36 (dispatched 2026-09-23) — mark reconciliation runs that died before finishing.** Four
+  rows with `finished_at IS NULL` (2026-08-02 and the three deploy-killed runs of 2026-09-22) make the
+  reconciler warn on every run, forever. AGENTS.md §9 forbids deleting them; the task marks them
+  (`finished_at`, `error_code = RUN_ABORTED`, a summary) at reconciler startup after a
+  `RECONCILE_ABORTED_RUN_GRACE_MINUTES` window (default 60), moves the query behind the run
+  repository, and guards `/health/funding` so a marked row never counts as fresh. Worktree
+  `.claude/worktrees/tx36`, parallel with TX.32 (main checkout). Next free task id is **TX.37**.
+- **TX.32 (dispatched 2026-09-23)** — brief as reserved above, plus one config variable
+  `RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS` (default 75).
+
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
