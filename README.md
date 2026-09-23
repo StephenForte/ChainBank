@@ -33,16 +33,16 @@ Treasury key rotation is API-driven via `PATCH /v1/treasuries/:id` (contract
 
 ## Stack
 
-| Layer              | Choice                                     |
-| ------------------ | ------------------------------------------ |
-| Language / runtime | TypeScript, Node.js 22+                    |
-| API                | Fastify                                    |
-| ORM / DB           | Drizzle + PostgreSQL                       |
-| Chain reads        | Viem public client (Sepolia only)          |
-| Email              | Resend (or `log-only` locally)             |
-| Dashboard          | React + Vite (served by Fastify)           |
-| Tests              | Vitest (unit / integration / e2e projects) |
-| Hosting target     | Render (web service + cron + Postgres)     |
+| Layer              | Choice                                                                      |
+| ------------------ | --------------------------------------------------------------------------- |
+| Language / runtime | TypeScript. Production and CI run Node.js 22; newer majors are fine locally |
+| API                | Fastify                                                                     |
+| ORM / DB           | Drizzle + PostgreSQL                                                        |
+| Chain reads        | Viem public client (Sepolia only)                                           |
+| Email              | Resend (or `log-only` locally)                                              |
+| Dashboard          | React + Vite (served by Fastify)                                            |
+| Tests              | Vitest (unit / integration / e2e projects)                                  |
+| Hosting target     | Render (web service + cron + Postgres)                                      |
 
 Local development does **not** require Docker. Use [Postgres.app](https://postgresapp.com/) or a Homebrew Postgres install.
 
@@ -68,7 +68,7 @@ tasks/             PRD, task plan, decisions, security reviews
 
 ## Prerequisites
 
-- Node.js 22+
+- Node.js 22 in production and CI. Newer majors are fine locally.
 - npm (lockfile-based; use `npm ci` in CI)
 - Local PostgreSQL
 - Sepolia RPC URL and treasury address
