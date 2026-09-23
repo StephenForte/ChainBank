@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
@@ -19,6 +20,8 @@ export interface MutateCredentialInput {
   readonly role: Role;
   readonly credentialId: string;
   readonly actorCredentialId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly action: CredentialMutationAction;
   readonly operationId: string;
   readonly sourceIp: string | undefined;
@@ -79,7 +82,7 @@ export async function mutateCredential(
 
     const auditAction = AUDIT_ACTION_BY_MUTATION[input.action];
     await uow.auditEvents.record({
-      actorType: 'api_credential',
+      actorType: recordedRequestActorType(input.actorType),
       actorId: input.actorCredentialId,
       action: auditAction,
       entityType: 'api_credential',

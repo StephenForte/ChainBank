@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { acknowledgeAlert, MAX_ACKNOWLEDGEMENT_NOTE_LENGTH } from '../../app/alerts/acknowledge-alert.js';
 import { acknowledgeFinding, MAX_FINDING_ENTITY_ID_LENGTH } from '../../app/alerts/acknowledge-finding.js';
 import { listAlerts } from '../../app/alerts/list-alerts.js';
@@ -199,7 +200,8 @@ export function registerAlertRoutes(app: AppInstance, container: Container): voi
           entityId: body.entityId,
           note: body.note,
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
           ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
         },
@@ -254,7 +256,8 @@ export function registerAlertRoutes(app: AppInstance, container: Container): voi
           alertId: id,
           note: body.note,
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
         },
       );

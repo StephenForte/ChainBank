@@ -41,7 +41,7 @@ export interface NotifyTreasuryReserveRefusalInput {
   readonly environment: string;
   readonly operationId: string;
   readonly actor: {
-    readonly type: 'api_credential' | 'cron';
+    readonly type: 'api_credential' | 'dashboard_user' | 'cron';
     readonly id: string;
   };
 }
@@ -56,7 +56,7 @@ export interface ResolveTreasuryReserveAlertInput {
   readonly treasuryId: string;
   readonly operationId: string;
   readonly actor: {
-    readonly type: 'api_credential' | 'cron';
+    readonly type: 'api_credential' | 'dashboard_user' | 'cron';
     readonly id: string;
   };
 }

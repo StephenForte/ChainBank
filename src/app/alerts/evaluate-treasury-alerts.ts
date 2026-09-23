@@ -40,8 +40,10 @@ export interface EvaluateTreasuryAlertsInput {
   readonly dashboardBaseUrl: string;
   readonly environment: string;
   readonly operationId: string;
-  readonly actor:
-    { readonly type: 'api_credential'; readonly id: string } | { readonly type: 'cron'; readonly id: string };
+  readonly actor: {
+    readonly type: 'api_credential' | 'dashboard_user' | 'cron';
+    readonly id: string;
+  };
 }
 
 export type EvaluateTreasuryAlertsEmailOutcome =

@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { ManagedWallet, ManagedWalletPatch, OperatorMutationTransaction } from '../ports.js';
@@ -12,6 +13,8 @@ export interface UpdateWalletInput {
   readonly patch: ManagedWalletPatch;
   readonly operationId: string;
   readonly actorId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly sourceIp: string | undefined;
 }
 
@@ -46,7 +49,7 @@ export async function updateWallet(
     const wallet = await uow.managedWallets.update(input.walletId, input.patch);
 
     await uow.auditEvents.record({
-      actorType: 'api_credential',
+      actorType: recordedRequestActorType(input.actorType),
       actorId: input.actorId,
       action: 'wallet.updated',
       entityType: 'managed_wallet',

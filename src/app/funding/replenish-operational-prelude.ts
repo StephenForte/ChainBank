@@ -1,3 +1,4 @@
+import type { RequestAuditActorType } from '../auth/request-audit-actor.js';
 import type { Role } from '../../domain/auth/roles.js';
 import { isChainBankError } from '../../domain/errors.js';
 import { resolveOperationalTreasury } from '../../domain/treasury/resolve-treasury.js';
@@ -25,6 +26,7 @@ export async function replenishOperationalPrelude(
     readonly evmChainId: number;
     readonly role: Role;
     readonly credentialId: string;
+    readonly actorType?: RequestAuditActorType;
     readonly correlationId: string;
     readonly sourceIp: string | undefined;
     readonly idempotencyKey: string;
@@ -42,6 +44,7 @@ export async function replenishOperationalPrelude(
       idempotencyKey: input.idempotencyKey,
       role: input.role,
       credentialId: input.credentialId,
+      ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
       correlationId: input.correlationId,
       sourceIp: input.sourceIp,
     });

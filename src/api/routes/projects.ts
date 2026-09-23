@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { createEnvironment } from '../../app/projects/create-environment.js';
 import { createProject } from '../../app/projects/create-project.js';
 import { getEnvironment } from '../../app/projects/get-environment.js';
@@ -158,7 +159,8 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
         slug: body.slug,
         name: body.name,
         operationId: request.id,
-        actorId: actor.credentialId,
+        actorId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         sourceIp: request.ip,
       });
 
@@ -230,7 +232,8 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
         projectId: id,
         enabled: body.enabled,
         operationId: request.id,
-        actorId: actor.credentialId,
+        actorId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         sourceIp: request.ip,
       });
 
@@ -322,7 +325,8 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
         slug: body.slug,
         name: body.name,
         operationId: request.id,
-        actorId: actor.credentialId,
+        actorId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         sourceIp: request.ip,
       });
 
@@ -394,7 +398,8 @@ export function registerProjectRoutes(app: AppInstance, container: Container): v
         environmentId: id,
         enabled: body.enabled,
         operationId: request.id,
-        actorId: actor.credentialId,
+        actorId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         sourceIp: request.ip,
       });
 

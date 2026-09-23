@@ -1,3 +1,4 @@
+import type { RequestAuditActorType } from '../auth/request-audit-actor.js';
 import type { Role } from '../../domain/auth/roles.js';
 import { ChainBankError, isChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
@@ -41,6 +42,7 @@ export interface EnsureEnvironmentReadyInput {
   readonly idempotencyKey: string;
   readonly role: Role;
   readonly credentialId: string;
+  readonly actorType?: RequestAuditActorType;
   readonly correlationId: string;
   readonly sourceIp: string | undefined;
 }
@@ -137,6 +139,7 @@ export async function ensureEnvironmentReady(
         evmChainId,
         role: input.role,
         credentialId: input.credentialId,
+        ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
         correlationId: input.correlationId,
         sourceIp: input.sourceIp,
         idempotencyKey: `ensure-ready:${input.environmentId}:${input.idempotencyKey}:chain:${String(evmChainId)}`,
@@ -152,6 +155,7 @@ export async function ensureEnvironmentReady(
         idempotencyKey: input.idempotencyKey,
         role: input.role,
         credentialId: input.credentialId,
+        ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
         correlationId: input.correlationId,
         sourceIp: input.sourceIp,
       });
