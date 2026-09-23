@@ -62,6 +62,7 @@ import type { FundingPolicyPanelProps } from './pages/panels/funding-policy-pane
 import type { ManagedWalletsPanelProps } from './pages/panels/managed-wallets-panel';
 import type { ProjectsPanelProps } from './pages/panels/projects-panel';
 import type { ReconciliationPanelProps } from './pages/panels/reconciliation-panel';
+import type { RegisteredWallet } from './pages/panels/register-wallet-panel';
 import {
   ServiceReadinessPanel,
   type ServiceReadinessPanelProps,
@@ -542,10 +543,19 @@ export function App() {
     setCatalogWallets(replace);
   }
 
-  async function loadWalletsPanel(): Promise<void> {
+  async function loadWalletsPanel(override?: {
+    readonly projectId: string;
+    readonly environmentId: string;
+  }): Promise<void> {
     // Supersede any in-flight balance burst before the list (and its filters) change.
     const generation = ++balanceFetchGenerationRef.current;
-    const pageFilters = walletPageFilters();
+    const pageFilters =
+      override === undefined
+        ? walletPageFilters()
+        : {
+            projectId: override.projectId,
+            environmentId: override.environmentId,
+          };
     const isUnfiltered = Object.keys(pageFilters).length === 0;
     setWalletsState('loading');
     setWalletsError(undefined);
@@ -687,13 +697,13 @@ export function App() {
     });
   }
 
-  async function loadPolicyPanel(): Promise<void> {
+  async function loadPolicyPanel(projectId: string = selectedProjectId): Promise<void> {
     setPolicyState('loading');
     setPolicyError(undefined);
     try {
       // Omit absent filters — exactOptionalPropertyTypes rejects `prop: undefined`.
       const next = await listWallets({
-        ...(selectedProjectId.trim() === '' ? {} : { projectId: selectedProjectId.trim() }),
+        ...(projectId.trim() === '' ? {} : { projectId: projectId.trim() }),
         limit: 50,
         offset: 0,
       });
@@ -1081,6 +1091,19 @@ export function App() {
     environmentBusy,
     onToggleEnvironment,
   };
+  function onWalletRegistered(registered: RegisteredWallet): void {
+    chainFilter.selectChain(registered.chainId);
+    setSelectedProjectId(registered.projectId);
+    setWalletProjectFilter(registered.projectId);
+    setWalletEnvironmentFilter(registered.environmentId);
+    setWalletEnabledFilter('');
+    void loadWalletsPanel({
+      projectId: registered.projectId,
+      environmentId: registered.environmentId,
+    });
+    void loadPolicyPanel(registered.projectId);
+  }
+
   const walletsPanel: ManagedWalletsPanelProps = {
     checkListedWalletBalances,
     loadWalletsPanel,
@@ -1237,6 +1260,18 @@ export function App() {
           <WalletsPage
             projects={projectsPanel}
             environments={environmentsPanel}
+            registration={{
+              projects,
+              projectId: selectedProjectId,
+              onProjectChange: (projectId: string) => {
+                setSelectedProjectId(projectId);
+              },
+              environments: projectEnvironments,
+              environmentsState: envListState,
+              environmentsError: envListError,
+              chains: chainFilter.segments,
+              onRegistered: onWalletRegistered,
+            }}
             wallets={walletsPanel}
             policy={policyPanel}
           />
