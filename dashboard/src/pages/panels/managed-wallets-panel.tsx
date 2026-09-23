@@ -31,22 +31,38 @@ export type ManagedWalletsPanelProps = {
 };
 
 /**
- * Plain-English cron outcome for this wallet's own flags.
- * A disabled wallet keeps the disabled badge alone: enablement is the gate.
- * "not auto-funded" is the case an operator read as a failed cron when the
- * green enabled badge sat next to muted "reconcile off".
+ * Plain-English cron outcome. Mirrors isEligibleForReconciliation
+ * (src/app/reconciliation/reconciliation-decisions.ts): the sweep funds a
+ * wallet only when the wallet, its reconcile flag, its project, and its
+ * environment are all enabled. A disabled wallet keeps the disabled badge
+ * alone: enablement is the gate. "not auto-funded" is the case an operator
+ * read as a failed cron when the green enabled badge sat next to muted
+ * "reconcile off".
  */
 function autoFundingBadge(wallet: {
   readonly enabled: boolean;
   readonly reconciliationEnabled: boolean;
+  readonly project: { readonly enabled: boolean };
+  readonly environment: { readonly enabled: boolean };
 }): ReactNode {
   if (!wallet.enabled) {
     return null;
   }
-  if (wallet.reconciliationEnabled) {
+  const reason = !wallet.reconciliationEnabled
+    ? 'Reconcile is off'
+    : !wallet.project.enabled
+      ? 'Project is disabled'
+      : !wallet.environment.enabled
+        ? 'Environment is disabled'
+        : undefined;
+  if (reason === undefined) {
     return <span className="badge badge-ok">auto-funded</span>;
   }
-  return <span className="badge badge-warn">not auto-funded</span>;
+  return (
+    <span className="badge badge-warn" title={reason}>
+      not auto-funded
+    </span>
+  );
 }
 
 export function ManagedWalletsPanel({

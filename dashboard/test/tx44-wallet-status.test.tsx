@@ -85,6 +85,38 @@ describe('managed wallet auto-funding badge (TX.44)', () => {
       expect(within(row).queryByText('auto-funded')).toBeNull();
     }
   });
+
+  it('says not auto-funded when reconcile is on but the project or environment is disabled', () => {
+    renderPanel([
+      wallet({
+        id: 'wallet-project-off',
+        role: 'project-off',
+        address: '0x5555555555555555555555555555555555555555',
+        enabled: true,
+        reconciliationEnabled: true,
+        projectEnabled: false,
+      }),
+      wallet({
+        id: 'wallet-env-off',
+        role: 'env-off',
+        address: '0x6666666666666666666666666666666666666666',
+        enabled: true,
+        reconciliationEnabled: true,
+        environmentEnabled: false,
+      }),
+    ]);
+
+    for (const [role, reason] of [
+      ['project-off', 'Project is disabled'],
+      ['env-off', 'Environment is disabled'],
+    ] as const) {
+      const row = rowFor(role);
+      const badge = within(row).getByText('not auto-funded');
+      expect(badge.className).toContain('badge-warn');
+      expect(badge.getAttribute('title')).toBe(reason);
+      expect(within(row).queryByText('auto-funded')).toBeNull();
+    }
+  });
 });
 
 function rowFor(role: string): HTMLElement {
@@ -131,11 +163,18 @@ function wallet(input: {
   readonly address: string;
   readonly enabled: boolean;
   readonly reconciliationEnabled: boolean;
+  readonly projectEnabled?: boolean;
+  readonly environmentEnabled?: boolean;
 }): ManagedWalletResource {
   return {
     id: input.id,
-    project: { id: 'project-1', slug: 'fortel2', name: 'Fortel2', enabled: true },
-    environment: { id: 'env-1', slug: 'development', name: 'Development', enabled: true },
+    project: { id: 'project-1', slug: 'fortel2', name: 'Fortel2', enabled: input.projectEnabled ?? true },
+    environment: {
+      id: 'env-1',
+      slug: 'development',
+      name: 'Development',
+      enabled: input.environmentEnabled ?? true,
+    },
     chain: {
       slug: 'base-sepolia',
       chainId: 84_532,
