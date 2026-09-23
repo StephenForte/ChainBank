@@ -228,6 +228,21 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   as an API credential with a user id in `actor_id`, the TX.40 probe registration included. AGENTS.md §7.1 /
   §7.7 require the audit trail. Server-only; historical rows are not rewritten (append-only). Next free
   task id is **TX.44**.
+- **TX.43 — merged ([#163](https://github.com/StephenForte/ChainBank/pull/163)).** Request audit rows record
+  the actor kind (`dashboard_user` or `api_credential`); `cron-reconciler` stays `cron`. Planner gate on
+  the branch merged with main: 86/715, 8/80, 30/146. The money-path diff is attribution-only.
+- **TX.42 — merged ([#164](https://github.com/StephenForte/ChainBank/pull/164)).** Dashboard wallet
+  registration with a confirm step, reconcile left off, and chains limited to registered ones. Planner
+  gate: 715 / 87 / 146, bundle `Authorization` 0. Probe: viem's `getAddress` silently re-checksums a
+  one-character case flip, so the panel's explicit `isAddress` check on mixed case is what catches a
+  typo. First real use 2026-09-23: operator registered "Happy Meal" (`0xb849…D019`, Base Sepolia) and set
+  a policy. The reconciler did not fund it because reconcile was off, which is by design. But the green
+  **ENABLED** badge next to "reconcile off" read as "will be funded".
+- **TX.44 (reserved) — "Add wallet" as its own sidebar page; make "not auto-funded" unmissable.**
+  (1) Move the register form out of the Wallets page into its own left-nav entry, shown only to
+  sessions with `wallet:write`. (2) The Managed wallets row shows two independent flags: the wallet
+  enable flag (AGENTS.md §18, green ENABLED) and reconcile (small grey text). Make a wallet that the cron
+  will not fund say so next to the status badge. Dashboard-only. Next free task id is **TX.45**.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
