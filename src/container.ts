@@ -210,7 +210,10 @@ export function buildChainAdapters(config: ChainBankConfig, clock: Clock, logger
         logger,
         ...(config.reconciliation === undefined
           ? {}
-          : { maxRequestsPerSecond: config.reconciliation.outgoingScanMaxRequestsPerSecond }),
+          : {
+              maxRequestsPerSecond: config.reconciliation.outgoingScanMaxRequestsPerSecond,
+              rateLimitRetryWindowSeconds: config.reconciliation.outgoingScanRateLimitRetryWindowSeconds,
+            }),
       });
       const signers = buildChainSigners(config, chain, logger);
 
