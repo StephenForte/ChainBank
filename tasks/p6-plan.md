@@ -279,6 +279,20 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   0 `"role":"migrate"` lines. **Correction to the entry above:** a skipped `npm run test:integration`
   started the CLI migrator but did **not** write schema on this Vitest (workers exit before the migration
   commits). Only a longer-lived importer wrote. The planner overstated this; the side effect was real.
+- **TX.35 — merged ([#173](https://github.com/StephenForte/ChainBank/pull/173)).** The setup scripts print
+  a `describeErrorChain` cause line. This also closed a leak: on the old code, a failed
+  `credential:issue` insert printed the Drizzle query with `params: …,<token_hash>,cb_<prefix>`
+  (planner-reproduced on main). Planner gate: unit 719.
+- **TX.45 (reserved) — `describeErrorChain` renders AggregateError members safely.** A refused database
+  connection renders as `… <- AggregateError:` because the chain follows `cause`, not `.errors`, so the
+  most common operator failure ("DB unreachable") hides `ECONNREFUSED host:port`. Shared renderer
+  (also used by the API error handler), so the safety rules (no driver message, no RPC URL) must hold
+  for members too.
+- **TX.46 (reserved) — production Node 26.** Operator decision 2026-09-23: move Render
+  (`NODE_VERSION`) and CI (`node-version`) from 22 to 26 to match the operator's Mac. **Exception to
+  AGENTS.md §2 ("active LTS"):** Node 26 is Current until its LTS promotion in late October 2026; Node 24
+  is the active LTS today. The planner records the exception as a decision when TX.46 lands. Next free
+  task id is **TX.47**.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
