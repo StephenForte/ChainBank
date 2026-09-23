@@ -510,6 +510,8 @@ As an operator, I want email after repeated funding failures so silent degradati
 - Failure on one chain does not block unrelated chains.
 - Base Sepolia is the first additional implementation.
 
+**Phase 6 exited 2026-09-23** — evidence in `tasks/p6-plan.md`, "Phase 6 exit evidence pass".
+
 ## Phase 7 - CLI and GitHub Actions
 
 **Goal:** Make ChainBank easy to invoke from developer and CI workflows.
@@ -606,6 +608,8 @@ Acceptance criteria:
 - An Email page lists every trigger that can send mail, its thresholds and recipients, and a log of sent and failed deliveries.
 
 ### Phase 10 Exit Criteria
+
+**Exited 2026-09-22** — evidence in `tasks/p10-plan.md`.
 
 - Hosted dashboard requires login; the paste-a-token control no longer exists.
 - A second operator account logs in and its session appears in the sessions table.
