@@ -1,30 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { loadConfig, type ServiceRole } from '../../../src/config/index.js';
+import { SINGULAR_CHAIN_ENV_KEYS } from '../../../src/config/schema.js';
 import { DEFAULT_TRUSTED_PROXY_CIDRS } from '../../../src/config/trusted-proxy.js';
-import { assertValidTreasuryThresholds } from '../../../src/domain/treasury/treasury-status.js';
-import { parseEtherToWei } from '../../../src/domain/wei.js';
 
 /**
- * Treasury thresholds are declared in `render.yaml` rather than set in the
- * Render dashboard (decision D3), specifically so that an invalid ladder is
- * caught here instead of failing every service at boot — `buildTreasuryConfig`
- * runs unconditionally in `loadConfig`, so a bad value takes down the web
- * service and the monitor cron alike.
+ * `render.yaml` declares the multi-chain form. `CHAINS` is `sync: false` with
+ * no value, so the Render dashboard document stays authoritative across
+ * Blueprint syncs (CB-04). The singular chain keys must not appear: `loadConfig`
+ * throws INVALID_CONFIGURATION when any of them is set beside `CHAINS`, and a
+ * sync that re-applied them would take every service down.
+ *
+ * Threshold numbers live inside the dashboard `CHAINS` document, not as
+ * literals in this file. This test does not know those numbers. It imports
+ * `SINGULAR_CHAIN_ENV_KEYS` and refuses the list, and it loads a stand-in
+ * two-chain document through `loadConfig` for each service role.
  *
  * This reads the Blueprint as text on purpose. A YAML parser would be a new
  * dependency for one assertion, and the flat `- key:` / `value:` shape here is
  * stable enough that matching it directly is honest rather than clever.
  */
-
-const THRESHOLD_KEYS = [
-  'TREASURY_WARNING_BALANCE_ETH',
-  'TREASURY_CRITICAL_BALANCE_ETH',
-  'TREASURY_RECOVERY_BALANCE_ETH',
-  'TREASURY_MINIMUM_RESERVE_ETH',
-] as const;
-
-type ThresholdKey = (typeof THRESHOLD_KEYS)[number];
 
 const blueprint = readFileSync(new URL('../../../render.yaml', import.meta.url), 'utf8');
 
@@ -41,10 +36,10 @@ function serviceBlocks(): ReadonlyMap<string, string> {
   return blocks;
 }
 
-/** Reads a declared literal env value, ignoring `sync: false` entries. */
-function declaredValue(block: string, key: ThresholdKey): string | undefined {
-  const pattern = new RegExp(`- key:\\s*${key}\\s*\\n\\s*value:\\s*'?([^'\\n]+)'?`);
-  return pattern.exec(block)?.[1]?.trim();
+/** The `- key:` entry through the line before the next key, or the end of the block. */
+function envEntry(block: string, key: string): string | undefined {
+  const match = new RegExp(`- key:\\s*${key}\\b([^]*?)(?=\\n\\s*- key:|$)`).exec(block);
+  return match?.[0];
 }
 
 /** Every literal `key` / `value` pair in a service block. `sync: false` entries are absent. */
@@ -61,55 +56,42 @@ function literalEnv(block: string): Record<string, string> {
   return env;
 }
 
-/** Services that upsert the shared treasury row and must declare the D3 ladder. */
-const THRESHOLD_SERVICES = [
+/** Services that boot from the shared Blueprint and must agree on chain configuration. */
+const BLUEPRINT_SERVICES = [
   'chainbank-web',
   'chainbank-treasury-monitor',
   'chainbank-wallet-reconciler',
 ] as const;
 
-describe('render.yaml treasury thresholds', () => {
+describe('render.yaml chain configuration', () => {
   const services = serviceBlocks();
 
   it('declares the web service and both cron jobs', () => {
-    expect([...services.keys()]).toEqual(expect.arrayContaining([...THRESHOLD_SERVICES]));
+    expect([...services.keys()]).toEqual(expect.arrayContaining([...BLUEPRINT_SERVICES]));
   });
 
-  it.each(THRESHOLD_SERVICES)('declares a valid threshold ladder for %s', (serviceName) => {
-    const block = services.get(serviceName);
-    expect(block, `service ${serviceName} not found in render.yaml`).toBeDefined();
-
-    const values = Object.fromEntries(
-      THRESHOLD_KEYS.map((key) => [key, declaredValue(block ?? '', key)]),
-    ) as Record<ThresholdKey, string | undefined>;
-
-    for (const key of THRESHOLD_KEYS) {
-      expect(values[key], `${key} must be a literal value in render.yaml, not sync:false`).toBeDefined();
+  it('declares none of the singular chain keys on any service', () => {
+    for (const [serviceName, block] of services) {
+      for (const key of SINGULAR_CHAIN_ENV_KEYS) {
+        expect(block, `${key} must not be declared on ${serviceName}`).not.toMatch(
+          new RegExp(`- key:\\s*${key}\\b`),
+        );
+      }
     }
-
-    const thresholds = {
-      warningBalanceWei: parseEtherToWei(values.TREASURY_WARNING_BALANCE_ETH ?? '', 'warning'),
-      criticalBalanceWei: parseEtherToWei(values.TREASURY_CRITICAL_BALANCE_ETH ?? '', 'critical'),
-      recoveryBalanceWei: parseEtherToWei(values.TREASURY_RECOVERY_BALANCE_ETH ?? '', 'recovery'),
-      minimumReserveWei: parseEtherToWei(values.TREASURY_MINIMUM_RESERVE_ETH ?? '', 'reserve'),
-    };
-
-    // The same check the services run at startup.
-    expect(() => assertValidTreasuryThresholds(thresholds)).not.toThrow();
-
-    // Keeps the critical alert meaningful: it must fire while funding still
-    // has spendable headroom, not after the reserve has already halted it.
-    expect(thresholds.minimumReserveWei).toBeLessThan(thresholds.criticalBalanceWei);
   });
 
-  it('declares identical thresholds on every service', () => {
-    // All three processes upsert the same treasury row, so divergent values would
-    // flip the row's thresholds back and forth on each boot and cron run.
-    for (const key of THRESHOLD_KEYS) {
-      const distinct = new Set(
-        [...services.values()].map((block) => declaredValue(block, key)).filter((v) => v !== undefined),
-      );
-      expect(distinct.size, `${key} differs between services in render.yaml`).toBe(1);
+  it('declares CHAINS as sync:false with no value on every service', () => {
+    for (const [serviceName, block] of services) {
+      const entry = envEntry(block, 'CHAINS');
+      expect(entry, `CHAINS is not declared on ${serviceName}`).toBeDefined();
+      expect(
+        entry,
+        `CHAINS must be sync:false on ${serviceName}. A value is reapplied on every Blueprint sync.`,
+      ).toMatch(/\n\s*sync:\s*false\b/);
+      expect(
+        entry,
+        `CHAINS must not set value: on ${serviceName}. A literal would overwrite the dashboard document.`,
+      ).not.toMatch(/\bvalue\s*:/);
     }
   });
 
@@ -136,15 +118,12 @@ describe('render.yaml treasury thresholds', () => {
   });
 
   /**
-   * The inverse of the threshold rule above, and it is deliberate rather than
-   * inconsistent. Thresholds are declared literals because an invalid ladder
-   * must fail in CI. The funding gates are operator state: a literal value is
-   * reapplied on every Blueprint sync, and Render re-syncs the whole Blueprint
-   * whenever this file changes for any reason. On 2026-08-11 an unrelated
-   * FUNDING_HEALTH_TOKEN commit re-declared FUNDING_ENABLED=false on
-   * chainbank-wallet-reconciler, and unattended funding stopped for 18 hours
-   * while every run still reported exit 0. The same mechanism would clear a
-   * kill switch set mid-incident.
+   * Funding gates are operator state: a literal value is reapplied on every
+   * Blueprint sync, and Render re-syncs the whole Blueprint whenever this file
+   * changes for any reason. On 2026-08-11 an unrelated FUNDING_HEALTH_TOKEN
+   * commit re-declared FUNDING_ENABLED=false on chainbank-wallet-reconciler,
+   * and unattended funding stopped for 18 hours while every run still reported
+   * exit 0. The same mechanism would clear a kill switch set mid-incident.
    *
    * Both keys default to false when unset (`src/config/schema.ts`), so
    * sync:false fails closed rather than arming funding by omission.
@@ -184,7 +163,7 @@ describe('render.yaml treasury thresholds', () => {
     expect(blueprint).not.toContain(retiredHopCountKey);
   });
 
-  const ROLE_BY_SERVICE: Readonly<Record<(typeof THRESHOLD_SERVICES)[number], ServiceRole>> = {
+  const ROLE_BY_SERVICE: Readonly<Record<(typeof BLUEPRINT_SERVICES)[number], ServiceRole>> = {
     'chainbank-web': 'web',
     'chainbank-treasury-monitor': 'treasury-monitor',
     'chainbank-wallet-reconciler': 'cron-reconciler',
@@ -194,50 +173,63 @@ describe('render.yaml treasury thresholds', () => {
    * Values the Blueprint deliberately does not literalize (`sync: false` or
    * `fromDatabase`). They are stand-ins so `loadConfig` can run; the assertions
    * below check that the literals the file does declare survive that load.
+   * `CHAINS` stands in for the dashboard document. It must not include any
+   * singular key: those refuse to boot beside `CHAINS`.
    */
   const SYNC_FALSE_STAND_INS: Record<string, string> = {
     DATABASE_URL: 'postgres://localhost:5432/chainbank_blueprint',
     DATABASE_SSL_CA: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
-    CHAIN_RPC_URL: 'https://rpc.example.test/sepolia',
-    TREASURY_ADDRESS: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     EMAIL_FROM_ADDRESS: 'chainbank@example.com',
     EMAIL_OPERATOR_RECIPIENTS: 'operator@example.com',
     RESEND_API_KEY: 're_blueprint_test',
     PUBLIC_BASE_URL: 'https://chainbank.example',
+    CHAINS: JSON.stringify([
+      {
+        chainId: 11155111,
+        rpcUrl: 'https://rpc.example.test/sepolia',
+        treasury: {
+          address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+          warningBalanceEth: '0.75',
+          criticalBalanceEth: '0.3',
+          recoveryBalanceEth: '1.5',
+          minimumReserveEth: '0.1',
+        },
+      },
+      {
+        chainId: 84532,
+        rpcUrl: 'https://rpc.example.test/base-sepolia',
+        treasury: {
+          address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+          warningBalanceEth: '0.75',
+          criticalBalanceEth: '0.3',
+          recoveryBalanceEth: '1.5',
+          minimumReserveEth: '0.1',
+        },
+      },
+    ]),
   };
 
-  it.each(THRESHOLD_SERVICES)(
-    'loads %s as one Sepolia chain from the singular env the blueprint still declares',
+  it.each(BLUEPRINT_SERVICES)(
+    'loads %s as Ethereum Sepolia and Base Sepolia from a stand-in CHAINS document',
     (serviceName) => {
       const block = services.get(serviceName) ?? '';
-      expect(block, `${serviceName} must not declare CHAINS beside the singular keys`).not.toMatch(
-        /- key:\s*CHAINS\b/,
-      );
-
-      const declared = literalEnv(block);
-      expect(declared.CHAIN_ID).toBe('11155111');
       const config = loadConfig({
         serviceRole: ROLE_BY_SERVICE[serviceName],
-        env: { ...SYNC_FALSE_STAND_INS, ...declared },
+        env: { ...SYNC_FALSE_STAND_INS, ...literalEnv(block) },
       });
 
-      expect(config.chains).toHaveLength(1);
-      expect(config.defaultChainId).toBe(11155111);
-      const chain = config.chains[0];
-      expect(chain?.slug).toBe('ethereum-sepolia');
-      expect(chain?.chainId).toBe(11155111);
-      expect(chain?.displayName).toBe('Ethereum Sepolia');
-      expect(chain?.nativeSymbol).toBe('ETH');
-      expect(chain?.rpcUrl).toBe(SYNC_FALSE_STAND_INS.CHAIN_RPC_URL);
-      expect(chain?.explorerBaseUrl).toBe('https://sepolia.etherscan.io');
-      expect(chain?.treasury.address).toBe(SYNC_FALSE_STAND_INS.TREASURY_ADDRESS);
-      expect(chain?.treasury.warningBalanceWei).toBe(parseEtherToWei('0.75', 'warning'));
-      expect(chain?.treasury.criticalBalanceWei).toBe(parseEtherToWei('0.3', 'critical'));
-      expect(chain?.treasury.recoveryBalanceWei).toBe(parseEtherToWei('1.5', 'recovery'));
-      expect(chain?.treasury.minimumReserveWei).toBe(parseEtherToWei('0.1', 'reserve'));
-      expect(chain?.operationalTreasury).toBeUndefined();
-      expect(config.chain.chainId).toBe(chain?.chainId);
-      expect(config.treasury.warningBalanceWei).toBe(chain?.treasury.warningBalanceWei);
+      expect(config.chains).toHaveLength(2);
+      const [sepolia, base] = config.chains;
+      expect(sepolia?.slug).toBe('ethereum-sepolia');
+      expect(sepolia?.chainId).toBe(11155111);
+      expect(sepolia?.displayName).toBe('Ethereum Sepolia');
+      expect(sepolia?.rpcUrl).toBe('https://rpc.example.test/sepolia');
+      expect(sepolia?.treasury.address).toBe('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045');
+      expect(base?.slug).toBe('base-sepolia');
+      expect(base?.chainId).toBe(84532);
+      expect(base?.displayName).toBe('Base Sepolia');
+      expect(base?.rpcUrl).toBe('https://rpc.example.test/base-sepolia');
+      expect(base?.treasury.address).toBe(sepolia?.treasury.address);
     },
   );
 

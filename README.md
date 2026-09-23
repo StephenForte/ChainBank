@@ -319,7 +319,7 @@ Short version:
 
 1. Push `main` (includes Blueprint + dashboard build).
 2. Render → **New** → **Blueprint** → connect this repo.
-3. Fill `sync: false` secrets (RPC, hot-wallet treasury, Resend, thresholds, `PUBLIC_BASE_URL`).
+3. Fill `sync: false` secrets. Chain configuration is one `CHAINS` document per service (RPC URL, treasury address, and thresholds for each chain), and web, treasury-monitor, and wallet-reconciler must carry the same document. Do not set `CHAIN_ID`, `CHAIN_RPC_URL`, `TREASURY_ADDRESS`, or the singular `TREASURY_*_ETH` keys: the process refuses to boot when any of them is present beside `CHAINS`. Also fill Resend and `PUBLIC_BASE_URL`.
 4. Confirm `FUNDING_ENABLED=false` and no `TREASURY_PRIVATE_KEY`.
 5. Issue an operator credential against the Render DB, then smoke `/health/ready`, treasury check, test email, and a manual cron run.
 

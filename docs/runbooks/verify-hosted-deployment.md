@@ -68,9 +68,10 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 ```
 
 - [ ] Address, chain, and balance are correct; status is not `unknown`.
-- [ ] **Thresholds match `render.yaml`.** They are version-controlled, so a mismatch
-      means the Blueprint sync has not taken — investigate before trusting anything
-      downstream.
+- [ ] **Thresholds match the dashboard `CHAINS` document** on all three services,
+      and those three documents match each other. They are not declared in
+      `render.yaml`. A mismatch means the fleet is on different chain configuration
+      (D23) — investigate before trusting anything downstream.
 - [ ] Spendable equals balance minus the reserve.
 - [ ] The check returns a fresh `blockNumber` and advances `lastCheckedAt`.
 - [ ] **No email arrives** while the treasury is healthy. Silence when healthy is a
@@ -155,7 +156,9 @@ Config-only. Still moves no ETH.
 A healthy treasury sits above the warning threshold, so the way to exercise alerts
 without moving funds is to move the thresholds instead — which also exercises
 [`change-thresholds-safely.md`](./change-thresholds-safely.md) for real. Each change
-is a PR against `render.yaml`; CI validates the ladder before it can deploy.
+is an edit of the dashboard `CHAINS` document on all three services, then a
+restart. Do not commit the ladder into `render.yaml`. CI does not see the live
+numbers; a bad ladder fails at boot.
 
 Choose values that place the current balance in the band you want, keeping
 `reserve < critical ≤ warning ≤ recovery`.

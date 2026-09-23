@@ -49,6 +49,8 @@ non-secret), or `id`. Confirm `enabled = true` and `revokedAt` is null.
    `--scope` for project-service credentials:
 
 ```bash
+# Local issuer only. The singular form still loads when CHAINS is unset.
+# Do not copy these variables onto Render beside the dashboard CHAINS document.
 export DATABASE_URL='postgres://…external-render-url…'
 export CHAIN_ID=11155111
 export CHAIN_RPC_URL='https://ethereum-sepolia-rpc.publicnode.com'
