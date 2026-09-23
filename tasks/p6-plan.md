@@ -191,11 +191,12 @@ pulled.
   `beforeAll` migrations collide (`CREATE TYPE actor_type` / `CREATE SCHEMA drizzle`, unique violations).
   17 tests are skipped and the gate reads red. Seen once by the planner and once by the TX.36 worker. It
   predates TX.36, and CI's migration validation is unaffected.
-- **TX.38 (reserved) — pin Node to production's major.** Render runs `NODE_VERSION '22'`. CI resolves
-  `engines: >=22.0.0` to the newest Node, and the operator's Mac now runs Homebrew Node 26 after the
-  2026-09-22 move off Intel Homebrew. Pin engines, CI and local to 22 without touching `render.yaml`
-  (TX.33 hazard). The move to 24 (AGENTS.md §2 "active LTS") rides with TX.33's `render.yaml` edit. Next
-  free task id is **TX.39**.
+- **TX.38 (reserved) — pin CI to production's Node major.** Render runs `NODE_VERSION '22'`. CI resolves
+  `engines: >=22.0.0` to the newest Node, so CI can go green on code production cannot run. Operator
+  decision 2026-09-23: the Mac stays on Homebrew Node 26 (native arm64, LTS from October 2026). CI is
+  therefore the Node 22 gate: `ci.yml` pins `node-version: '22'`, engines stays `>=22.0.0`, and there is
+  no engine-strict, so local 26 installs stay quiet. `render.yaml` is not touched (TX.33 hazard). The
+  production major moves together with TX.33's `render.yaml` edit. Next free task id is **TX.39**.
 
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
