@@ -1124,6 +1124,7 @@ export function App() {
     onSavePolicy,
     setEditingWalletId,
     setPolicyPreviewError,
+    visibleChainIds: chainFilter.visibleChainIds,
   };
   const historyPanel: FundingHistoryPanelProps = {
     loadFundingHistory,
