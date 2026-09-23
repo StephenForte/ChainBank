@@ -271,6 +271,14 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   writes schema to the `.env` database. Fix: guard `main()` with the `isExecutedAsMain()` pattern from
   `src/jobs/wallet-reconciler.ts`, and move the constant somewhere side-effect-free. Render's
   `preDeployCommand: npm run db:migrate:built` must keep migrating.
+- **TX.37 — approved ([#171](https://github.com/StephenForte/ChainBank/pull/171)).** `MIGRATIONS_FOLDER` moved
+  to the side-effect-free `migrations-folder.ts`, and `main()` is guarded by an entry-point check that
+  falls back to comparing real paths (symlinks, `/tmp` → `/private/tmp`). Planner proofs: the exact
+  Render `npm run db:migrate:built` and `npm run db:migrate` each applied 13/13 on a fresh DB; an
+  unreachable DB exits 1; a bare import creates nothing; two fresh-DB integration runs were 146/146 with
+  0 `"role":"migrate"` lines. **Correction to the entry above:** a skipped `npm run test:integration`
+  started the CLI migrator but did **not** write schema on this Vitest (workers exit before the migration
+  commits). Only a longer-lived importer wrote. The planner overstated this; the side effect was real.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
