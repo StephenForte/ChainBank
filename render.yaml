@@ -11,6 +11,10 @@
 # on signing-capable services (web + wallet-reconciler), both sync:false.
 # The treasury-monitor must never receive either key. Dashboard-only secrets
 # that are missing from this file are not reliably injected into cron runs.
+# CHAINS is sync:false with no value on every service. The singular chain
+# keys are not declared: loadConfig refuses to boot when any of them is set
+# beside CHAINS, and a literal CHAINS value would overwrite the dashboard
+# document on the next Blueprint sync.
 
 databases:
   - name: chainbank-db
@@ -66,8 +70,14 @@ services:
         value: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,fc00::/7'
       - key: HOST
         value: 0.0.0.0
-      - key: CHAIN_ID
-        value: '11155111'
+      # Multi-chain document (C27). Dashboard-owned: sync:false and no value,
+      # so a Blueprint sync cannot overwrite the operator's document. Do not
+      # declare the singular chain keys beside it — loadConfig refuses to boot
+      # when any of them is set. All three services must carry the same
+      # dashboard value (D23). Thresholds live inside this document; see
+      # docs/runbooks/change-thresholds-safely.md
+      - key: CHAINS
+        sync: false
       - key: EMAIL_PROVIDER
         value: resend
       - key: DATABASE_URL
@@ -78,30 +88,12 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: CHAIN_RPC_URL
-        sync: false
-      - key: TREASURY_ADDRESS
-        sync: false
       # Signing secret — web only among the original two services; reconciler
       # also receives it below. Never add to treasury-monitor.
       - key: TREASURY_PRIVATE_KEY
         sync: false
       - key: TREASURY_OPERATIONAL_PRIVATE_KEY
         sync: false
-      # Thresholds are version-controlled rather than dashboard-set (decision)
-      # D3) so an invalid ladder is caught by CI instead of failing the service
-      # at boot. Quoted because the config schema parses decimal ETH strings.
-      # Ordering must hold: reserve < critical <= warning <= recovery.
-      # Keep all three services identical. To change them, see
-      # docs/runbooks/change-thresholds-safely.md
-      - key: TREASURY_WARNING_BALANCE_ETH
-        value: '0.75'
-      - key: TREASURY_CRITICAL_BALANCE_ETH
-        value: '0.3'
-      - key: TREASURY_RECOVERY_BALANCE_ETH
-        value: '1.5'
-      - key: TREASURY_MINIMUM_RESERVE_ETH
-        value: '0.1'
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS
@@ -140,8 +132,10 @@ services:
       # Blueprint sync reassert `false` is the desired behavior, not a hazard.
       - key: FUNDING_ENABLED
         value: 'false'
-      - key: CHAIN_ID
-        value: '11155111'
+      # Same CHAINS contract as web: sync:false, no value, no singular chain
+      # keys. The dashboard value must match the other two services (D23).
+      - key: CHAINS
+        sync: false
       - key: EMAIL_PROVIDER
         value: resend
       - key: ALERT_REMINDER_INTERVAL_HOURS
@@ -154,21 +148,6 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: CHAIN_RPC_URL
-        sync: false
-      - key: TREASURY_ADDRESS
-        sync: false
-      # Must stay identical to web and wallet-reconciler — each process upserts
-      # the same treasury row, so a mismatch would flip thresholds back and
-      # forth between the processes.
-      - key: TREASURY_WARNING_BALANCE_ETH
-        value: '0.75'
-      - key: TREASURY_CRITICAL_BALANCE_ETH
-        value: '0.3'
-      - key: TREASURY_RECOVERY_BALANCE_ETH
-        value: '1.5'
-      - key: TREASURY_MINIMUM_RESERVE_ETH
-        value: '0.1'
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS
@@ -206,8 +185,10 @@ services:
         sync: false
       - key: FUNDING_KILL_SWITCH
         sync: false
-      - key: CHAIN_ID
-        value: '11155111'
+      # Same CHAINS contract as web: sync:false, no value, no singular chain
+      # keys. The dashboard value must match the other two services (D23).
+      - key: CHAINS
+        sync: false
       - key: EMAIL_PROVIDER
         value: resend
       - key: RECONCILE_OUTGOING_LOOKBACK_BLOCKS
@@ -220,25 +201,12 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: CHAIN_RPC_URL
-        sync: false
-      - key: TREASURY_ADDRESS
-        sync: false
       # Signing secret group — required when FUNDING_ENABLED=true. Same key as
       # web; never present on treasury-monitor.
       - key: TREASURY_PRIVATE_KEY
         sync: false
       - key: TREASURY_OPERATIONAL_PRIVATE_KEY
         sync: false
-      # Must stay identical to web and treasury-monitor (D3 / CI ladder check).
-      - key: TREASURY_WARNING_BALANCE_ETH
-        value: '0.75'
-      - key: TREASURY_CRITICAL_BALANCE_ETH
-        value: '0.3'
-      - key: TREASURY_RECOVERY_BALANCE_ETH
-        value: '1.5'
-      - key: TREASURY_MINIMUM_RESERVE_ETH
-        value: '0.1'
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM_ADDRESS

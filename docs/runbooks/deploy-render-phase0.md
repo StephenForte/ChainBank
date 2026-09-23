@@ -7,9 +7,7 @@ Phase 0 hosts a **read-only** web service, a **daily treasury-monitor cron**, an
 - GitHub repo `StephenForte/ChainBank` on `main` with current Blueprint (`render.yaml`)
 - Render account with permission to create Blueprints
 - Values ready:
-  - Sepolia RPC URL (`CHAIN_RPC_URL`)
-  - Hot-wallet treasury address (`TREASURY_ADDRESS`)
-  - (Thresholds are **not** prompted for — they are version-controlled in `render.yaml`; see `change-thresholds-safely.md`)
+  - `CHAINS` — one JSON document naming each chain's RPC URL, treasury address, and thresholds. The same document goes on web, treasury-monitor, and wallet-reconciler. Do not also set `CHAIN_ID`, `CHAIN_RPC_URL`, `TREASURY_ADDRESS`, or the singular `TREASURY_*_ETH` keys (see `change-thresholds-safely.md`)
   - Resend API key + from address + operator recipient list
   - Postgres leaf certificate PEM (`DATABASE_SSL_CA`) — required for hosted TLS leaf pinning
 - Confirm you will **not** set `TREASURY_PRIVATE_KEY` anywhere
@@ -33,16 +31,15 @@ Before treating a deploy as healthy:
 3. Confirm Render detected `render.yaml`.
 4. When prompted for `sync: false` variables, enter:
 
-| Variable                        | Service                | Notes                                                                                                                |
-| ------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_BASE_URL`               | web + treasury-monitor | Use `https://chainbank-web.onrender.com` (adjust if Render assigns a different name); also used in alert email links |
-| `DATABASE_SSL_CA`               | web + cron             | Leaf certificate PEM for fingerprint pinning (see below)                                                             |
-| `CHAIN_RPC_URL`                 | web + cron             | Real JSON-RPC URL, not etherscan.io                                                                                  |
-| `TREASURY_ADDRESS`              | web + cron             | Hot wallet only                                                                                                      |
-| `RESEND_API_KEY`                | web + treasury-monitor | Required when `EMAIL_PROVIDER=resend`                                                                                |
-| `EMAIL_FROM_ADDRESS`            | web + treasury-monitor | Verified sender in Resend                                                                                            |
-| `EMAIL_OPERATOR_RECIPIENTS`     | web + treasury-monitor | Comma-separated                                                                                                      |
-| `ALERT_REMINDER_INTERVAL_HOURS` | web + treasury-monitor | Optional; default `24`                                                                                               |
+| Variable                        | Service                | Notes                                                                                                                                  |
+| ------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_BASE_URL`               | web + treasury-monitor | Use `https://chainbank-web.onrender.com` (adjust if Render assigns a different name); also used in alert email links                   |
+| `DATABASE_SSL_CA`               | web + cron             | Leaf certificate PEM for fingerprint pinning (see below)                                                                               |
+| `CHAINS`                        | web + both crons       | JSON document for every chain (RPC URL, treasury address, thresholds). Same value on all three services. No `value:` in `render.yaml`. |
+| `RESEND_API_KEY`                | web + treasury-monitor | Required when `EMAIL_PROVIDER=resend`                                                                                                  |
+| `EMAIL_FROM_ADDRESS`            | web + treasury-monitor | Verified sender in Resend                                                                                                              |
+| `EMAIL_OPERATOR_RECIPIENTS`     | web + treasury-monitor | Comma-separated                                                                                                                        |
+| `ALERT_REMINDER_INTERVAL_HOURS` | web + treasury-monitor | Optional; default `24`                                                                                                                 |
 
 5. Create the Blueprint and wait for the first web deploy.
 
@@ -109,10 +106,11 @@ Prefer issuing from your laptop against the Render database so the raw token nev
 ```bash
 export DATABASE_URL='postgres://…external-render-url…'
 # monitor role is enough for the issuer script
+# Local issuer only. The singular form still loads when CHAINS is unset.
+# Hosted services use the dashboard CHAINS document, not these variables.
 export CHAIN_ID=11155111
 export CHAIN_RPC_URL='https://ethereum-sepolia-rpc.publicnode.com'
 export TREASURY_ADDRESS='0xYourHotWallet'
-# Match render.yaml so a local run behaves like the deployed services.
 export TREASURY_WARNING_BALANCE_ETH=0.75
 export TREASURY_CRITICAL_BALANCE_ETH=0.3
 export TREASURY_RECOVERY_BALANCE_ETH=1.5
@@ -188,7 +186,7 @@ Cron:
 | TLS handshake / certificate verify failed                            | Wrong or incomplete leaf PEM; re-export with `node scripts/print-database-ca.mjs` in Render web Shell.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `TREASURY_*` rejected for `.25` / `.5`                               | Leading-dot fractions are now accepted; `0.25` also fine.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Dashboard loads but every panel is empty and shows `Failed to fetch` | A **browser extension** is blocking the requests, not a server fault. The DevTools console shows `net::ERR_BLOCKED_BY_CLIENT`, and the same URLs return 200 from `curl`. Crypto phishing-protection and wallet extensions commonly flag a page that combines a finance-sounding host with visible ETH addresses; aggressive ad-block filter lists do too. Confirm by opening the dashboard in a private window (extensions disabled), then allowlist the host in the offending extension. Note the giveaway: **Service readiness stays on "Loading…"**, and that call is unauthenticated — so the token is not the problem |
-| Migrate fails on treasury threshold validation                       | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup with `INVALID_CONFIGURATION`, the threshold ladder in `render.yaml` is wrong — it must satisfy reserve < critical ≤ warning ≤ recovery. Fix it there (CI checks it) rather than in the dashboard; see `change-thresholds-safely.md`                                                                                                                                                                                                                                                                                                           |
-| RPC failed / degraded                                                | `CHAIN_RPC_URL` is an explorer URL or blocked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Migrate fails on treasury threshold validation                       | Fixed: migrate only needs `DATABASE_URL`. If **web/cron** still fail startup with `INVALID_CONFIGURATION`, the dashboard `CHAINS` document is wrong (ladder must satisfy reserve < critical ≤ warning ≤ recovery) or a singular chain key is set beside `CHAINS`. Fix the dashboard document on all three services; do not add those keys to `render.yaml`. See `change-thresholds-safely.md`                                                                                                                                                                                                                              |
+| RPC failed / degraded                                                | A chain `rpcUrl` inside `CHAINS` is an explorer URL or blocked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `INVALID_CREDENTIAL`                                                 | Token not issued against this database                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Cron missing email vars                                              | Expected — monitor role does not load email config                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
