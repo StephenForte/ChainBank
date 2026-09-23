@@ -260,6 +260,17 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   the Blueprint sync kept the dashboard-made group link**, although `render.yaml` does not declare the
   group. That was undocumented until now. The outage trap from 2026-09-22 is closed. The production Node
   major (24 or 26) remains an open operator decision.
+- **TX.37 — root cause found 2026-09-23 (was "integration migration race").** It is not two test files
+  overlapping: instrumenting the test helper showed 29 `applyMigrations()` calls and at most one running
+  at a time. The fatal line is `"role":"migrate"`, the production CLI migrator.
+  `test/support/integration-db.ts` imports `MIGRATIONS_FOLDER` from `src/infrastructure/db/migrate.ts`,
+  and that module calls `main()` unconditionally at top level. So every integration file starts the CLI
+  migrator as an import side effect, and it races the file's own `beforeAll` migration on a fresh DB.
+  Worse: `main()` calls `loadDotEnvFile()` and migrates whatever `DATABASE_URL` resolves to **even when
+  integration tests are skipped** (no `CHAINBANK_RUN_INTEGRATION`), so a skipped `npm run test:integration`
+  writes schema to the `.env` database. Fix: guard `main()` with the `isExecutedAsMain()` pattern from
+  `src/jobs/wallet-reconciler.ts`, and move the constant somewhere side-effect-free. Render's
+  `preDeployCommand: npm run db:migrate:built` must keep migrating.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
