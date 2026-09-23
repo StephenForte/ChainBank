@@ -167,6 +167,36 @@ pulled.
 - **TX.32 (dispatched 2026-09-23)** — brief as reserved above, plus one config variable
   `RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS` (default 75).
 
+**TX.32 and TX.36 merged 2026-09-23.**
+
+- **TX.32 — merged ([#153](https://github.com/StephenForte/ChainBank/pull/153)).** Planner review in a
+  scratch clone: gate 83/700 unit, 7/76 dashboard, 29/143 integration. Probes: under a fake scheduler with
+  a third of sends rejected (-32007 / JSON 429 / HTTP 502), the worst count in any 1000 ms span was R for
+  R=5 and R=10, and 22 for R=25. The same probe goes red at 11 and 17 when retries skip the bucket. An HTML
+  502 storm through the real `http()` transport produced `incomplete` in 1586 ms with 24 sends (8 × 3). HTTP
+  504 and a -32000 body failed closed on the first send. Real timers at R=10 showed at most 12 arrivals per
+  second at the server; that is start-to-arrival jitter, and the default R=25 against the 50 req/s
+  ceiling leaves ample headroom. viem 2.55.8 turns a 502 _with_ a JSON-RPC error body into
+  `RpcRequestError(code)`, so it is classified by that code (fail closed).
+- **TX.36 — merged ([#152](https://github.com/StephenForte/ChainBank/pull/152)) after one send-back.**
+  The first review found that a marked row classified as `failure` in the alert streak. On Postgres, one
+  real failure after two deploy-killed rows gave a streak of 3, which is the default threshold, so the
+  operator would have been paged. Fixed by returning `neutral` for `RUN_ABORTED`, with a regression that
+  goes red without the line (`expected 3 to be 1`). Final gate: 85/710, 7/77, 29/144 (twice). Freshness
+  probes: an aborted row marked 1 minute ago next to a clean run 2 days old is **not** fresh; next to a
+  clean run 1 hour old it is fresh. The first hand-back's "worktree deleted" claim was false. The folder
+  survived because `ls` ran with a relative path from the wrong directory, and it was removed on the
+  send-back. The next reconciler run marks the four hosted rows. Do not roll TX.36 back after that run.
+- **TX.37 (reserved) — integration migration race.** On a freshly created database, two suites'
+  `beforeAll` migrations collide (`CREATE TYPE actor_type` / `CREATE SCHEMA drizzle`, unique violations).
+  17 tests are skipped and the gate reads red. Seen once by the planner and once by the TX.36 worker. It
+  predates TX.36, and CI's migration validation is unaffected.
+- **TX.38 (reserved) — pin Node to production's major.** Render runs `NODE_VERSION '22'`. CI resolves
+  `engines: >=22.0.0` to the newest Node, and the operator's Mac now runs Homebrew Node 26 after the
+  2026-09-22 move off Intel Homebrew. Pin engines, CI and local to 22 without touching `render.yaml`
+  (TX.33 hazard). The move to 24 (AGENTS.md §2 "active LTS") rides with TX.33's `render.yaml` edit. Next
+  free task id is **TX.39**.
+
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
 TREASURY_OPERATIONAL_PRIVATE_KEY` — and the 14:02 rerun succeeded, so the key was set on that service
