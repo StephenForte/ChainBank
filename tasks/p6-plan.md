@@ -206,6 +206,19 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   replaces the one jsdom provides. With `NODE_OPTIONS=--no-experimental-webstorage` the result is 77/77.
   Every worker gate on the operator's Mac reports this as a failure until it is fixed. The fix must also
   stay green on Node 22 in CI. Next free task id is **TX.40**.
+- **TX.40 (reserved, operator-run) — first funding on Base Sepolia.** No managed wallet had ever been
+  registered on Base (all four policies are on Ethereum Sepolia), so Base funding was never exercised.
+  Plan: register one disposable probe wallet `0x0C4667EF97B39599B9AcA980D3b6465Ce6cF2568` (planner-generated;
+  the key was discarded, so any test ETH sent there is unrecoverable) on chain 84532 in
+  `fortel2/development`, role `tx40-base-probe`, reconcile on. Registration goes from the admin
+  dashboard session (the session carries `wallet:write`; the dashboard has no register form). Policy:
+  min 0.001, target 0.002, max top-up 0.002 ETH. Trigger the reconciler, verify the funding row and the
+  Base Sepolia transaction, then disable reconcile on the probe (no delete, AGENTS.md §9).
+- **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
+  2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
+  (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
+  `matchesChainFilter(wallet, visibleChainIds)` (`managed-wallets-panel.tsx:55`), but `FundingPolicyPanel`
+  never receives `visibleChainIds`. Next free task id is **TX.42**.
 - **TX.38 merged (#155). TX.39 — merged ([#157](https://github.com/StephenForte/ChainBank/pull/157)).**
   One `execArgv: ['--no-experimental-webstorage']` line in the dashboard project block. Planner re-run on
   Node 26 in a scratch clone: dashboard 77/77 with no warning, unit 710. CI's dashboard job ran on
