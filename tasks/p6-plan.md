@@ -197,6 +197,15 @@ pulled.
   therefore the Node 22 gate: `ci.yml` pins `node-version: '22'`, engines stays `>=22.0.0`, and there is
   no engine-strict, so local 26 installs stay quiet. `render.yaml` is not touched (TX.33 hazard). The
   production major moves together with TX.33's `render.yaml` edit. Next free task id is **TX.39**.
+- **TX.38 — approved ([#155](https://github.com/StephenForte/ChainBank/pull/155)).** Verified from CI
+  run 35880506740: all 8 setup-node jobs resolve `node/22.23.2` (main had resolved `>=22.0.0` to 24.20.0).
+  The diff is 8 × `node-version-file` → `node-version: '22'`, plus README and one §4 line.
+- **TX.39 (reserved) — dashboard tests fail on Node ≥ 25.** Reproduced on main with Homebrew Node 26.9.0:
+  the dashboard project fails 66 of 77 tests (5 of 7 files) with `ExperimentalWarning: localStorage is not
+available because --localstorage-file was not provided`. Node 26's built-in Web Storage `localStorage`
+  replaces the one jsdom provides. With `NODE_OPTIONS=--no-experimental-webstorage` the result is 77/77.
+  Every worker gate on the operator's Mac reports this as a failure until it is fixed. The fix must also
+  stay green on Node 22 in CI. Next free task id is **TX.40**.
 
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
