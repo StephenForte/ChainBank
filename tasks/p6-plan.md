@@ -219,6 +219,16 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
   `matchesChainFilter(wallet, visibleChainIds)` (`managed-wallets-panel.tsx:55`), but `FundingPolicyPanel`
   never receives `visibleChainIds`. Next free task id is **TX.42**.
+- **TX.41 — merged ([#160](https://github.com/StephenForte/ChainBank/pull/160)).** Planner re-run: dashboard
+  8/80, and the two filter tests go red against main's panel. The hosted screenshot after deploy shows only
+  `tx40-base-probe` under Base Sepolia.
+- **TX.40 — done, 2026-09-23. First funding on Base Sepolia.** Probe `d5fe1c54…` registered from the admin
+  session at 12:3x local. Policy 0.001 / 0.002 / 0.002 ETH saved 19:40:10 UTC. Transfer
+  `0x8cfac21b1885681888e9c145d8892b8028cddab65dec32fe13c4228606b8db9d`, block 47212083, 19:40:54 UTC,
+  **0.002 ETH**, status success, **from the operational treasury `0x5128…652d`** (AGENTS.md §7.1). The
+  planner verified it on-chain: `eth_getBalance` on the probe = 2000000000000000 wei, and the funding block
+  was found by bisection. The dashboard's "0 ETH" at 12:39:20 local predated the transfer. Operator to
+  disable reconcile on the probe (no delete, AGENTS.md §9).
 - **TX.38 merged (#155). TX.39 — merged ([#157](https://github.com/StephenForte/ChainBank/pull/157)).**
   One `execArgv: ['--no-experimental-webstorage']` line in the dashboard project block. Planner re-run on
   Node 26 in a scratch clone: dashboard 77/77 with no warning, unit 710. CI's dashboard job ran on
