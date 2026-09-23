@@ -8,10 +8,10 @@ import {
   normalizeEmail,
   DASHBOARD_ROLES,
 } from '../src/domain/auth/users.js';
-import { ChainBankError, describeUnknownError } from '../src/domain/errors.js';
 import { createDatabase } from '../src/infrastructure/db/client.js';
 import { createOperatorMutationTransaction } from '../src/infrastructure/db/operator-mutation-transaction.js';
 import { createLogger } from '../src/observability/logger.js';
+import { formatCliFailure } from './cli-failure.js';
 
 /**
  * Creates the first dashboard admin (or any role) against the database.
@@ -181,12 +181,12 @@ function indexOfLineEnd(chunk: string): number {
 }
 
 main().catch((error: unknown) => {
-  if (error instanceof ChainBankError) {
-    console.error(`Failed to create dashboard user: ${error.publicMessage}`);
-  } else if (error instanceof Error) {
-    console.error(`Failed to create dashboard user: ${error.message}`);
-  } else {
-    console.error(`Failed to create dashboard user: ${describeUnknownError(error)}`);
-  }
+  console.error(
+    formatCliFailure(error, {
+      summary: 'Failed to create dashboard user',
+      chainBankHeadline: 'publicMessage',
+      otherErrorHeadline: 'message',
+    }),
+  );
   process.exitCode = 1;
 });

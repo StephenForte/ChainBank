@@ -2,12 +2,12 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from '../src/config/index.js';
 import { loadDotEnvFile } from '../src/config/load-dotenv.js';
 import { isRole, ROLES } from '../src/domain/auth/roles.js';
-import { ChainBankError, describeUnknownError } from '../src/domain/errors.js';
 import { createDatabase } from '../src/infrastructure/db/client.js';
 import { createCredentialScopeRepository } from '../src/infrastructure/db/repositories/credential-scope-repository.js';
 import { apiCredentials } from '../src/infrastructure/db/schema.js';
 import { createLogger } from '../src/observability/logger.js';
 import { generateApiToken } from '../src/shared/api-token.js';
+import { formatCliFailure } from './cli-failure.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -125,10 +125,12 @@ function parseScopeArgument(raw: string): ParsedScope {
 }
 
 main().catch((error: unknown) => {
-  if (error instanceof ChainBankError) {
-    console.error(`Failed to issue credential: ${error.message}`);
-  } else {
-    console.error(`Failed to issue credential: ${describeUnknownError(error)}`);
-  }
+  console.error(
+    formatCliFailure(error, {
+      summary: 'Failed to issue credential',
+      chainBankHeadline: 'message',
+      otherErrorHeadline: 'describeUnknown',
+    }),
+  );
   process.exitCode = 1;
 });
