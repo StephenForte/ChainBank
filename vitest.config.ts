@@ -31,6 +31,8 @@ export default defineConfig({
           environment: 'jsdom',
           // toLocale* formatters read the host timezone; pin so CI and local agree.
           env: { TZ: 'UTC' },
+          // Node 25+ built-in localStorage replaces jsdom's and throws without --localstorage-file.
+          execArgv: ['--no-experimental-webstorage'],
         },
       },
       {
