@@ -93,39 +93,41 @@ function scanningTransport(input: {
   readonly blockBody?: (blockNumber: bigint) => readonly unknown[];
 }): Transport {
   const attempts = new Map<bigint, number>();
-  return custom({
-    retryCount: 0,
-    request({ method, params }) {
-      if (typeof method !== 'string') {
-        return Promise.reject(new Error('RPC method was not a string'));
-      }
-      if (method === 'eth_chainId') {
-        input.requests.push({ method, blockNumber: undefined, atMs: input.nowMs() });
-        return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
-      }
-      if (method === 'eth_getBlockByNumber') {
-        const rawParams: unknown = params;
-        const blockTag =
-          Array.isArray(rawParams) && typeof rawParams[0] === 'string' ? rawParams[0] : undefined;
-        if (blockTag === undefined) {
-          return Promise.reject(new Error('eth_getBlockByNumber is missing a block number'));
+  return custom(
+    {
+      request({ method, params }) {
+        if (typeof method !== 'string') {
+          return Promise.reject(new Error('RPC method was not a string'));
         }
-        const blockNumber = BigInt(blockTag);
-        const attempt = (attempts.get(blockNumber) ?? 0) + 1;
-        attempts.set(blockNumber, attempt);
-        input.requests.push({ method, blockNumber, atMs: input.nowMs() });
-        input.onBlock?.(blockNumber, attempt);
-        const txs = input.blockBody?.(blockNumber) ?? [];
-        return Promise.resolve({
-          number: `0x${blockNumber.toString(16)}`,
-          hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
-          timestamp: '0x1',
-          transactions: txs,
-        });
-      }
-      return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
+        if (method === 'eth_chainId') {
+          input.requests.push({ method, blockNumber: undefined, atMs: input.nowMs() });
+          return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
+        }
+        if (method === 'eth_getBlockByNumber') {
+          const rawParams: unknown = params;
+          const blockTag =
+            Array.isArray(rawParams) && typeof rawParams[0] === 'string' ? rawParams[0] : undefined;
+          if (blockTag === undefined) {
+            return Promise.reject(new Error('eth_getBlockByNumber is missing a block number'));
+          }
+          const blockNumber = BigInt(blockTag);
+          const attempt = (attempts.get(blockNumber) ?? 0) + 1;
+          attempts.set(blockNumber, attempt);
+          input.requests.push({ method, blockNumber, atMs: input.nowMs() });
+          input.onBlock?.(blockNumber, attempt);
+          const txs = input.blockBody?.(blockNumber) ?? [];
+          return Promise.resolve({
+            number: `0x${blockNumber.toString(16)}`,
+            hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+            timestamp: '0x1',
+            transactions: txs,
+          });
+        }
+        return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
+      },
     },
-  });
+    { retryCount: 0 },
+  );
 }
 
 function rateLimitError(kind: 'per-second' | 'json-rpc-429' | 'limit-exceeded' | 'http-429'): Error {
@@ -145,6 +147,68 @@ function rateLimitError(kind: 'per-second' | 'json-rpc-429' | 'limit-exceeded' |
 }
 
 describe('treasury outgoing scan request rate', () => {
+  it('builds the scanning transport with viem retries disabled', () => {
+    const transport = scanningTransport({ nowMs: () => 0, requests: [] });
+    expect(transport({ retryCount: 3 }).config.retryCount).toBe(0);
+  });
+
+  it('stays at or under R when 30% of blocks are rate-limited once', async () => {
+    const maxRequestsPerSecond = 5;
+    const fromBlock = 1n;
+    const toBlock = 100n;
+    const clock = manualClock();
+    const requests: RecordedRequest[] = [];
+    const scanner = createTreasuryOutgoingScanner({
+      chain: chainConfig(),
+      logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
+      transport: scanningTransport({
+        nowMs: clock.nowMs,
+        requests,
+        onBlock: (blockNumber, attempt) => {
+          // First read of 3 in every 10 blocks. The retry is a new send and
+          // must take its own token.
+          if (attempt === 1 && blockNumber % 10n < 3n) {
+            throw rateLimitError('per-second');
+          }
+        },
+      }),
+      maxRequestsPerSecond,
+      nowMs: clock.nowMs,
+      sleep: clock.sleep,
+    });
+
+    const result = await scanner.listOutgoingTransfers({
+      fromAddress: TREASURY,
+      fromBlock,
+      toBlock,
+    });
+
+    expect(result.kind).toBe('ok');
+    const blockRequests = requests.filter((request) => request.method === 'eth_getBlockByNumber');
+    const counts = new Map<bigint, number>();
+    for (const request of blockRequests) {
+      if (request.blockNumber === undefined) {
+        continue;
+      }
+      counts.set(request.blockNumber, (counts.get(request.blockNumber) ?? 0) + 1);
+    }
+    const expected: bigint[] = [];
+    for (let block = fromBlock; block <= toBlock; block += 1n) {
+      expected.push(block);
+    }
+    expect([...counts.keys()].sort((left, right) => (left < right ? -1 : 1))).toEqual(expected);
+    for (const [block, count] of counts) {
+      if (block % 10n < 3n) {
+        expect(count).toBeGreaterThanOrEqual(2);
+      } else {
+        expect(count).toBe(1);
+      }
+    }
+    expect(maxInAnyOneSecondWindow(requests.map((request) => request.atMs))).toBeLessThanOrEqual(
+      maxRequestsPerSecond,
+    );
+  });
+
   it('never issues more than R requests in any one-second window', async () => {
     const maxRequestsPerSecond = 5;
     const fromBlock = 1n;
@@ -364,9 +428,19 @@ describe('treasury outgoing scan request rate', () => {
 
     expect(result).toMatchObject({ kind: 'incomplete', errorCode: 'RPC_UNAVAILABLE' });
     const attempts = requests.filter((request) => request.blockNumber === 7n);
-    // Matches RATE_LIMIT_MAX_ATTEMPTS: the block is retried, then the scan
-    // fails closed instead of hanging.
-    expect(attempts).toHaveLength(6);
+    // The old 6-attempt / ~7.75 s budget always exhausted a per-minute cap.
+    // A perpetual rejection now retries until the 75 s wall clock, then
+    // fails closed, and never sends after that window.
+    expect(attempts.length).toBeGreaterThan(6);
+    const first = attempts[0];
+    const last = attempts[attempts.length - 1];
+    expect(first?.atMs).toBe(0);
+    expect(last?.atMs).toBeGreaterThan(75_000 - 5_000);
+    expect(last?.atMs).toBeLessThan(75_000);
+    expect(clock.nowMs()).toBeLessThan(75_000);
+    for (const attempt of attempts) {
+      expect(attempt.atMs).toBeLessThan(75_000);
+    }
   });
 
   it('keeps a separate bucket per scanner instance', async () => {

@@ -47,46 +47,54 @@ function mockTransport(options: {
   readonly counters?: { getBlock: number; getTransactionCount: number };
 }): Transport {
   const counters = options.counters ?? { getBlock: 0, getTransactionCount: 0 };
-  return custom({
-    request({ method, params }) {
-      switch (method) {
-        case 'eth_chainId':
-          return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
-        case 'eth_blockNumber':
-          return Promise.resolve(`0x${options.tip.toString(16)}`);
-        case 'eth_getTransactionCount': {
-          counters.getTransactionCount += 1;
-          const blockTag = (params as [string, string | undefined])[1];
-          let blockNumber = options.tip;
-          if (typeof blockTag === 'string' && blockTag.startsWith('0x')) {
-            blockNumber = BigInt(blockTag);
+  return custom(
+    {
+      request({ method, params }) {
+        switch (method) {
+          case 'eth_chainId':
+            return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
+          case 'eth_blockNumber':
+            return Promise.resolve(`0x${options.tip.toString(16)}`);
+          case 'eth_getTransactionCount': {
+            counters.getTransactionCount += 1;
+            const blockTag = (params as [string, string | undefined])[1];
+            let blockNumber = options.tip;
+            if (typeof blockTag === 'string' && blockTag.startsWith('0x')) {
+              blockNumber = BigInt(blockTag);
+            }
+            const count = options.countAtBlock?.(blockNumber) ?? 0;
+            return Promise.resolve(`0x${count.toString(16)}`);
           }
-          const count = options.countAtBlock?.(blockNumber) ?? 0;
-          return Promise.resolve(`0x${count.toString(16)}`);
-        }
-        case 'eth_getBlockByNumber': {
-          counters.getBlock += 1;
-          const raw = (params as [string, boolean])[0];
-          const blockNumber = BigInt(raw);
-          if (options.failAtBlock !== undefined && blockNumber === options.failAtBlock) {
-            return Promise.reject(new Error('simulated RPC failure'));
+          case 'eth_getBlockByNumber': {
+            counters.getBlock += 1;
+            const raw = (params as [string, boolean])[0];
+            const blockNumber = BigInt(raw);
+            if (options.failAtBlock !== undefined && blockNumber === options.failAtBlock) {
+              return Promise.reject(new Error('simulated RPC failure'));
+            }
+            const txs = options.transfersByBlock?.get(blockNumber) ?? [];
+            return Promise.resolve({
+              number: `0x${blockNumber.toString(16)}`,
+              hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+              timestamp: '0x1',
+              transactions: txs,
+            });
           }
-          const txs = options.transfersByBlock?.get(blockNumber) ?? [];
-          return Promise.resolve({
-            number: `0x${blockNumber.toString(16)}`,
-            hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
-            timestamp: '0x1',
-            transactions: txs,
-          });
+          default:
+            return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
         }
-        default:
-          return Promise.reject(new Error(`Unhandled RPC method in test transport: ${method}`));
-      }
+      },
     },
-  });
+    { retryCount: 0 },
+  );
 }
 
 describe('createTreasuryOutgoingScanner', () => {
+  it('builds the mock transport with viem retries disabled', () => {
+    const transport = mockTransport({ tip: 1n });
+    expect(transport({ retryCount: 3 }).config.retryCount).toBe(0);
+  });
+
   it('scans an inclusive window and returns only native value transfers from the treasury', async () => {
     const hash = `0x${'ab'.repeat(32)}`;
     const transport = mockTransport({
@@ -264,20 +272,23 @@ describe('createTreasuryOutgoingScanner', () => {
     const scanner = createTreasuryOutgoingScanner({
       chain: chainConfig(),
       logger: createLogger({ level: 'silent', serviceRole: 'test', environment: 'test' }),
-      transport: custom({
-        request({ method }) {
-          if (method === 'eth_chainId') {
-            return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
-          }
-          if (method === 'eth_blockNumber') {
-            return Promise.resolve('0x100');
-          }
-          if (method === 'eth_getTransactionCount') {
-            return Promise.reject(new Error('rpc down'));
-          }
-          return Promise.reject(new Error(`Unhandled ${method}`));
+      transport: custom(
+        {
+          request({ method }) {
+            if (method === 'eth_chainId') {
+              return Promise.resolve(`0x${SEPOLIA_CHAIN_ID.toString(16)}`);
+            }
+            if (method === 'eth_blockNumber') {
+              return Promise.resolve('0x100');
+            }
+            if (method === 'eth_getTransactionCount') {
+              return Promise.reject(new Error('rpc down'));
+            }
+            return Promise.reject(new Error(`Unhandled ${method}`));
+          },
         },
-      }),
+        { retryCount: 0 },
+      ),
     });
 
     const result = await scanner.findOutgoingByNonce({

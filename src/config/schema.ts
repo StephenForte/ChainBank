@@ -28,10 +28,18 @@ const positiveInteger = z
 
 /**
  * Default per-chain cap on outgoing-scan RPC starts in any one-second window.
- * Half of a 50 req/s provider budget: the scan's in-flight cap is separate,
- * and viem may still retry a rejected call inside one start.
+ * Half of a 50 req/s provider budget. Retries take a token from the same
+ * bucket, so this cap is the transport-observed rate.
  */
 export const DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND = 25;
+
+/**
+ * How long the outgoing scanner keeps retrying one rate-limited RPC call.
+ * 75 s outlasts a single per-minute provider window (-32008) without
+ * turning a multi-minute outage into a hang. Transient errors do not use
+ * this budget.
+ */
+export const DEFAULT_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS = 75;
 
 const nonNegativeInteger = z
   .string()
@@ -260,6 +268,16 @@ export const environmentSchema = z.object({
    */
   RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND: positiveInteger.default(
     DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
+  ),
+
+  /**
+   * Wall-clock seconds the outgoing scanner retries one rate-limited RPC
+   * call (TX.32). Long enough to outlast a per-minute provider cap.
+   * Transient failures use a separate, much shorter budget inside the
+   * scanner and are not configured here. Default needs no deploy change.
+   */
+  RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS: positiveInteger.default(
+    DEFAULT_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS,
   ),
 
   /**

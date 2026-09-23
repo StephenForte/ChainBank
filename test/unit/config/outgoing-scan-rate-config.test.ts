@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../../src/config/index.js';
-import { DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND } from '../../../src/config/schema.js';
+import {
+  DEFAULT_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
+  DEFAULT_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS,
+} from '../../../src/config/schema.js';
 import { ChainBankError } from '../../../src/domain/errors.js';
 import { validWebEnv } from '../../support/env.js';
 
@@ -34,6 +37,34 @@ describe('RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND', () => {
       loadConfig({
         serviceRole: 'cron-reconciler',
         env: validWebEnv({ RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND: '-1' }),
+      }),
+    ).toThrow(ChainBankError);
+  });
+});
+
+describe('RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS', () => {
+  it('parses a positive integer for the reconciler', () => {
+    const config = loadConfig({
+      serviceRole: 'cron-reconciler',
+      env: validWebEnv({ RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS: '90' }),
+    });
+    expect(config.reconciliation?.outgoingScanRateLimitRetryWindowSeconds).toBe(90);
+  });
+
+  it('defaults to 75', () => {
+    const config = loadConfig({
+      serviceRole: 'cron-reconciler',
+      env: validWebEnv(),
+    });
+    expect(DEFAULT_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS).toBe(75);
+    expect(config.reconciliation?.outgoingScanRateLimitRetryWindowSeconds).toBe(75);
+  });
+
+  it('rejects non-positive values', () => {
+    expect(() =>
+      loadConfig({
+        serviceRole: 'cron-reconciler',
+        env: validWebEnv({ RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS: '0' }),
       }),
     ).toThrow(ChainBankError);
   });

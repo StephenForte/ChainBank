@@ -157,6 +157,11 @@ export interface ReconciliationConfig {
    * (RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND).
    */
   readonly outgoingScanMaxRequestsPerSecond: number;
+  /**
+   * Seconds a single rate-limited outgoing-scan RPC keeps being retried
+   * (RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS).
+   */
+  readonly outgoingScanRateLimitRetryWindowSeconds: number;
 }
 
 export interface ChainBankConfig {
@@ -301,6 +306,8 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
         ? {
             outgoingLookbackBlocks: env.RECONCILE_OUTGOING_LOOKBACK_BLOCKS,
             outgoingScanMaxRequestsPerSecond: env.RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
+            outgoingScanRateLimitRetryWindowSeconds:
+              env.RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS,
           }
         : undefined,
     isFundingEnabled: funding.enabled,
