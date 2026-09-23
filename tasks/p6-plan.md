@@ -243,6 +243,13 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   sessions with `wallet:write`. (2) The Managed wallets row shows two independent flags: the wallet
   enable flag (AGENTS.md §18, green ENABLED) and reconcile (small grey text). Make a wallet that the cron
   will not fund say so next to the status badge. Dashboard-only. Next free task id is **TX.45**.
+- **TX.44 — merged ([#166](https://github.com/StephenForte/ChainBank/pull/166)).** "Add wallet" is its own
+  sidebar page (gated on `wallet:write`) and mounts the unchanged TX.42 `RegisterWalletPanel`. Managed
+  wallets shows `auto-funded` / `not auto-funded` beside the status badge. **Planner fix `3fb5451` on the
+  branch:** the brief wrongly said to derive the badge from `enabled` + `reconciliationEnabled` only.
+  `isEligibleForReconciliation` also requires `project.enabled` and `environment.enabled`, so the badge
+  now checks all four and names the reason in its title; the regression test is red without the fix.
+  Gate: 715 / 96. Main CI green at `47839fc`.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
