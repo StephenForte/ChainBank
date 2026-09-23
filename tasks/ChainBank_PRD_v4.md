@@ -510,6 +510,8 @@ As an operator, I want email after repeated funding failures so silent degradati
 - Failure on one chain does not block unrelated chains.
 - Base Sepolia is the first additional implementation.
 
+**Phase 6 exited 2026-09-23** — evidence in `tasks/p6-plan.md`, "Phase 6 exit evidence pass".
+
 ## Phase 7 - CLI and GitHub Actions
 
 **Goal:** Make ChainBank easy to invoke from developer and CI workflows.
