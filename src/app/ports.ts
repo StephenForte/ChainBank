@@ -1301,6 +1301,19 @@ export interface ReconciliationRunListPage {
   readonly total: number;
 }
 
+/**
+ * Startup mark for rows that were started and never finished (TX.36).
+ * Sets `finished_at`, `error_code` (`RUN_ABORTED`), and `error_summary` only.
+ */
+export interface MarkAbortedReconciliationRunsInput {
+  /** Unfinished row ids. A row that finished between list and mark is left unchanged. */
+  readonly ids: readonly string[];
+  /** When this startup marked them. Does not replace `started_at`. */
+  readonly finishedAt: Date;
+  /** Why the row is being marked, including which startup marked it. */
+  readonly errorSummary: string;
+}
+
 export interface ReconciliationRunRepository {
   insertStarted(input: InsertReconciliationRunInput): Promise<ReconciliationRun>;
   markFinished(input: FinishReconciliationRunInput): Promise<ReconciliationRun>;
@@ -1311,12 +1324,23 @@ export interface ReconciliationRunRepository {
    */
   listRecent(limit: number): Promise<readonly ReconciliationRun[]>;
   /**
-   * Newest run that actually finished (`finished_at IS NOT NULL`), ordered by
-   * `finished_at` descending. Aborted crash rows (finished_at null) never win,
-   * even when `outgoing_scan_status` looks complete — funding health freshness
-   * depends on this distinction.
+   * Newest run that finished its work, ordered by `finished_at` descending.
+   * Unfinished rows (`finished_at` null) never win. A row marked `RUN_ABORTED`
+   * has `finished_at` set so startup stops warning about it, but it did not
+   * finish — it is excluded here so it cannot satisfy funding-health freshness.
    */
   findLatestFinished(): Promise<ReconciliationRun | undefined>;
+  /**
+   * Unfinished runs (`finished_at IS NULL`) whose `started_at` is strictly
+   * before `olderThan`, newest first. Does not mark them.
+   */
+  listAborted(olderThan: Date): Promise<readonly ReconciliationRun[]>;
+  /**
+   * Mark the given unfinished rows aborted in one update. Counters,
+   * `outgoing_scan_status`, findings, and `started_at` are not rewritten.
+   * Rows that already have `finished_at` are skipped.
+   */
+  markAborted(input: MarkAbortedReconciliationRunsInput): Promise<readonly ReconciliationRun[]>;
   /**
    * Paginated runs newest-first by `started_at` (C19). `total` is the true
    * matching count, not the page length.

@@ -56,6 +56,17 @@ import {
 import { integrationEnabled } from '../support/integration-setup.js';
 
 const ONE_ETH = 10n ** 18n;
+
+function abortedRunWarnings(chunks: readonly string[]): Array<{
+  readonly markedAborted?: boolean;
+  readonly abortedRuns?: unknown;
+}> {
+  return chunks
+    .join('')
+    .split('\n')
+    .filter((line) => line.includes('Prior reconciliation runs aborted before finish'))
+    .map((line) => JSON.parse(line) as { markedAborted?: boolean; abortedRuns?: unknown });
+}
 const TREASURY_ADDRESS = '0x1111111111111111111111111111111111111111';
 const WALLET_A_ADDRESS = '0x2222222222222222222222222222222222222222';
 
@@ -223,10 +234,183 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
     expect(abortedCount).toBe(1);
   });
 
+  it('marks runs older than the grace window and leaves an in-flight row unfinished', async () => {
+    const now = new Date('2026-07-26T12:00:00.000Z');
+    const clock = createFixedClock(now);
+    const chunks: string[] = [];
+    const logger = createLogger({
+      level: 'info',
+      serviceRole: 'cron-reconciler',
+      environment: 'test',
+      destination: {
+        write(data: string) {
+          chunks.push(data);
+        },
+      },
+    });
+    const container = buildJobContainer({ fundingEnabled: false, clock, logger });
+
+    const cleanId = randomUUID();
+    const oldId = randomUUID();
+    const recentId = randomUUID();
+    const oldRunId = `old-${randomUUID()}`;
+    const recentRunId = `recent-${randomUUID()}`;
+    const keptFindings = [
+      {
+        kind: 'wallet_assessment_failed',
+        severity: 'warning',
+        walletId: 'wallet-kept',
+        reason: 'left unchanged',
+      },
+    ];
+    const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+    await handle.db.insert(reconciliationRuns).values([
+      {
+        id: cleanId,
+        runId: `clean-${randomUUID()}`,
+        requestedBy: 'wallet-reconciler',
+        startedAt: new Date(twoDaysAgo.getTime() - 30_000),
+        finishedAt: twoDaysAgo,
+        walletsAssessed: 2,
+        walletsFunded: 2,
+        walletsNoop: 0,
+        walletsBlocked: 0,
+        walletsFailed: 0,
+        weiTransferred: '10',
+        submissionUnknownResolved: 0,
+        submissionUnknownLeftPending: 0,
+        unexplainedTransferCount: 0,
+        outgoingScanStatus: 'complete',
+        findingsJson: [],
+        errorCode: null,
+        errorSummary: null,
+      },
+      {
+        id: oldId,
+        runId: oldRunId,
+        requestedBy: 'wallet-reconciler',
+        startedAt: threeHoursAgo,
+        finishedAt: null,
+        walletsAssessed: 4,
+        walletsFunded: 1,
+        walletsNoop: 2,
+        walletsBlocked: 1,
+        walletsFailed: 0,
+        weiTransferred: '42',
+        submissionUnknownResolved: 0,
+        submissionUnknownLeftPending: 1,
+        unexplainedTransferCount: 3,
+        outgoingScanStatus: 'complete',
+        findingsJson: keptFindings,
+        errorCode: null,
+        errorSummary: null,
+      },
+      {
+        id: recentId,
+        runId: recentRunId,
+        requestedBy: 'wallet-reconciler',
+        startedAt: fiveMinutesAgo,
+        finishedAt: null,
+        walletsAssessed: 9,
+        walletsFunded: 0,
+        walletsNoop: 0,
+        walletsBlocked: 0,
+        walletsFailed: 0,
+        weiTransferred: '0',
+        submissionUnknownResolved: 0,
+        submissionUnknownLeftPending: 0,
+        unexplainedTransferCount: 0,
+        outgoingScanStatus: 'not-run',
+        findingsJson: [],
+        errorCode: null,
+        errorSummary: null,
+      },
+    ]);
+
+    const marker = `corr-${randomUUID()}`;
+    expect(await logAbortedReconciliationRuns(container, marker)).toBe(2);
+
+    const rows = await handle.db.select().from(reconciliationRuns);
+    const clean = rows.find((row) => row.id === cleanId);
+    const old = rows.find((row) => row.id === oldId);
+    const recent = rows.find((row) => row.id === recentId);
+
+    expect(old?.finishedAt?.toISOString()).toBe(now.toISOString());
+    expect(old?.errorCode).toBe('RUN_ABORTED');
+    expect(old?.errorSummary).toBe(
+      `Process exited before finish; marked aborted at startup by run ${marker}`,
+    );
+    expect(old?.startedAt.toISOString()).toBe(threeHoursAgo.toISOString());
+    expect(old?.walletsAssessed).toBe(4);
+    expect(old?.walletsFunded).toBe(1);
+    expect(old?.walletsNoop).toBe(2);
+    expect(old?.walletsBlocked).toBe(1);
+    expect(old?.walletsFailed).toBe(0);
+    expect(old?.weiTransferred).toBe('42');
+    expect(old?.submissionUnknownLeftPending).toBe(1);
+    expect(old?.unexplainedTransferCount).toBe(3);
+    expect(old?.outgoingScanStatus).toBe('complete');
+    expect(old?.findingsJson).toEqual(keptFindings);
+
+    expect(recent?.finishedAt).toBeNull();
+    expect(recent?.errorCode).toBeNull();
+    expect(recent?.errorSummary).toBeNull();
+    expect(recent?.walletsAssessed).toBe(9);
+    expect(recent?.outgoingScanStatus).toBe('not-run');
+
+    expect(clean?.finishedAt?.toISOString()).toBe(twoDaysAgo.toISOString());
+    expect(clean?.errorCode).toBeNull();
+    expect(clean?.walletsAssessed).toBe(2);
+    expect(clean?.weiTransferred).toBe('10');
+
+    const latest = await container.repositories.reconciliationRuns.findLatestFinished();
+    expect(latest?.id).toBe(cleanId);
+    expect(latest?.errorCode).toBeUndefined();
+
+    const firstWarnings = abortedRunWarnings(chunks);
+    expect(firstWarnings.filter((entry) => entry.markedAborted === true)).toHaveLength(1);
+    expect(firstWarnings.filter((entry) => entry.markedAborted === false)).toHaveLength(1);
+    expect(JSON.stringify(firstWarnings)).toContain(oldRunId);
+    expect(JSON.stringify(firstWarnings)).toContain(recentRunId);
+
+    chunks.length = 0;
+    clock.advance(60_000);
+    const secondMarker = `corr-${randomUUID()}`;
+    expect(await logAbortedReconciliationRuns(container, secondMarker)).toBe(1);
+
+    const after = await handle.db.select().from(reconciliationRuns);
+    const oldAfter = after.find((row) => row.id === oldId);
+    const recentAfter = after.find((row) => row.id === recentId);
+    const cleanAfter = after.find((row) => row.id === cleanId);
+    expect(oldAfter?.finishedAt?.toISOString()).toBe(now.toISOString());
+    expect(oldAfter?.errorSummary).toContain(marker);
+    expect(oldAfter?.errorSummary).not.toContain(secondMarker);
+    expect(oldAfter?.walletsAssessed).toBe(4);
+    expect(oldAfter?.outgoingScanStatus).toBe('complete');
+    expect(recentAfter?.finishedAt).toBeNull();
+    expect(recentAfter?.errorCode).toBeNull();
+    expect(cleanAfter?.finishedAt?.toISOString()).toBe(twoDaysAgo.toISOString());
+    expect(cleanAfter?.errorCode).toBeNull();
+
+    const secondWarnings = abortedRunWarnings(chunks);
+    expect(secondWarnings).toHaveLength(1);
+    expect(secondWarnings[0]?.markedAborted).toBe(false);
+    expect(JSON.stringify(secondWarnings[0]?.abortedRuns)).toContain(recentRunId);
+    expect(JSON.stringify(secondWarnings[0]?.abortedRuns)).not.toContain(oldRunId);
+
+    const latestAfter = await container.repositories.reconciliationRuns.findLatestFinished();
+    expect(latestAfter?.id).toBe(cleanId);
+  });
+
   function buildJobContainer(options: {
     readonly fundingEnabled: boolean;
     readonly database?: Container['database'];
     readonly close?: () => Promise<void>;
+    readonly clock?: Container['clock'];
+    readonly logger?: Container['logger'];
   }): Container {
     const privateKey = generatePrivateKey();
     const config = loadConfig({
@@ -239,8 +423,10 @@ describe.skipIf(!integrationEnabled)('wallet-reconciler job entry (integration)'
         EMAIL_PROVIDER: 'log-only',
       }),
     });
-    const logger = createLogger({ level: 'silent', serviceRole: 'cron-reconciler', environment: 'test' });
-    const clock = createFixedClock();
+    const logger =
+      options.logger ??
+      createLogger({ level: 'silent', serviceRole: 'cron-reconciler', environment: 'test' });
+    const clock = options.clock ?? createFixedClock();
     const database =
       options.database ??
       ({

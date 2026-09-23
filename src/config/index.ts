@@ -162,6 +162,11 @@ export interface ReconciliationConfig {
    * (RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS).
    */
   readonly outgoingScanRateLimitRetryWindowSeconds: number;
+  /**
+   * How long an unfinished run may stay unmarked (TX.36). A later startup
+   * marks rows older than this `RUN_ABORTED`.
+   */
+  readonly abortedRunGraceMinutes: number;
 }
 
 export interface ChainBankConfig {
@@ -308,6 +313,7 @@ export function loadConfig(options: LoadConfigOptions): ChainBankConfig {
             outgoingScanMaxRequestsPerSecond: env.RECONCILE_OUTGOING_SCAN_MAX_REQUESTS_PER_SECOND,
             outgoingScanRateLimitRetryWindowSeconds:
               env.RECONCILE_OUTGOING_SCAN_RATE_LIMIT_RETRY_WINDOW_SECONDS,
+            abortedRunGraceMinutes: env.RECONCILE_ABORTED_RUN_GRACE_MINUTES,
           }
         : undefined,
     isFundingEnabled: funding.enabled,

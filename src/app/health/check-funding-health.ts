@@ -21,17 +21,20 @@ export const FUNDING_HEALTH_STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 /**
  * Overall funding-health status (ForteL2 / CB-01 contract).
  *
- * - `failing` — no **successfully finished** run (`finished_at IS NOT NULL`)
- *   within {@link FUNDING_HEALTH_STALE_AFTER_MS}, or any wallet below policy
- *   with no funding attempt inside that window.
+ * - `failing` — no successfully finished run within
+ *   {@link FUNDING_HEALTH_STALE_AFTER_MS}, or any wallet below policy
+ *   with no funding attempt inside that window. A `RUN_ABORTED` row is not
+ *   a successful finish, even after startup sets `finished_at`.
  * - `degraded` — a wallet below policy but within the window (attempt seen),
  *   or the most recent finished run reported `walletsBlocked` /
  *   `walletsFailed` > 0.
  * - `ok` — otherwise.
  *
- * Freshness keys ONLY on `finishedAt` of finished rows. A row with
- * `finished_at IS NULL` (aborted crash) must never satisfy the check — even
- * when `outgoingScanStatus` is `complete` or `startedAt` is recent.
+ * Freshness keys on `finishedAt` of a run that finished its work. A row with
+ * `finished_at IS NULL` must never satisfy the check. A row marked
+ * `RUN_ABORTED` has `finished_at` set so the reconciler stops warning about
+ * it, and must also never satisfy the check — even when that stamp is newer
+ * than the last good run.
  */
 export type FundingHealthStatus = 'ok' | 'degraded' | 'failing';
 
@@ -103,7 +106,8 @@ export async function checkFundingHealth(
   const checkedAt = dependencies.clock.now();
   const windowStart = new Date(checkedAt.getTime() - FUNDING_HEALTH_STALE_AFTER_MS);
 
-  // Authoritative freshness source: finished_at, not started_at / scan status.
+  // Latest run that finished its work. findLatestFinished excludes unfinished
+  // rows and RUN_ABORTED stamps, so a marked crash cannot look fresh.
   const lastFinished = await dependencies.reconciliationRuns.findLatestFinished();
   const lastRun = toLastRun(lastFinished, checkedAt);
 
@@ -184,14 +188,16 @@ export async function checkFundingHealth(
  * Pure classifier exported for the freshness-trap regression test.
  *
  * A run without `finishedAt` must never count as fresh, regardless of
- * `startedAt` or `outgoingScanStatus`.
+ * `startedAt` or `outgoingScanStatus`. A `RUN_ABORTED` row has `finishedAt`
+ * set by a later startup and must not count either: the stamp is bookkeeping,
+ * not evidence the reconciler ran.
  */
 export function isFinishedRunFresh(
-  run: Pick<ReconciliationRun, 'finishedAt'> | undefined,
+  run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode'> | undefined,
   checkedAt: Date,
   staleAfterMs: number = FUNDING_HEALTH_STALE_AFTER_MS,
 ): boolean {
-  if (run?.finishedAt === undefined) {
+  if (run?.finishedAt === undefined || run.errorCode === 'RUN_ABORTED') {
     return false;
   }
   return checkedAt.getTime() - run.finishedAt.getTime() <= staleAfterMs;
@@ -278,7 +284,7 @@ export function fundingHealthExitKind(errorCode: string | undefined): FundingHea
 }
 
 function toLastRun(run: ReconciliationRun | undefined, checkedAt: Date): FundingHealthLastRun | undefined {
-  if (run?.finishedAt === undefined) {
+  if (run?.finishedAt === undefined || run.errorCode === 'RUN_ABORTED') {
     return undefined;
   }
   const ageMs = checkedAt.getTime() - run.finishedAt.getTime();

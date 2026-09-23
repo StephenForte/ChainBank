@@ -625,9 +625,36 @@ export function createInMemoryReconciliationRunRepository(): ReconciliationRunRe
       return Promise.resolve(sorted.slice(0, limit));
     },
     findLatestFinished() {
-      const finished = [...runsById.values()].filter((run) => run.finishedAt !== undefined);
+      const finished = [...runsById.values()].filter(
+        (run) => run.finishedAt !== undefined && run.errorCode !== 'RUN_ABORTED',
+      );
       finished.sort((a, b) => (b.finishedAt?.getTime() ?? 0) - (a.finishedAt?.getTime() ?? 0));
       return Promise.resolve(finished[0]);
+    },
+    listAborted(olderThan) {
+      const rows = [...runsById.values()].filter(
+        (run) => run.finishedAt === undefined && run.startedAt.getTime() < olderThan.getTime(),
+      );
+      rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+      return Promise.resolve(rows);
+    },
+    markAborted(input) {
+      const marked: ReconciliationRun[] = [];
+      for (const id of input.ids) {
+        const existing = runsById.get(id);
+        if (existing === undefined || existing.finishedAt !== undefined) {
+          continue;
+        }
+        const next: ReconciliationRun = {
+          ...existing,
+          finishedAt: input.finishedAt,
+          errorCode: 'RUN_ABORTED',
+          errorSummary: input.errorSummary,
+        };
+        runsById.set(next.id, next);
+        marked.push(next);
+      }
+      return Promise.resolve(marked);
     },
     list(pagination) {
       const sorted = [...runsById.values()].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());

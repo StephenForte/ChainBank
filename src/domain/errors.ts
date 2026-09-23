@@ -65,7 +65,10 @@ export type ErrorCode =
   | 'EMAIL_PROVIDER_UNAVAILABLE'
   | 'EMAIL_PROVIDER_REJECTED'
   // catch-all
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  // A reconciliation run was started and the process exited before finish.
+  // Stamped onto the existing row; the row is not deleted (AGENTS.md §9).
+  | 'RUN_ABORTED';
 
 const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   INVALID_REQUEST: 'validation',
@@ -111,6 +114,7 @@ const CATEGORY_BY_CODE: Readonly<Record<ErrorCode, ErrorCategory>> = {
   EMAIL_PROVIDER_UNAVAILABLE: 'dependency_unavailable',
   EMAIL_PROVIDER_REJECTED: 'provider_retriable',
   INTERNAL_ERROR: 'internal',
+  RUN_ABORTED: 'internal',
 };
 
 const HTTP_STATUS_BY_CATEGORY: Readonly<Record<ErrorCategory, number>> = {

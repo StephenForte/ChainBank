@@ -259,9 +259,15 @@ function createRunRepo(initial: ReconciliationRun[] = []): ReconciliationRunRepo
       return Promise.resolve(sorted.slice(0, limit));
     },
     findLatestFinished() {
-      const finished = runs.filter((run) => run.finishedAt !== undefined);
+      const finished = runs.filter((run) => run.finishedAt !== undefined && run.errorCode !== 'RUN_ABORTED');
       finished.sort((a, b) => (b.finishedAt?.getTime() ?? 0) - (a.finishedAt?.getTime() ?? 0));
       return Promise.resolve(finished[0]);
+    },
+    listAborted() {
+      return Promise.reject(new Error('unused'));
+    },
+    markAborted() {
+      return Promise.reject(new Error('unused'));
     },
     list(pagination) {
       const sorted = [...runs].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());

@@ -287,6 +287,14 @@ export const environmentSchema = z.object({
   RECONCILE_FAILURE_ALERT_THRESHOLD: positiveInteger.default(3),
 
   /**
+   * Minutes an unfinished reconciliation run may sit before a later startup
+   * marks it aborted (TX.36). Default 60 is longer than a full run: the
+   * longest observed Base scan was 828s, and a run scans two treasuries, so
+   * a live concurrent instance is inside the window and is not marked.
+   */
+  RECONCILE_ABORTED_RUN_GRACE_MINUTES: positiveInteger.default(60),
+
+  /**
    * Bearer token for GET /health/funding (web role). Optional at boot so existing
    * deploys keep starting; when unset the endpoint rejects every request.
    * Balances are public on-chain, but the wallet inventory + policy mins are not
