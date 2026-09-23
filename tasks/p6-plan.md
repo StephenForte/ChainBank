@@ -250,6 +250,16 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   `isEligibleForReconciliation` also requires `project.enabled` and `environment.enabled`, so the badge
   now checks all four and names the reason in its title; the regression test is red without the fix.
   Gate: 715 / 96. Main CI green at `47839fc`.
+- **TX.33 — merged ([#168](https://github.com/StephenForte/ChainBank/pull/168)), 2026-09-23.** `render.yaml`
+  declares `CHAINS` as `sync: false` (no value) on all three services and none of the 16 singular keys;
+  `NODE_VERSION` is still '22'. Planner probes: the Blueprint test goes red when a singular key is added,
+  when CHAINS is given a value, or when CHAINS is dropped from a service. **Render facts established:**
+  (1) the operator moved `CHAINS` into a shared Render **environment group** linked to all three services;
+  (2) Render docs: an existing-Blueprint sync ignores `sync: false` keys, and a service-level variable
+  overrides a linked group, so no service may carry its own `CHAINS`; (3) **observed on the #168 merge:
+  the Blueprint sync kept the dashboard-made group link**, although `render.yaml` does not declare the
+  group. That was undocumented until now. The outage trap from 2026-09-22 is closed. The production Node
+  major (24 or 26) remains an open operator decision.
 - **TX.41 (reserved) — the funding-policy panel ignores the chain filter.** Operator screenshot
   2026-09-23: with **Base Sepolia** selected, the policy panel lists the Ethereum Sepolia wallets
   (admin / batcher / proposer, `fortel2/development`). Code: `ManagedWalletsPanel` filters with
