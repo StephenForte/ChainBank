@@ -1,3 +1,4 @@
+import { fundingAuditActor, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import type { Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
@@ -65,6 +66,11 @@ export interface EnsureOperationalTreasuryFundedInput {
   readonly idempotencyKey: string;
   readonly role: Role;
   readonly credentialId: string;
+  /**
+   * Request actor kind. `cron-reconciler` stays `cron` regardless of this
+   * field, so the scheduled sweep is not attributed to a dashboard session.
+   */
+  readonly actorType?: RequestAuditActorType;
   readonly correlationId: string;
   readonly sourceIp: string | undefined;
 }
@@ -225,6 +231,8 @@ export async function ensureOperationalTreasuryFunded(
       destBalanceWei: destReading.balanceWei,
       correlationId: input.correlationId,
       credentialId: input.credentialId,
+      role: input.role,
+      ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
     });
 
     const result = await mapDispatchOutcome(dependencies, {
@@ -311,9 +319,11 @@ async function maybeNotifyReserveAlert(
     readonly destBalanceWei: bigint;
     readonly correlationId: string;
     readonly credentialId: string;
+    readonly role: Role;
+    readonly actorType?: RequestAuditActorType;
   },
 ): Promise<void> {
-  const actor = { type: 'api_credential' as const, id: input.credentialId };
+  const actor = fundingAuditActor(input);
 
   try {
     if (input.dispatchResult.kind === 'blocked' && input.dispatchResult.reason === 'reserve') {
@@ -555,9 +565,10 @@ async function recordAttemptAudit(
   source: Treasury,
   metadata: Readonly<Record<string, unknown>>,
 ): Promise<void> {
+  const actor = fundingAuditActor(input);
   await dependencies.auditEvents.record({
-    actorType: input.role === 'cron-reconciler' ? 'cron' : 'api_credential',
-    actorId: input.credentialId,
+    actorType: actor.type,
+    actorId: actor.id,
     action: 'treasury.replenish_operational',
     entityType: 'treasury',
     entityId: operational.id,

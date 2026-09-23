@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
@@ -44,6 +45,8 @@ export interface AcknowledgeFindingInput {
   readonly note: string;
   readonly operationId: string;
   readonly actorId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly sourceIp: string | undefined;
   /**
    * Forensic fields for the persist-only open row when none exists yet.
@@ -116,7 +119,7 @@ export async function acknowledgeFinding(
     });
 
     await uow.auditEvents.record({
-      actorType: 'api_credential',
+      actorType: recordedRequestActorType(input.actorType),
       actorId: input.actorId,
       action: 'treasury.alert.acknowledged',
       entityType: 'alert',

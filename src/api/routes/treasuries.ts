@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { evaluateTreasuryAlerts } from '../../app/alerts/evaluate-treasury-alerts.js';
 import { checkTreasuryBalance } from '../../app/treasury/check-treasury-balance.js';
 import { listTreasuries } from '../../app/treasury/list-treasuries.js';
@@ -68,7 +69,8 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
           treasuryId: id,
           enabled: body.enabled,
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
         },
       );
@@ -127,6 +129,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
           idempotencyKey: body.idempotencyKey,
           role: actor.role,
           credentialId: actor.credentialId,
+          actorType: requestAuditActor(actor).type,
           correlationId: request.id,
           sourceIp: request.ip,
         },
@@ -181,7 +184,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
           treasuryId: id,
           role: actor.role,
           operationId: request.id,
-          actor: { type: 'api_credential', id: actor.credentialId },
+          actor: requestAuditActor(actor),
         },
       );
 
@@ -210,7 +213,7 @@ export function registerTreasuryRoutes(app: AppInstance, container: Container): 
             dashboardBaseUrl: config.app.publicBaseUrl,
             environment: config.app.environment,
             operationId: request.id,
-            actor: { type: 'api_credential', id: actor.credentialId },
+            actor: requestAuditActor(actor),
           },
         );
       }

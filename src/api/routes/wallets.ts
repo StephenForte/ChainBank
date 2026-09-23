@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { ensureWalletFunded } from '../../app/funding/ensure-wallet-funded.js';
 import { listWallets } from '../../app/wallets/list-wallets.js';
 import { readWalletBalance } from '../../app/wallets/read-wallet-balance.js';
@@ -241,7 +242,8 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
         criticalAtStartup: body.criticalAtStartup ?? false,
         reconciliationEnabled: body.reconciliationEnabled ?? false,
         operationId: request.id,
-        actorId: actor.credentialId,
+        actorId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         sourceIp: request.ip,
       });
 
@@ -422,7 +424,8 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
             reconciliationEnabled: body.reconciliationEnabled,
           },
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
         },
       );
@@ -480,7 +483,8 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           targetBalanceWei: parseWeiDecimalString(body.targetBalanceWei, 'targetBalanceWei'),
           maximumTopUpWei: parseWeiDecimalString(body.maximumTopUpWei, 'maximumTopUpWei'),
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
         },
       );
@@ -555,6 +559,7 @@ export function registerWalletRoutes(app: AppInstance, container: Container): vo
           idempotencyKey: body.idempotencyKey,
           role: actor.role,
           credentialId: actor.credentialId,
+          actorType: requestAuditActor(actor).type,
           correlationId: request.id,
           sourceIp: request.ip,
         },

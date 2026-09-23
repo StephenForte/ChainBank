@@ -1,3 +1,4 @@
+import { fundingAuditActor, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import type { Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { assertNever } from '../../domain/funding/statuses.js';
@@ -66,6 +67,12 @@ export interface EnsureWalletFundedInput {
   readonly idempotencyKey: string;
   readonly role: Role;
   readonly credentialId: string;
+  /**
+   * Request actor kind. Scheduled reconciliation does not call this service;
+   * a `cron-reconciler` role is still recorded as `cron` so a shared caller
+   * cannot stamp a session onto a sweep.
+   */
+  readonly actorType?: RequestAuditActorType;
   readonly correlationId: string;
   readonly sourceIp: string | undefined;
 }
@@ -127,6 +134,7 @@ export async function ensureWalletFunded(
         evmChainId: wallet.chain.chainId,
         role: input.role,
         credentialId: input.credentialId,
+        ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
         correlationId: input.correlationId,
         sourceIp: input.sourceIp,
         idempotencyKey: `ensure-funded:${wallet.id}:${input.idempotencyKey}`,
@@ -234,6 +242,8 @@ export async function ensureWalletFunded(
       walletBalanceWei: walletReading.balanceWei,
       correlationId: input.correlationId,
       credentialId: input.credentialId,
+      role: input.role,
+      ...(input.actorType === undefined ? {} : { actorType: input.actorType }),
     });
 
     const result = await mapDispatchOutcome(dependencies, {
@@ -349,9 +359,11 @@ async function maybeNotifyReserveAlert(
     readonly walletBalanceWei: bigint;
     readonly correlationId: string;
     readonly credentialId: string;
+    readonly role: Role;
+    readonly actorType?: RequestAuditActorType;
   },
 ): Promise<void> {
-  const actor = { type: 'api_credential' as const, id: input.credentialId };
+  const actor = fundingAuditActor(input);
 
   try {
     if (input.dispatchResult.kind === 'blocked' && input.dispatchResult.reason === 'reserve') {
@@ -606,9 +618,10 @@ async function recordAttemptAudit(
   wallet: ManagedWallet,
   metadata: Readonly<Record<string, unknown>>,
 ): Promise<void> {
+  const actor = fundingAuditActor(input);
   await dependencies.auditEvents.record({
-    actorType: 'api_credential',
-    actorId: input.credentialId,
+    actorType: actor.type,
+    actorId: actor.id,
     action: 'wallet.ensure_funded',
     entityType: 'managed_wallet',
     entityId: wallet.id,

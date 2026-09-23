@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { listCredentials } from '../../app/credentials/list-credentials.js';
 import { mutateCredential } from '../../app/credentials/mutate-credential.js';
 import { sendTestEmail } from '../../app/admin/send-test-email.js';
@@ -161,7 +162,8 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
       const credential = await mutateCredential(credentialDeps, {
         role: actor.role,
         credentialId: params.id,
-        actorCredentialId: actor.credentialId,
+        actorCredentialId: requestAuditActor(actor).id,
+        actorType: requestAuditActor(actor).type,
         action: body.action,
         operationId: request.id,
         sourceIp: request.ip,
@@ -206,7 +208,8 @@ export function registerAdminRoutes(app: AppInstance, container: Container): voi
         {
           role: actor.role,
           operationId: request.id,
-          actorId: actor.credentialId,
+          actorId: requestAuditActor(actor).id,
+          actorType: requestAuditActor(actor).type,
           sourceIp: request.ip,
           recipients: config.email.operatorRecipients,
           environment: config.app.environment,

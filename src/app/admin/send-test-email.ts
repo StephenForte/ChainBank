@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { Clock } from '../../domain/ports.js';
@@ -14,6 +15,8 @@ export interface SendTestEmailInput {
   readonly role: Role;
   readonly operationId: string;
   readonly actorId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly sourceIp: string | undefined;
   readonly recipients: readonly string[];
   readonly environment: string;
@@ -57,7 +60,7 @@ export async function sendTestEmail(
   });
 
   await dependencies.auditEvents.record({
-    actorType: 'api_credential',
+    actorType: recordedRequestActorType(input.actorType),
     actorId: input.actorId,
     action: result.kind === 'sent' ? 'email.test.sent' : 'email.test.failed',
     entityType: 'email',

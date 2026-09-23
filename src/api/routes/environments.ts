@@ -1,4 +1,5 @@
 import type { AppInstance } from '../types.js';
+import { requestAuditActor } from '../../app/auth/request-audit-actor.js';
 import { ensureEnvironmentReady } from '../../app/funding/ensure-environment-ready.js';
 import type { Container } from '../../container.js';
 import { requireActor } from '../plugins/authentication.js';
@@ -140,6 +141,7 @@ export function registerEnvironmentRoutes(app: AppInstance, container: Container
           idempotencyKey: body.idempotencyKey,
           role: actor.role,
           credentialId: actor.credentialId,
+          actorType: requestAuditActor(actor).type,
           correlationId: request.id,
           sourceIp: request.ip,
         },

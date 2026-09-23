@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import { parseSlug } from '../../domain/projects/slug.js';
@@ -13,6 +14,8 @@ export interface CreateProjectInput {
   readonly name: string;
   readonly operationId: string;
   readonly actorId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly sourceIp: string | undefined;
 }
 
@@ -34,7 +37,7 @@ export async function createProject(
     const project = await uow.projects.insert({ slug, name });
 
     await uow.auditEvents.record({
-      actorType: 'api_credential',
+      actorType: recordedRequestActorType(input.actorType),
       actorId: input.actorId,
       action: 'project.created',
       entityType: 'project',

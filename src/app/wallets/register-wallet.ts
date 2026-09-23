@@ -1,3 +1,4 @@
+import { recordedRequestActorType, type RequestAuditActorType } from '../auth/request-audit-actor.js';
 import { assertPermission, type Role } from '../../domain/auth/roles.js';
 import { ChainBankError } from '../../domain/errors.js';
 import type { ManagedWallet, OperatorMutationTransaction } from '../ports.js';
@@ -19,6 +20,8 @@ export interface RegisterWalletInput {
   readonly reconciliationEnabled: boolean;
   readonly operationId: string;
   readonly actorId: string;
+  /** Omitted when the caller predates request-actor kinds; recorded as `api_credential`. */
+  readonly actorType?: RequestAuditActorType;
   readonly sourceIp: string | undefined;
 }
 
@@ -80,7 +83,7 @@ export async function registerWallet(
     });
 
     await uow.auditEvents.record({
-      actorType: 'api_credential',
+      actorType: recordedRequestActorType(input.actorType),
       actorId: input.actorId,
       action: 'wallet.registered',
       entityType: 'managed_wallet',
