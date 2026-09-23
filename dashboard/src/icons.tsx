@@ -57,6 +57,15 @@ export function IconWallets() {
   );
 }
 
+export function IconAddWallet() {
+  return (
+    <Icon>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </Icon>
+  );
+}
+
 export function IconFunding() {
   return (
     <Icon>

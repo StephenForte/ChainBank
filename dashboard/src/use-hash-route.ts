@@ -4,6 +4,7 @@ export const DASHBOARD_ROUTES = [
   'overview',
   'treasuries',
   'wallets',
+  'add-wallet',
   'funding',
   'reconciliation',
   'alerts',

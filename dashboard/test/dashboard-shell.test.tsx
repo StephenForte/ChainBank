@@ -30,6 +30,7 @@ const NAV_LABELS = [
   'Overview',
   'Treasuries',
   'Wallets',
+  'Add wallet',
   'Funding',
   'Reconciliation',
   'Alerts',

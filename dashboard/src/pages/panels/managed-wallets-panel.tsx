@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { ManagedWalletResource } from '../../api';
 import { matchesChainFilter, type VisibleChainIds } from '../../chain-filter';
 import { CollapsibleSection, COLLAPSE_STORAGE_KEYS } from '../../collapsible-section';
@@ -28,6 +29,25 @@ export type ManagedWalletsPanelProps = {
   /** Absent means every chain, so existing callers keep today's rows. */
   readonly visibleChainIds?: VisibleChainIds;
 };
+
+/**
+ * Plain-English cron outcome for this wallet's own flags.
+ * A disabled wallet keeps the disabled badge alone: enablement is the gate.
+ * "not auto-funded" is the case an operator read as a failed cron when the
+ * green enabled badge sat next to muted "reconcile off".
+ */
+function autoFundingBadge(wallet: {
+  readonly enabled: boolean;
+  readonly reconciliationEnabled: boolean;
+}): ReactNode {
+  if (!wallet.enabled) {
+    return null;
+  }
+  if (wallet.reconciliationEnabled) {
+    return <span className="badge badge-ok">auto-funded</span>;
+  }
+  return <span className="badge badge-warn">not auto-funded</span>;
+}
 
 export function ManagedWalletsPanel({
   checkListedWalletBalances,
@@ -119,7 +139,8 @@ export function ManagedWalletsPanel({
           reconcile {wallet.reconciliationEnabled ? 'on' : 'off'}
         </td>
         <td>
-          <span className={dash.enabledBadge(wallet.enabled)}>{wallet.enabled ? 'enabled' : 'disabled'}</span>
+          <span className={dash.enabledBadge(wallet.enabled)}>{wallet.enabled ? 'enabled' : 'disabled'}</span>{' '}
+          {autoFundingBadge(wallet)}
         </td>
         <td>
           {canWrite ? (
