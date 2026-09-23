@@ -745,7 +745,10 @@ export function ReconciliationPanel({
                         </thead>
                         <tbody>
                           {reconciliationRuns.map((run) => {
-                            const completion = dash.runCompletionLabel(run);
+                            const completion =
+                              run.errorCode === 'RUN_ABORTED'
+                                ? { className: 'badge badge-bad', label: 'aborted' }
+                                : dash.runCompletionLabel(run);
                             return (
                               <tr key={run.id}>
                                 <td>{dash.formatTimestamp(run.startedAt)}</td>

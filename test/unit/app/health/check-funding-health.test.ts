@@ -104,6 +104,8 @@ function buildDeps(options: {
     findById: vi.fn(),
     listRecent: vi.fn(),
     findLatestFinished: () => Promise.resolve(run),
+    listAborted: vi.fn(),
+    markAborted: vi.fn(),
     list: vi.fn(),
     count: vi.fn(),
   };
@@ -151,6 +153,25 @@ describe('isFinishedRunFresh — aborted rows never satisfy freshness', () => {
       finishedAt: new Date(NOW.getTime() - FUNDING_HEALTH_STALE_AFTER_MS - 1),
     });
     expect(isFinishedRunFresh(stale, NOW)).toBe(false);
+  });
+
+  it('rejects RUN_ABORTED even when finishedAt is one minute ago and the last good run is two days old', () => {
+    const markedAborted = finishedRun({
+      id: 'run-aborted',
+      runId: 'run-aborted',
+      finishedAt: new Date(NOW.getTime() - 60_000),
+      errorCode: 'RUN_ABORTED',
+      errorSummary: 'Process exited before finish; marked aborted at startup by run marker',
+    });
+    const lastGood = finishedRun({
+      id: 'run-good',
+      runId: 'run-good',
+      finishedAt: new Date(NOW.getTime() - 2 * 24 * 60 * 60 * 1000),
+    });
+    // The aborted stamp is newer, so a finished_at-only check would call the
+    // reconciler fresh and never consult the two-day-old good run.
+    expect(isFinishedRunFresh(markedAborted, NOW)).toBe(false);
+    expect(isFinishedRunFresh(lastGood, NOW)).toBe(false);
   });
 });
 
@@ -261,6 +282,22 @@ describe('checkFundingHealth endpoint states', () => {
     const result = await checkFundingHealth(
       buildDeps({
         run: undefined, // findLatestFinished skips aborted rows
+      }),
+    );
+    expect(result.status).toBe('failing');
+    expect(result.lastRun).toBeUndefined();
+  });
+
+  it('returns failing when a RUN_ABORTED row marked one minute ago is newer than a two-day-old good run', async () => {
+    const result = await checkFundingHealth(
+      buildDeps({
+        // What findLatestFinished returns before it excludes RUN_ABORTED:
+        // the aborted row wins on finished_at and must not satisfy freshness.
+        run: finishedRun({
+          finishedAt: new Date(NOW.getTime() - 60_000),
+          errorCode: 'RUN_ABORTED',
+          errorSummary: 'Process exited before finish; marked aborted at startup by run marker',
+        }),
       }),
     );
     expect(result.status).toBe('failing');

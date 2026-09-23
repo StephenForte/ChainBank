@@ -102,7 +102,10 @@ export type NotifyReconciliationFailureResult =
 export function classifyReconciliationRun(
   run: Pick<ReconciliationRun, 'finishedAt' | 'errorCode' | 'walletsFunded' | 'walletsFailed' | 'findings'>,
 ): ReconciliationRunClass {
-  if (run.finishedAt === undefined) {
+  // Unfinished rows never ran to a result. RUN_ABORTED is that same row after
+  // startup bookkeeping: a deploy kill is not a reconciler failure, and must
+  // not be folded into POLICY_REFUSAL_ERROR_CODES (that skip reason is wrong).
+  if (run.finishedAt === undefined || run.errorCode === 'RUN_ABORTED') {
     return 'neutral';
   }
   if (run.errorCode !== undefined) {

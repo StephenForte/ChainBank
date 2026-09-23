@@ -14,6 +14,8 @@ function fakeRepo(page: {
     findById: vi.fn(),
     listRecent: vi.fn(),
     findLatestFinished: vi.fn(),
+    listAborted: vi.fn(),
+    markAborted: vi.fn(),
     list: vi.fn().mockResolvedValue(page),
     count: vi.fn().mockResolvedValue(page.total),
   };

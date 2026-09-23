@@ -1,7 +1,8 @@
-import { count, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import type {
   FinishReconciliationRunInput,
   InsertReconciliationRunInput,
+  MarkAbortedReconciliationRunsInput,
   ReconciliationFinding,
   ReconciliationRun,
   ReconciliationRunListPage,
@@ -97,11 +98,46 @@ export function createReconciliationRunRepository(db: Database): ReconciliationR
         const rows = await db
           .select()
           .from(reconciliationRuns)
-          .where(isNotNull(reconciliationRuns.finishedAt))
+          .where(
+            and(
+              isNotNull(reconciliationRuns.finishedAt),
+              // NULL error_code is a clean finish. `<>` alone would drop those rows.
+              or(isNull(reconciliationRuns.errorCode), ne(reconciliationRuns.errorCode, 'RUN_ABORTED')),
+            ),
+          )
           .orderBy(desc(reconciliationRuns.finishedAt))
           .limit(1);
         const row = rows[0];
         return row === undefined ? undefined : toReconciliationRun(row);
+      });
+    },
+
+    async listAborted(olderThan: Date): Promise<readonly ReconciliationRun[]> {
+      return withDatabaseErrors('reconciliation_runs.listAborted', async () => {
+        const rows = await db
+          .select()
+          .from(reconciliationRuns)
+          .where(and(isNull(reconciliationRuns.finishedAt), lt(reconciliationRuns.startedAt, olderThan)))
+          .orderBy(desc(reconciliationRuns.startedAt));
+        return rows.map(toReconciliationRun);
+      });
+    },
+
+    async markAborted(input: MarkAbortedReconciliationRunsInput): Promise<readonly ReconciliationRun[]> {
+      return withDatabaseErrors('reconciliation_runs.markAborted', async () => {
+        if (input.ids.length === 0) {
+          return [];
+        }
+        const rows = await db
+          .update(reconciliationRuns)
+          .set({
+            finishedAt: input.finishedAt,
+            errorCode: 'RUN_ABORTED',
+            errorSummary: input.errorSummary,
+          })
+          .where(and(inArray(reconciliationRuns.id, [...input.ids]), isNull(reconciliationRuns.finishedAt)))
+          .returning();
+        return rows.map(toReconciliationRun);
       });
     },
 

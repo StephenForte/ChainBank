@@ -1,5 +1,4 @@
 import { pathToFileURL } from 'node:url';
-import { isNull } from 'drizzle-orm';
 import { registerConfiguredTreasuries } from '../app/bootstrap/register-configured-treasury.js';
 import {
   chainOutcomesForDetail,
@@ -15,6 +14,7 @@ import {
   type ReconcileWalletsDependencies,
   type ReconcileWalletsResult,
 } from '../app/reconciliation/reconcile-wallets.js';
+import type { ReconciliationRun } from '../app/ports.js';
 import { loadConfig } from '../config/index.js';
 import { loadDotEnvFile } from '../config/load-dotenv.js';
 import { buildContainer, type Container } from '../container.js';
@@ -24,7 +24,6 @@ import {
   describeUnknownError,
   isChainBankError,
 } from '../domain/errors.js';
-import { reconciliationRuns } from '../infrastructure/db/schema.js';
 import type { Logger } from '../observability/logger.js';
 
 /** Config / process role — signing-capable; receives TREASURY_PRIVATE_KEY. */
@@ -125,50 +124,99 @@ export function buildReconcileWalletsDependencies(
   };
 }
 
+const ABORTED_RUN_LOG_MESSAGE = 'Prior reconciliation runs aborted before finish';
+
+const UNFINISHED_RUN_NOTE = 'finished_at IS NULL — treat as aborted, not a clean complete scan';
+
 /**
- * Surfaces rows left with `finished_at IS NULL` from a prior crash.
+ * Surfaces rows left with `finished_at IS NULL` from a prior crash, and marks
+ * the ones outside the grace window so the warning does not repeat forever.
  *
- * Unfinished rows must never be read as a clean report (PR #40 / C14). TX.9
- * changed the insert default to `'not-run'`. `finished_at IS NULL` is
- * authoritative for aborted rows. Finished pre-`0005` rows may still read
- * `'complete'` from the old default even when no scan ran (e.g. historical
- * FUNDING_DISABLED exits) — migration `0005` deliberately does not backfill.
+ * Runs inside the grace window are still in flight (or a concurrent instance)
+ * and are warned about but not marked. Marking sets `finished_at`,
+ * `error_code` (`RUN_ABORTED`), and `error_summary` only — counters, findings,
+ * `outgoing_scan_status`, and `started_at` stay as they were (AGENTS.md §9).
+ *
+ * Called before the current run row is inserted. The id in the summary is
+ * this process's correlation id; the new run's `runId` does not exist yet.
  */
 export async function logAbortedReconciliationRuns(
   container: Container,
   correlationId: string,
 ): Promise<number> {
-  const rows = await container.database.db
-    .select({
-      id: reconciliationRuns.id,
-      runId: reconciliationRuns.runId,
-      startedAt: reconciliationRuns.startedAt,
-      outgoingScanStatus: reconciliationRuns.outgoingScanStatus,
-      errorCode: reconciliationRuns.errorCode,
-    })
-    .from(reconciliationRuns)
-    .where(isNull(reconciliationRuns.finishedAt));
-
-  if (rows.length === 0) {
-    return 0;
+  const reconciliation = container.config.reconciliation;
+  if (reconciliation === undefined) {
+    throw new ChainBankError(
+      'INVALID_CONFIGURATION',
+      'cron-reconciler requires reconciliation configuration to mark aborted runs',
+      { publicMessage: 'The service is misconfigured.' },
+    );
   }
 
-  container.logger.warn(
-    {
-      correlationId,
-      abortedCount: rows.length,
-      abortedRuns: rows.map((row) => ({
-        id: row.id,
-        runId: row.runId,
-        startedAt: row.startedAt.toISOString(),
-        outgoingScanStatus: row.outgoingScanStatus,
-        errorCode: row.errorCode,
-        note: 'finished_at IS NULL — treat as aborted, not a clean complete scan',
-      })),
-    },
-    'Prior reconciliation runs aborted before finish',
-  );
-  return rows.length;
+  const now = container.clock.now();
+  const graceMs = reconciliation.abortedRunGraceMinutes * 60 * 1000;
+  const graceCutoff = new Date(now.getTime() - graceMs);
+  const unfinished = await container.repositories.reconciliationRuns.listAborted(now);
+  const toMark = unfinished.filter((row) => row.startedAt.getTime() < graceCutoff.getTime());
+  const inWindow = unfinished.filter((row) => row.startedAt.getTime() >= graceCutoff.getTime());
+
+  let markedCount = 0;
+  if (toMark.length > 0) {
+    const marked = await container.repositories.reconciliationRuns.markAborted({
+      ids: toMark.map((row) => row.id),
+      finishedAt: now,
+      errorSummary: `Process exited before finish; marked aborted at startup by run ${correlationId}`,
+    });
+    markedCount = marked.length;
+    if (markedCount > 0) {
+      container.logger.warn(
+        {
+          correlationId,
+          abortedCount: markedCount,
+          markedAborted: true,
+          abortedRuns: marked.map((row) =>
+            abortedRunLogFields(row, 'marked RUN_ABORTED; counters and scan status left unchanged'),
+          ),
+        },
+        ABORTED_RUN_LOG_MESSAGE,
+      );
+    }
+  }
+
+  if (inWindow.length > 0) {
+    container.logger.warn(
+      {
+        correlationId,
+        abortedCount: inWindow.length,
+        markedAborted: false,
+        abortedRuns: inWindow.map((row) => abortedRunLogFields(row, UNFINISHED_RUN_NOTE)),
+      },
+      ABORTED_RUN_LOG_MESSAGE,
+    );
+  }
+
+  return markedCount + inWindow.length;
+}
+
+function abortedRunLogFields(
+  row: ReconciliationRun,
+  note: string,
+): {
+  readonly id: string;
+  readonly runId: string;
+  readonly startedAt: string;
+  readonly outgoingScanStatus: ReconciliationRun['outgoingScanStatus'];
+  readonly errorCode: string | undefined;
+  readonly note: string;
+} {
+  return {
+    id: row.id,
+    runId: row.runId,
+    startedAt: row.startedAt.toISOString(),
+    outgoingScanStatus: row.outgoingScanStatus,
+    errorCode: row.errorCode,
+    note,
+  };
 }
 
 /**

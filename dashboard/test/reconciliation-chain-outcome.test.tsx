@@ -60,6 +60,7 @@ function renderPanel(options: {
   readonly findings: readonly Record<string, unknown>[];
   readonly expanded: boolean;
   readonly treasuries?: readonly TreasuryResource[];
+  readonly run?: ReconciliationRunResource;
 }): void {
   const setter = vi.fn() as unknown as Dispatch<SetStateAction<Readonly<Record<string, string>>>>;
   const boolSetter = vi.fn() as unknown as Dispatch<SetStateAction<Readonly<Record<string, boolean>>>>;
@@ -87,7 +88,7 @@ function renderPanel(options: {
       reconciliationState="ready"
       reconciliationError={undefined}
       reconciliationRunsTotal={1}
-      reconciliationRuns={[makeRun(options.findings)]}
+      reconciliationRuns={[options.run ?? makeRun(options.findings)]}
       openFindingAlertsComplete
       expandedCriticalEntityIds={{}}
       setExpandedCriticalEntityIds={boolSetter}
@@ -189,5 +190,26 @@ describe('reconciliation panel chain outcomes (C30)', () => {
     expect(screen.getByText('unexplained_outgoing_transfer')).toBeTruthy();
     expect(screen.queryByText('Warning findings')).toBeNull();
     expect(document.getElementById('reconciliation-detail')).toBeNull();
+  });
+
+  it('renders a RUN_ABORTED row with its error code and a finished time', () => {
+    const finishedAt = '2026-09-22T19:53:08.000Z';
+    renderPanel({
+      expanded: true,
+      findings: [],
+      run: {
+        ...makeRun([]),
+        runId: 'run-aborted',
+        finishedAt,
+        errorCode: 'RUN_ABORTED',
+        errorSummary: 'Process exited before finish; marked aborted at startup by run marker',
+        outgoingScanStatus: 'not-run',
+      },
+    });
+
+    expect(screen.getByText('RUN_ABORTED')).toBeTruthy();
+    expect(screen.getByText('aborted')).toBeTruthy();
+    expect(screen.getByText(new Date(finishedAt).toLocaleString())).toBeTruthy();
+    expect(screen.queryByText('unfinished')).toBeNull();
   });
 });
