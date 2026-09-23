@@ -206,6 +206,32 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
   replaces the one jsdom provides. With `NODE_OPTIONS=--no-experimental-webstorage` the result is 77/77.
   Every worker gate on the operator's Mac reports this as a failure until it is fixed. The fix must also
   stay green on Node 22 in CI. Next free task id is **TX.40**.
+- **TX.38 merged (#155). TX.39 — merged ([#157](https://github.com/StephenForte/ChainBank/pull/157)).**
+  One `execArgv: ['--no-experimental-webstorage']` line in the dashboard project block. Planner re-run on
+  Node 26 in a scratch clone: dashboard 77/77 with no warning, unit 710. CI's dashboard job ran on
+  node 22.23.2 and passed. Next free task id is **TX.40**.
+- **TX.36 hosted marking — observed.** Dashboard (operator screenshot, 2026-09-23): the three
+  deploy-killed runs of 2026-09-22 (started 18:00:31, 18:29:32, 19:53:08 UTC) now read `ABORTED` /
+  `RUN_ABORTED`, finished 2026-09-23 06:00:37 UTC, which is the first scheduled run after the deploy.
+  Scan status stays `not-run` and counters stay 0, so marking left them unchanged. The 2026-08-02 row is
+  older than the screenshot and was not seen.
+
+**Environment facts from 2026-09-22/23, recorded so nobody re-derives them:**
+
+- **Operator Mac:** native arm64 Homebrew in `/opt/homebrew` (`gh`, Node 26.9.0). The old Intel Homebrew in
+  `/usr/local` still holds Python and other tools, and an x86_64 process that spawns `git` fails on
+  `xcrun`. Production and CI run Node 22 (TX.38). Local Node 26 is the operator's choice (TX.39 keeps the
+  dashboard tests green on it).
+- **Dropbox:** the repo lives in Dropbox (macOS File Provider). `node_modules` is ignored with
+  `xattr -w 'com.apple.fileprovider.ignore#P' 1 node_modules`, and `npm ci` keeps that attribute. Do not
+  `rm -rf node_modules` (slow; it can hang on files still uploading), and never `find` over a stuck
+  Dropbox folder. Reviews run in the session scratch directory, which is outside Dropbox.
+- **Render:** a deploy restarts a running cron and kills the current instance, so deploy between scan
+  boundaries. `NODE_OPTIONS` set on a service also applies to the build (tsc OOMs), so runtime heap flags go
+  in the Start Command. The log API 504s on windows longer than ~10 minutes; query narrow windows with no
+  text filter.
+- **QuickNode:** request logs are enterprise-only, so provider-side error codes cannot be read.
+- **Dashboard timestamps** show the operator's local time (UTC−7).
 
 **Also observed today, recorded so nobody re-derives it:** the 14:00 UTC reconciler run failed at
 startup — `FUNDING_ENABLED=true with an operational treasury configured requires a structurally valid
