@@ -38,7 +38,7 @@ services:
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
-        value: '22'
+        value: '26'
       - key: NODE_ENV
         value: production
       - key: CHAINBANK_ENVIRONMENT
@@ -120,7 +120,7 @@ services:
     startCommand: npm run cron:treasury-monitor
     envVars:
       - key: NODE_VERSION
-        value: '22'
+        value: '26'
       - key: NODE_ENV
         value: production
       - key: CHAINBANK_ENVIRONMENT
@@ -169,7 +169,7 @@ services:
     startCommand: npm run cron:wallet-reconciler
     envVars:
       - key: NODE_VERSION
-        value: '22'
+        value: '26'
       - key: NODE_ENV
         value: production
       - key: CHAINBANK_ENVIRONMENT

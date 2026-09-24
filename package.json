@@ -6,7 +6,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=26.0.0"
   },
   "main": "dist/src/api/server.js",
   "scripts": {
