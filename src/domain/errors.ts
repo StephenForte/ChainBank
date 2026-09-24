@@ -221,6 +221,18 @@ const POSTGRES_DIAGNOSTIC_FIELDS = ['constraint', 'table', 'schema', 'detail', '
  * import). The rule applies at every cause depth: a ChainBankError whose cause
  * is an RpcRequestError must not fall through to `name: message`, because that
  * message carries the endpoint URL and the request body.
+ *
+ * An AggregateError (Node's happy-eyeballs `connect`, for example) is rendered
+ * from `.errors`, each member through this same node renderer, so a member that
+ * is a driver error, a DrizzleQueryError, or a viem error keeps its safe form.
+ * Member count is capped at {@link MAX_ERROR_CHAIN_DEPTH}; further members are
+ * counted, not rendered. The cause-chain `seen` set is the cycle guard for a
+ * member that points back at an error already on the chain.
+ *
+ * A Node system error is a string `code` plus a string `syscall` (and optional
+ * `address`, `port`, or `hostname`). Those fields are operational. `.message`
+ * is not rendered. A driver error is recognized first (`code` + `severity`),
+ * so a SQLSTATE is never treated as a syscall failure.
  */
 export function describeErrorChain(error: unknown): string {
   if (error === undefined || error === null) {
@@ -242,14 +254,14 @@ export function describeErrorChain(error: unknown): string {
       seen.add(current);
     }
 
-    parts.push(renderDiagnosticNode(current));
+    parts.push(renderDiagnosticNode(current, seen));
     current = typeof current === 'object' ? readCause(current) : undefined;
   }
 
   return parts.join(ERROR_CHAIN_SEPARATOR);
 }
 
-function renderDiagnosticNode(error: unknown): string {
+function renderDiagnosticNode(error: unknown, seen: Set<object>): string {
   if (isChainBankError(error)) {
     return `${error.name} ${error.code}: ${error.message}`;
   }
@@ -266,6 +278,14 @@ function renderDiagnosticNode(error: unknown): string {
     return renderViemBaseError(error);
   }
 
+  if (error instanceof AggregateError) {
+    return renderAggregateError(error, seen);
+  }
+
+  if (isNodeSystemError(error)) {
+    return renderNodeSystemError(error);
+  }
+
   if (error instanceof Error) {
     return `${error.name}: ${error.message}`;
   }
@@ -275,6 +295,72 @@ function renderDiagnosticNode(error: unknown): string {
   }
 
   return 'Non-error value thrown';
+}
+
+function renderAggregateError(error: AggregateError, seen: Set<object>): string {
+  const rendered: string[] = [];
+  let omitted = 0;
+
+  for (const member of error.errors) {
+    const item: unknown = member;
+    if (rendered.length >= MAX_ERROR_CHAIN_DEPTH) {
+      omitted += 1;
+      continue;
+    }
+    if (typeof item === 'object' && item !== null && seen.has(item)) {
+      omitted += 1;
+      continue;
+    }
+    if (typeof item === 'object' && item !== null) {
+      seen.add(item);
+    }
+    rendered.push(renderDiagnosticNode(item, seen));
+  }
+
+  const body = rendered.join('; ');
+  const omission = omitted > 0 ? `${body.length > 0 ? '; ' : ''}${omitted} omitted` : '';
+  return `AggregateError[${body}${omission}]`;
+}
+
+/**
+ * `code` + `syscall` are the Node `ErrnoException` fields. Host and port are
+ * operational. Nothing else on the error, including `.message`, is rendered.
+ */
+function isNodeSystemError(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    typeof Reflect.get(error, 'code') === 'string' &&
+    typeof Reflect.get(error, 'syscall') === 'string'
+  );
+}
+
+function renderNodeSystemError(error: Error): string {
+  const parts = [error.name, stringField(error, 'code'), stringField(error, 'syscall')];
+  const endpoint = systemEndpoint(error);
+  if (endpoint !== undefined) {
+    parts.push(endpoint);
+  }
+  return parts.join(' ');
+}
+
+function systemEndpoint(error: Error): string | undefined {
+  const address = stringField(error, 'address');
+  const hostname = stringField(error, 'hostname');
+  const host = address.length > 0 ? address : hostname;
+  const port: unknown = Reflect.get(error, 'port');
+  const portText = typeof port === 'number' && Number.isFinite(port) ? String(port) : '';
+  if (host.length > 0 && portText.length > 0) {
+    return `${host}:${portText}`;
+  }
+  if (host.length > 0) {
+    return host;
+  }
+  return portText.length > 0 ? portText : undefined;
+}
+
+function stringField(error: object, field: string): string {
+  const value: unknown = Reflect.get(error, field);
+  return typeof value === 'string' ? value : '';
 }
 
 /**
