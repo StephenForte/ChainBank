@@ -35,7 +35,7 @@ Treasury key rotation is API-driven via `PATCH /v1/treasuries/:id` (contract
 
 | Layer              | Choice                                                                      |
 | ------------------ | --------------------------------------------------------------------------- |
-| Language / runtime | TypeScript. Production and CI run Node.js 22; newer majors are fine locally |
+| Language / runtime | TypeScript. Production and CI run Node.js 26; newer majors are fine locally |
 | API                | Fastify                                                                     |
 | ORM / DB           | Drizzle + PostgreSQL                                                        |
 | Chain reads        | Viem public client (Sepolia only)                                           |
@@ -68,7 +68,7 @@ tasks/             PRD, task plan, decisions, security reviews
 
 ## Prerequisites
 
-- Node.js 22 in production and CI. Newer majors are fine locally.
+- Node.js 26 in production and CI. Newer majors are fine locally.
 - npm (lockfile-based; use `npm ci` in CI)
 - Local PostgreSQL
 - Sepolia RPC URL and treasury address
