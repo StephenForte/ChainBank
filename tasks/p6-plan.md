@@ -322,7 +322,7 @@ available because --localstorage-file was not provided`. Node 26's built-in Web 
 
 - **Operator Mac:** native arm64 Homebrew in `/opt/homebrew` (`gh`, Node 26.9.0). The old Intel Homebrew in
   `/usr/local` still holds Python and other tools, and an x86_64 process that spawns `git` fails on
-  `xcrun`. Production and CI run Node 22 (TX.38). Local Node 26 is the operator's choice (TX.39 keeps the
+  `xcrun`. Production and CI run Node 26 (TX.46, D25; was 22 under TX.38). Local Node 26 is the operator's choice (TX.39 keeps the
   dashboard tests green on it).
 - **Dropbox:** the repo lives in Dropbox (macOS File Provider). `node_modules` is ignored with
   `xattr -w 'com.apple.fileprovider.ignore#P' 1 node_modules`, and `npm ci` keeps that attribute. Do not
