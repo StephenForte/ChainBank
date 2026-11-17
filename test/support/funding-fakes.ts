@@ -143,6 +143,21 @@ export function createInMemoryFundingStores(): {
       }
       return Promise.resolve(total);
     },
+    maxInFlightNonceByTreasury(treasuryId) {
+      let maxNonce: number | undefined;
+      for (const tx of txsById.values()) {
+        if (tx.treasuryId !== treasuryId || !isPendingTransactionStatus(tx.status)) {
+          continue;
+        }
+        if (tx.nonce === undefined) {
+          continue;
+        }
+        if (maxNonce === undefined || tx.nonce > maxNonce) {
+          maxNonce = tx.nonce;
+        }
+      }
+      return Promise.resolve(maxNonce);
+    },
     insertCreated(input: InsertFundingTransactionInput) {
       const tx: FundingTransaction = {
         id: input.id,

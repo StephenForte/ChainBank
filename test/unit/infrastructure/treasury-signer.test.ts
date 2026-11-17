@@ -30,11 +30,11 @@ function mockTransport(handlers: {
   readonly getChainId?: () => number | Promise<number>;
   readonly estimateGas?: () => bigint | Promise<bigint>;
   readonly gasPrice?: () => bigint | Promise<bigint>;
-  readonly transactionCount?: () => number | Promise<number>;
+  readonly transactionCount?: (blockTag: string | undefined) => number | Promise<number>;
   readonly sendRawTransaction?: () => `0x${string}` | Promise<`0x${string}`>;
 }): Transport {
   return custom({
-    async request({ method }) {
+    async request({ method, params }) {
       switch (method) {
         case 'eth_chainId': {
           const chainId = await (handlers.getChainId?.() ?? SEPOLIA_CHAIN_ID);
@@ -55,7 +55,8 @@ function mockTransport(handlers: {
           return `0x${price.toString(16)}`;
         }
         case 'eth_getTransactionCount': {
-          const count = await (handlers.transactionCount?.() ?? 0);
+          const blockTag = Array.isArray(params) && typeof params[1] === 'string' ? params[1] : undefined;
+          const count = await (handlers.transactionCount?.(blockTag) ?? 0);
           return `0x${count.toString(16)}`;
         }
         case 'eth_sendRawTransaction': {
@@ -166,6 +167,26 @@ describe('createTreasurySigner', () => {
     await expect(
       signer.estimateTransferCostWei(privateKeyToAccount(generatePrivateKey()).address, 1n),
     ).resolves.toBe(21_000n * 1_000_000_000n);
+  });
+
+  it('reads the treasury nonce with the pending block tag, not latest', async () => {
+    const privateKey = generatePrivateKey();
+    const observedTags: Array<string | undefined> = [];
+    const signer = createTreasurySigner({
+      chain: chainConfig(),
+      privateKey,
+      isKillSwitchActive: false,
+      logger: testLogger(),
+      transport: mockTransport({
+        transactionCount: (blockTag) => {
+          observedTags.push(blockTag);
+          return 3;
+        },
+      }),
+    });
+
+    await expect(signer.getTransactionCount()).resolves.toBe(3);
+    expect(observedTags).toEqual(['pending']);
   });
 
   it('fails closed when gas estimation fails', async () => {

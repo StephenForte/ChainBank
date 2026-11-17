@@ -342,6 +342,10 @@ export interface TreasurySigner {
     readonly valueWei: bigint;
     readonly nonce: number;
   }): Promise<{ readonly transactionHash: string }>;
+  /**
+   * Next nonce for this treasury account, including the connected node's
+   * mempool (`eth_getTransactionCount` with `pending`). Must not use `latest`.
+   */
   getTransactionCount(): Promise<number>;
   /** Fails closed when gas estimation fails — no fallback constant. */
   estimateTransferCostWei(to: string, valueWei: bigint): Promise<bigint>;
@@ -1018,6 +1022,12 @@ export interface FundingTransactionRepository {
    * see this treasury's own submitted-but-unmined sends (AGENTS.md §7.4).
    */
   sumInFlightAmountWeiByTreasury(treasuryId: string): Promise<bigint>;
+  /**
+   * Highest nonce reserved by an in-flight row for this treasury, if any.
+   * Used with the RPC pending count so a second wallet cannot reuse a nonce
+   * after the advisory lock releases (TX.10 intents + submitted).
+   */
+  maxInFlightNonceByTreasury(treasuryId: string): Promise<number | undefined>;
   insertCreated(input: InsertFundingTransactionInput): Promise<FundingTransaction>;
   /**
    * Inserts a non-terminal `submission_unknown` row with the reserved nonce

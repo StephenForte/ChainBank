@@ -1,3 +1,4 @@
+import { allocateTreasuryNonce } from '../../domain/funding/allocate-treasury-nonce.js';
 import {
   calculateTopUp,
   calculateTreasurySpendableWei,
@@ -415,9 +416,12 @@ async function dispatchUnderLock(
     return { kind: 'blocked', operation: failed, reason: decision.reason };
   }
 
-  // Nonce is obtained inside the advisory lock so concurrent dispatchers
-  // cannot allocate the same nonce for this treasury.
-  const nonce = await dependencies.signer.getTransactionCount();
+  // Nonce is obtained inside the advisory lock. RPC `pending` covers mempool
+  // visibility; max in-flight nonce covers the post-lock window where another
+  // wallet's ensure-funded can run before the node has gossiped the prior send.
+  const rpcPendingCount = await dependencies.signer.getTransactionCount();
+  const maxInFlightNonce = await uow.transactions.maxInFlightNonceByTreasury(input.treasury.id);
+  const nonce = allocateTreasuryNonce({ rpcPendingCount, maxInFlightNonce });
 
   // TX.10: commit the intent on the outer repository (autocommit connection),
   // not `uow.transactions`. A `pg_terminate_backend` of the lock-holder rolls
