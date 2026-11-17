@@ -110,6 +110,31 @@ export function createFundingTransactionRepository(db: Database): FundingTransac
       });
     },
 
+    async maxInFlightNonceByTreasury(treasuryId: string): Promise<number | undefined> {
+      return withDatabaseErrors('funding_transactions.maxInFlightNonceByTreasury', async () => {
+        const rows = await db
+          .select({ nonce: fundingTransactions.nonce })
+          .from(fundingTransactions)
+          .where(
+            and(
+              eq(fundingTransactions.treasuryId, treasuryId),
+              inArray(fundingTransactions.status, IN_FLIGHT_STATUSES),
+            ),
+          );
+
+        let maxNonce: number | undefined;
+        for (const row of rows) {
+          if (row.nonce === null) {
+            continue;
+          }
+          if (maxNonce === undefined || row.nonce > maxNonce) {
+            maxNonce = row.nonce;
+          }
+        }
+        return maxNonce;
+      });
+    },
+
     async insertCreated(input: InsertFundingTransactionInput): Promise<FundingTransaction> {
       return withDatabaseErrors('funding_transactions.insertCreated', async () => {
         const [row] = await db

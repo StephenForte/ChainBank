@@ -142,7 +142,14 @@ export function createTreasurySigner(options: CreateTreasurySignerOptions): Trea
 
     async getTransactionCount(): Promise<number> {
       try {
-        const count = await publicClient.getTransactionCount({ address: account.address });
+        // `pending` includes the node's mempool so a just-submitted transfer is
+        // not invisible to the next dispatcher after the advisory lock releases.
+        // Default `latest` only counts mined txs and can hand the same nonce to
+        // a second wallet's ensure-funded (AGENTS.md §7.5).
+        const count = await publicClient.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        });
         return count;
       } catch (error) {
         throw new ChainBankError(

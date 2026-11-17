@@ -9,8 +9,6 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import { createTrustProxy } from '../config/trusted-proxy.js';
 import type { Container } from '../container.js';
 import { ChainBankError } from '../domain/errors.js';
-import { hashApiToken } from '../shared/api-token.js';
-import { readSessionToken } from './cookies.js';
 import { notFoundBody, registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthentication } from './plugins/authentication.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -32,8 +30,6 @@ import type { AppInstance } from './types.js';
 const BODY_LIMIT_BYTES = 32 * 1024;
 
 const API_PATH_PREFIXES = ['/v1', '/health'];
-
-const BEARER_PATTERN = /^Bearer\s+(.+)$/i;
 
 export async function buildApp(container: Container): Promise<AppInstance> {
   const { config, logger } = container;
@@ -125,37 +121,15 @@ export async function buildApp(container: Container): Promise<AppInstance> {
 }
 
 /**
- * Rate-limit bucket for a request (PRD §15.3: limits apply by credential).
+ * Rate-limit bucket for a request.
  *
- * Derived from the presented bearer token rather than `request.actor`, because
- * rate limiting runs at `onRequest` while authentication is a route
- * `preHandler` — reading `request.actor` here would always be `undefined` and
- * silently degrade every limit to per-IP. Hashing keeps the raw token out of
- * the limiter's key store, and reuses the same digest the credential store
- * holds, so a token that is presented but invalid still gets a stable bucket
- * instead of sharing the caller's IP bucket.
+ * Always keyed by client IP. Keying on a presented Bearer (or session) hash at
+ * `onRequest` — before authentication — lets a unique random token per request
+ * open a fresh bucket while still hitting the credential store, which can DoS
+ * the web role. `request.ip` is trustworthy under hosted `TRUSTED_PROXY_CIDRS`
+ * (D19); forged `X-Forwarded-For` from an untrusted peer is ignored.
  */
 export function rateLimitKeyOf(request: Pick<FastifyRequest, 'headers' | 'ip'>): string {
-  const authorization = request.headers.authorization;
-  if (authorization !== undefined) {
-    if (typeof authorization !== 'string') {
-      return `ip:${request.ip}`;
-    }
-    const token = BEARER_PATTERN.exec(authorization.trim())?.[1];
-    if (token !== undefined) {
-      return `tok:${hashApiToken(token)}`;
-    }
-    if (authorization.trim() !== '') {
-      return `ip:${request.ip}`;
-    }
-  }
-
-  const cookie = request.headers.cookie;
-  const cookieHeader = typeof cookie === 'string' ? cookie : undefined;
-  const sessionToken = readSessionToken(cookieHeader);
-  if (sessionToken !== undefined) {
-    return `sess:${hashApiToken(sessionToken)}`;
-  }
   return `ip:${request.ip}`;
 }
 

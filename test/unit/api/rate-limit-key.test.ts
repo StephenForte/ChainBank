@@ -1,68 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { rateLimitKeyOf } from '../../../src/api/app.js';
-import { hashApiToken } from '../../../src/shared/api-token.js';
 
 /**
- * Rate limiting runs at `onRequest`, before the route `preHandler` that
- * authenticates. Keying on `request.actor` therefore silently degrades every
- * limit to per-IP — and `request.ip` is client-influenced behind a proxy. These
- * tests pin the credential-derived key (PRD §15.3).
+ * Rate limiting runs at `onRequest`, before authentication. Buckets must not
+ * partition on an unauthenticated Bearer/session value — a unique token per
+ * request would bypass the IP cap while still hitting the credential store.
  */
 describe('rateLimitKeyOf', () => {
   const request = (headers: Record<string, string>, ip = '203.0.113.10') => ({ headers, ip });
 
-  it('keys on the presented bearer token, not the source address', () => {
-    const key = rateLimitKeyOf(request({ authorization: 'Bearer cb_example-token' }));
-    expect(key).toBe(`tok:${hashApiToken('cb_example-token')}`);
-    expect(key).not.toContain('203.0.113.10');
-  });
-
-  it('never places the raw token in the key', () => {
-    const key = rateLimitKeyOf(request({ authorization: 'Bearer cb_secret-value' }));
-    expect(key).not.toContain('cb_secret-value');
-  });
-
-  it('gives one credential the same bucket regardless of source address', () => {
-    const headers = { authorization: 'Bearer cb_same-token' };
-    expect(rateLimitKeyOf(request(headers, '198.51.100.1'))).toBe(
-      rateLimitKeyOf(request(headers, '198.51.100.2')),
+  it('keys every request by client IP', () => {
+    expect(rateLimitKeyOf(request({}))).toBe('ip:203.0.113.10');
+    expect(rateLimitKeyOf(request({ authorization: 'Bearer cb_example-token' }))).toBe('ip:203.0.113.10');
+    expect(rateLimitKeyOf(request({ cookie: 'chainbank_session=session-token-value' }))).toBe(
+      'ip:203.0.113.10',
     );
   });
 
-  it('separates distinct credentials into distinct buckets', () => {
-    expect(rateLimitKeyOf(request({ authorization: 'Bearer cb_one' }))).not.toBe(
+  it('does not open a fresh bucket for a unique Bearer value', () => {
+    expect(rateLimitKeyOf(request({ authorization: 'Bearer cb_one' }))).toBe(
       rateLimitKeyOf(request({ authorization: 'Bearer cb_two' })),
     );
   });
 
-  it('falls back to the source address only when no bearer token is presented', () => {
-    expect(rateLimitKeyOf(request({}))).toBe('ip:203.0.113.10');
-    expect(rateLimitKeyOf(request({ authorization: 'Basic abc' }))).toBe('ip:203.0.113.10');
+  it('never places a raw token in the key', () => {
+    const key = rateLimitKeyOf(request({ authorization: 'Bearer cb_secret-value' }));
+    expect(key).not.toContain('cb_secret-value');
   });
 
-  it('buckets a malformed-but-present token by token, so it cannot share an IP bucket', () => {
-    expect(rateLimitKeyOf(request({ authorization: 'bearer   cb_lowercase-scheme' }))).toBe(
-      `tok:${hashApiToken('cb_lowercase-scheme')}`,
+  it('separates distinct source addresses into distinct buckets', () => {
+    const headers = { authorization: 'Bearer cb_same-token' };
+    expect(rateLimitKeyOf(request(headers, '198.51.100.1'))).not.toBe(
+      rateLimitKeyOf(request(headers, '198.51.100.2')),
     );
-  });
-
-  it('keys a session cookie by the token hash when no Authorization header is present', () => {
-    const key = rateLimitKeyOf(request({ cookie: 'chainbank_session=session-token-value' }));
-    expect(key).toBe(`sess:${hashApiToken('session-token-value')}`);
-    expect(key).not.toContain('session-token-value');
-    expect(key).not.toContain('203.0.113.10');
-  });
-
-  it('ignores a valid session cookie when an Authorization header is present', () => {
-    const headers = {
-      authorization: 'Bearer cb_real',
-      cookie: 'chainbank_session=session-token-value',
-    };
-    expect(rateLimitKeyOf(request(headers))).toBe(`tok:${hashApiToken('cb_real')}`);
-    expect(
-      rateLimitKeyOf(
-        request({ authorization: 'Basic abc', cookie: 'chainbank_session=session-token-value' }),
-      ),
-    ).toBe('ip:203.0.113.10');
   });
 });

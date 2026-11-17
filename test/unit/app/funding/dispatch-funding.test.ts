@@ -368,6 +368,69 @@ describe('dispatchFunding', () => {
     expect(failedOp?.errorCode).toBe('PENDING_FUNDING_EXISTS');
   });
 
+  it('does not reuse another wallet in-flight nonce when RPC still reports that count', async () => {
+    // Per-wallet pending gate would allow wallet-2 while wallet-1 holds nonce 7.
+    // A lagging eth_getTransactionCount (latest, or pending before gossip) must
+    // not hand wallet-2 the same nonce.
+    const stores = createInMemoryFundingStores();
+    const clock = createFixedClock();
+    const wallet2 = '0x3333333333333333333333333333333333333333';
+    await stores.operations.insertPending({
+      id: 'prior-op',
+      operationType: 'ensure_funded',
+      projectId: 'project-1',
+      environmentId: 'env-1',
+      idempotencyKey: undefined,
+      requestedBy: 'other',
+      startedAt: clock.now(),
+    });
+    await stores.transactions.insertBroadcastIntent({
+      id: 'prior-tx',
+      operationId: 'prior-op',
+      treasuryId: 'treasury-1',
+      managedWalletId: 'wallet-1',
+      destinationTreasuryId: undefined,
+      amountWei: ONE_ETH,
+      nonce: 7,
+      createdAt: clock.now(),
+    });
+    await stores.transactions.markSubmitted('prior-tx', {
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      nonce: 7,
+      submittedAt: clock.now(),
+    });
+
+    const signer = createFakeSigner({
+      nonce: 7,
+      send: (input) => {
+        expect(input.nonce).toBe(8);
+        expect(input.to).toBe(wallet2);
+        return Promise.resolve({ transactionHash: `0x${'ef'.repeat(32)}` });
+      },
+    });
+    const { dependencies } = deps({
+      signer,
+      stores,
+      walletAddresses: [wallet2],
+      managedWallets: createManagedWalletRepo({
+        wallets: new Map([
+          ['wallet-1', { enabled: true, addressDisplay: WALLET_ADDRESS, chainId: 11_155_111 }],
+          ['wallet-2', { enabled: true, addressDisplay: wallet2, chainId: 11_155_111 }],
+        ]),
+      }),
+    });
+
+    const result = await dispatchFunding(
+      dependencies,
+      baseInput({ walletId: 'wallet-2', idempotencyKey: 'cross-wallet-nonce' }),
+    );
+    expect(result.kind).toBe('submitted');
+    if (result.kind === 'submitted') {
+      expect(result.transaction.nonce).toBe(8);
+    }
+    expect(signer.nonces).toEqual([8]);
+  });
+
   it('refuses to sign when the RPC chain ID does not match', async () => {
     const { dependencies, signer } = deps({
       signer: createFakeSigner({ chainMatches: false }),
